@@ -87,7 +87,7 @@ namespace Artisan.CraftingLists
                 {
                     if (RetainerInfo.TM.IsBusy)
                     {
-                        if (ImGui.Button("Abort Collecting From Retainer", new Vector2(ImGui.GetContentRegionAvail().X, 30)))
+                        if (ImGui.Button("停止从雇员补货", new Vector2(ImGui.GetContentRegionAvail().X, 30)))
                         {
                             RetainerInfo.TM.Abort();
                         }
@@ -97,7 +97,7 @@ namespace Artisan.CraftingLists
                         bool disable = !Player.Available ? false : RetainerInfo.GetReachableRetainerBell() == null;
                         using (ImRaii.Disabled(disable))
                         {
-                            if (ImGui.Button("Restock Inventory From Retainers", new Vector2(ImGui.GetContentRegionAvail().X, 30)))
+                            if (ImGui.Button("从雇员身上补货", new Vector2(ImGui.GetContentRegionAvail().X, 30)))
                             {
                                 Task.Run(() => RetainerInfo.RestockFromRetainers(selectedList));
                             }
@@ -107,10 +107,10 @@ namespace Artisan.CraftingLists
                 else
                 {
                     if (!RetainerInfo.AToolsInstalled)
-                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, $"Please install Allagan Tools for retainer features.");
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, $"请安装 Allagan Tools 以启用雇员功能。");
 
                     if (RetainerInfo.AToolsInstalled && !RetainerInfo.AToolsEnabled)
-                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, $"Please enable Allagan Tools for retainer features.");
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, $"启用插件 Allagan Tools 以启用雇员功能。");
                 }
 
 

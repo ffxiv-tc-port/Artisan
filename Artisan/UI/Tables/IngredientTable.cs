@@ -712,7 +712,7 @@ namespace Artisan.UI.Tables
 
             if (Marketboard)
             {
-                if (ImGui.Selectable("Market Board Lookup"))
+                if (ImGui.Selectable("使用Market Board搜索"))
                 {
                     Chat.Instance.SendMessage($"/pmb {item.Data.Name.ToDalamudString()}");
                 }
@@ -726,17 +726,17 @@ namespace Artisan.UI.Tables
 
             if (RetainerInfo.GetReachableRetainerBell() == null)
             {
-                ImGui.TextDisabled($"Fetch From Retainer (please stand by a bell)");
+                ImGui.TextDisabled($"从雇员处取回 (请站在雇员铃旁)");
             }
             else
             {
                 if (RetainerInfo.TM.IsBusy)
                 {
-                    ImGui.TextDisabled($"Currently fetching. Please wait.");
+                    ImGui.TextDisabled($"正在获取中，请稍等");
                     return;
                 }
 
-                if (!ImGui.Selectable("Fetch From Retainer"))
+                if (!ImGui.Selectable("从雇员处取回"))
                     return;
 
                 var howManyToGet = item.Required - item.Inventory;
@@ -797,7 +797,7 @@ namespace Artisan.UI.Tables
 
             if (MonsterLookup)
             {
-                if (!ImGui.Selectable("Monster Loot Lookup"))
+                if (!ImGui.Selectable("查询怪物掉落"))
                     return;
 
                 try
@@ -811,7 +811,7 @@ namespace Artisan.UI.Tables
             }
             else
             {
-                ImGui.TextDisabled("Monster Loot Lookup (Please install Monster Loot Hunter)");
+                ImGui.TextDisabled("查询怪物掉落 (请安装 Monster Loot Hunter)");
             }
         }
 
@@ -824,7 +824,7 @@ namespace Artisan.UI.Tables
             {
                 if (ItemVendorLocation.ItemHasVendor(item.Data.RowId))
                 {
-                    if (!ImGui.Selectable("Item Vendor Lookup"))
+                    if (!ImGui.Selectable("查询物品供应商"))
                         return;
 
                     try
@@ -839,7 +839,7 @@ namespace Artisan.UI.Tables
             }
             else
             {
-                ImGui.TextDisabled("Item Vendor Lookup (Please install Item Vendor Location)");
+                ImGui.TextDisabled("查询物品供应商 (请安装 Item Vendor Location)");
             }
         }
 
@@ -848,7 +848,7 @@ namespace Artisan.UI.Tables
             if (item.Data.RowId == 0)
                 return;
 
-            if (!ImGui.Selectable("Search for Item"))
+            if (!ImGui.Selectable("查看持有情况"))
                 return;
 
             try
@@ -869,7 +869,7 @@ namespace Artisan.UI.Tables
 
             if (GatherBuddy)
             {
-                if (!ImGui.Selectable("Gather Item"))
+                if (!ImGui.Selectable("采集物品"))
                     return;
 
                 try
@@ -886,7 +886,7 @@ namespace Artisan.UI.Tables
             }
             else
             {
-                ImGui.TextDisabled("Gather Item (Please install Gatherbuddy)");
+                ImGui.TextDisabled("采集物品 (请安装 Gatherbuddy)");
             }
         }
     }

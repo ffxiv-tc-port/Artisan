@@ -622,7 +622,7 @@ namespace Artisan.UI
                         P.Config.Save();
                 }
 
-                if (ImGuiEx.ButtonCtrl("Reset Cosmic Exploration Crafting Configs"))
+                if (ImGuiEx.ButtonCtrl("重置宇宙探索制作配置"))
                 {
                     var copy = P.Config.RecipeConfigs;
                     foreach (var c in copy)

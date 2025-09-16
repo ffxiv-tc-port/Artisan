@@ -28,7 +28,7 @@ namespace Artisan.UI
             TitleBarButtons.Add(new()
             {
                 Icon = FontAwesomeIcon.Cog,
-                ShowTooltip = () => ImGui.SetTooltip("Open Config"),
+                ShowTooltip = () => ImGui.SetTooltip("打开设置"),
                 Click = (x) => P.PluginUi.IsOpen = true,
             });
         }
@@ -69,7 +69,7 @@ namespace Artisan.UI
             
             var autoMode = P.Config.AutoMode;
 
-            if (ImGui.Checkbox("Automatic Action Execution Mode", ref autoMode))
+            if (ImGui.Checkbox("自动制作模式", ref autoMode))
             {
                 P.Config.AutoMode = autoMode;
                 P.Config.Save();
@@ -82,7 +82,7 @@ namespace Artisan.UI
                 ImGui.BeginDisabled();
             }
 
-            if (ImGui.Checkbox("Endurance Mode Toggle", ref enable))
+            if (ImGui.Checkbox("耐力模式开关", ref enable))
             {
                 Endurance.ToggleEndurance(enable);
             }
@@ -95,7 +95,7 @@ namespace Artisan.UI
                 {
                     var recipe = LuminaSheets.RecipeSheet!.First(x => x.Key == Endurance.RecipeID).Value;
                     ImGui.BeginTooltip();
-                    ImGui.Text($"You cannot start Endurance as you do not possess ingredients to craft this recipe.\r\nMissing: {string.Join(", ", PreCrafting.MissingIngredients(recipe))}");
+                    ImGui.Text($"你无法开始耐力模式，因为你没有足够的材料来制作该配方。\r\n缺少：{string.Join(", ", PreCrafting.MissingIngredients(recipe))}");
                     ImGui.EndTooltip();
                 }
 			}
@@ -105,14 +105,14 @@ namespace Artisan.UI
 				bool useMatMiracle = LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert ? P.Config.ExpertSolverConfig.UseMaterialMiracle : P.Config.UseMaterialMiracle;
 				int delayMatMiracle = LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert ? P.Config.ExpertSolverConfig.MinimumStepsBeforeMiracle : P.Config.MinimumStepsBeforeMiracle;
 				bool multiMatMiracle = P.Config.MaterialMiracleMulti;
-				if (ImGui.Checkbox("Use Material Miracle", ref useMatMiracle))
+				if (ImGui.Checkbox("使用材料奇迹(到底叫啥啊没玩宇宙探索不知道)", ref useMatMiracle))
 				{
 					if (LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert)
 						P.Config.ExpertSolverConfig.UseMaterialMiracle = useMatMiracle;
 					else
 						P.Config.UseMaterialMiracle = useMatMiracle;
 				}
-				if (ImGui.SliderInt("Minimum steps to execute before trying Material Miracle", ref delayMatMiracle, 0, 20))
+				if (ImGui.SliderInt("执行材料奇迹前的最少步数", ref delayMatMiracle, 0, 20))
 				{
 					if (LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert)
 						P.Config.ExpertSolverConfig.MinimumStepsBeforeMiracle = delayMatMiracle;
@@ -122,7 +122,7 @@ namespace Artisan.UI
 
 				if (false == LuminaSheets.RecipeSheet[Endurance.RecipeID].IsExpert)
 				{
-					if (ImGui.Checkbox("Use multiple material miracles", ref multiMatMiracle))
+					if (ImGui.Checkbox("多次使用材料奇迹", ref multiMatMiracle))
 						P.Config.MaterialMiracleMulti = multiMatMiracle;
 				}
 			}
@@ -133,7 +133,7 @@ namespace Artisan.UI
 
                 if (SimpleTweaks.IsFocusTweakEnabled())
                 {
-                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, $@"Warning: You have the ""Auto Focus Recipe Search"" SimpleTweak enabled. This is highly incompatible with Artisan and is recommended to disable it.");
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, $@"警告：你启用了SimpleTweak的""Auto Focus Recipe Search"" 功能。该功能与Artisan高度不兼容，建议关闭。");
                 }
 
                 if (Endurance.RecipeID == 0)

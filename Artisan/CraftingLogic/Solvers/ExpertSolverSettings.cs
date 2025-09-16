@@ -2,6 +2,7 @@
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using Dalamud.Interface.Components;
+using Dalamud.Interface.Textures.TextureWraps;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
 using Dalamud.Bindings.ImGui;
@@ -48,15 +49,26 @@ public class ExpertSolverSettings
     public bool UseMaterialMiracle = false;
 	public int MinimumStepsBeforeMiracle = 10;
 
+    [NonSerialized]
+    public IDalamudTextureWrap? expertIcon;
+
     public ExpertSolverSettings()
     {
-        // 移除构造函数中的图标加载
+        var tex = Svc.PluginInterface.UiBuilder.LoadUld("ui/uld/RecipeNoteBook.uld");
+        expertIcon = tex.LoadTexturePart("ui/uld/RecipeNoteBook_hr1.tex", 14);
     }
 
     public bool Draw()
     {
         ImGui.TextWrapped($"专家配方解算器并不是标准解算器的替代品。它仅用于专家配方。");
-        ImGui.TextWrapped($"该解算器仅适用于制作日志中标记为专家图标的配方。");
+        if (expertIcon != null)
+        {
+            ImGui.TextWrapped($"该解算器仅适用于制作日志中标记为专家图标");
+            ImGui.SameLine();
+            ImGui.Image(expertIcon.Handle, expertIcon.Size, new Vector2(0, 0), new Vector2(1, 1), new Vector4(0.94f, 0.57f, 0f, 1f));
+            ImGui.SameLine();
+            ImGui.TextWrapped($"的配方。");
+        }
         bool changed = false;
         ImGui.Indent();
         if (ImGui.CollapsingHeader("起手设置"))

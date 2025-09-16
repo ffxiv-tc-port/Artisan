@@ -14,20 +14,14 @@ using System.Threading.Tasks;
 namespace Artisan;
 public static class Extensions
 {
-    extension(TextureCache cache)
+    public static async Task<IDalamudTextureWrap> TryLoadIconAsync(this TextureCache cache, uint iconid)
     {
-        public async Task<IDalamudTextureWrap> TryLoadIconAsync(uint iconid)
-        {
-            var icon = await cache.TextureProvider.GetFromGameIcon(new GameIconLookup(iconid)).RentAsync();
-            return icon;
-        }
+        var icon = await cache.TextureProvider.GetFromGameIcon(new GameIconLookup(iconid)).RentAsync();
+        return icon;
     }
 
-    extension(Job job)
+    public static Job Add(this Job job, uint other)
     {
-        public Job Add(uint other)
-        {
-            return (Job)((uint)job + other);
-        }
+        return (Job)((uint)job + other);
     }
 }

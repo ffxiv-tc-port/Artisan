@@ -140,7 +140,7 @@ namespace Artisan.UI
                         {
                             ImGuiEx.LineCentered("###ArtisanLogo", () =>
                             {
-                                ImGui.Image(logo.ImGuiHandle, new(100f.Scale(), 100f.Scale()));
+                                ImGui.Image(logo.Handle, new(100f.Scale(), 100f.Scale()));
                                 if (ImGui.IsItemHovered())
                                 {
                                     ImGui.BeginTooltip();
@@ -653,7 +653,7 @@ namespace Artisan.UI
                     P.Config.UseTricksExcellent = useTricksExcellent;
                     P.Config.Save();
                 }
-                ImGuiComponents.HelpMarker($"这两个选项允许你在出现“{LuminaSheets.AddonSheet[227].Text.ToString}”或“{LuminaSheets.AddonSheet[228].Text.ToString}”状态时优先使用“{Skills.TricksOfTrade.NameOfAction()}”。\n\n这将替代{Skills.PreciseTouch.NameOfAction()}和{Skills.IntensiveSynthesis.NameOfAction()}的使用时机。\n\n不管如何设置，在学会前或特定状况下仍将使用{Skills.TricksOfTrade.NameOfAction()}。");
+                ImGuiComponents.HelpMarker($"这两个选项允许你在出现“{LuminaSheets.AddonSheet[227].Text.ToString()}”或“{LuminaSheets.AddonSheet[228].Text.ToString()}”状态时优先使用“{Skills.TricksOfTrade.NameOfAction()}”。\n\n这将替代{Skills.PreciseTouch.NameOfAction()}和{Skills.IntensiveSynthesis.NameOfAction()}的使用时机。\n\n不管如何设置，在学会前或特定状况下仍将使用{Skills.TricksOfTrade.NameOfAction()}。");
                 if (ImGui.Checkbox("使用专家技能", ref useSpecialist))
                 {
                     P.Config.UseSpecialist = useSpecialist;

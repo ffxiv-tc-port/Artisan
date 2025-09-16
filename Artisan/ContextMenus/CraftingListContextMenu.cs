@@ -60,7 +60,7 @@ internal static class CraftingListContextMenu
 
         var recipeId = LuminaSheets.RecipeSheet.Values.First(x => x.ItemResult.RowId == ItemId).RowId;
 
-        if (ImGui.Selectable($"Open Recipe Log"))
+        if (ImGui.Selectable($"打开制作笔记"))
         {
             CraftingListFunctions.OpenRecipeByID(recipeId);
         }
@@ -87,7 +87,7 @@ internal static class CraftingListContextMenu
             var recipeId = LuminaSheets.RecipeSheet.Values.First(x => x.ItemResult.RowId == itemId).RowId;
 
             var menuItem = new MenuItem();
-            menuItem.Name = "Open Recipe Log";
+            menuItem.Name = "打开制作笔记";
             menuItem.PrefixChar = 'A';
             menuItem.PrefixColor = 706;
             menuItem.OnClicked += clickedArgs => CraftingListFunctions.OpenRecipeByID(recipeId, true);
@@ -100,7 +100,7 @@ internal static class CraftingListContextMenu
 
             var subMenu = new MenuItem();
             subMenu.IsSubmenu = true;
-            subMenu.Name = "Artisan Crafting List";
+            subMenu.Name = "Artisan 制作清单";
             subMenu.PrefixChar = 'A';
             subMenu.PrefixColor = 706;
 
@@ -124,7 +124,7 @@ internal static class CraftingListContextMenu
                 }
 
                 var menuItem = new MenuItem();
-                menuItem.Name = "Withdraw from Retainer";
+                menuItem.Name = "从雇员处取回";
                 menuItem.PrefixChar = 'A';
                 menuItem.PrefixColor = 706;
                 menuItem.OnClicked += clickedArgs => RetainerInfo.RestockFromRetainers(ItemId, amountToGet);
@@ -138,7 +138,7 @@ internal static class CraftingListContextMenu
 
             var subMenu = new MenuItem();
             subMenu.IsSubmenu = true;
-            subMenu.Name = "Artisan Crafting List";
+            subMenu.Name = "Artisan 制作清单";
             subMenu.PrefixChar = 'A';
             subMenu.PrefixColor = 706;
 
@@ -158,7 +158,7 @@ internal static class CraftingListContextMenu
             var recipeId = LuminaSheets.RecipeSheet.Values.First(x => x.ItemResult.RowId == ItemId).RowId;
 
             var menuItem = new MenuItem();
-            menuItem.Name = "Open Recipe Log";
+            menuItem.Name = "打开制作笔记";
             menuItem.PrefixChar = 'A';
             menuItem.PrefixColor = 706;
             menuItem.OnClicked += clickedArgs => CraftingListFunctions.OpenRecipeByID(recipeId, true);
@@ -174,7 +174,7 @@ internal static class CraftingListContextMenu
         if (CraftingListUI.selectedList.ID == 0)
         {
             var menuItem = new MenuItem();
-            menuItem.Name = "Add to New Artisan Crafting List";
+            menuItem.Name = "添加到新的 Artisan 制作清单";
             menuItem.PrefixChar = 'A';
             menuItem.PrefixColor = 706;
             menuItem.OnClicked += clickedArgs => AddToNewList(ItemId, craftTypeIndex);
@@ -183,7 +183,7 @@ internal static class CraftingListContextMenu
             if (ingredientsSubCraft)
             {
                 var menuItem2 = new MenuItem();
-                menuItem2.Name = "Add to New Artisan Crafting List (with Sub-crafts)";
+                menuItem2.Name = "添加到新的 Artisan 制作清单 (包含子配方)";
                 menuItem2.PrefixChar = 'A';
                 menuItem2.PrefixColor = 706;
                 menuItem2.OnClicked += clickedArgs => AddToNewList(ItemId, craftTypeIndex, true);
@@ -194,7 +194,7 @@ internal static class CraftingListContextMenu
         else
         {
             var menuItem = new MenuItem();
-            menuItem.Name = "Add to Current Artisan Crafting List";
+            menuItem.Name = "添加到当前 Artisan 制作清单";
             menuItem.PrefixChar = 'A';
             menuItem.PrefixColor = 706;
             menuItem.OnClicked += clickedArgs => AddToList(ItemId, craftTypeIndex);
@@ -203,7 +203,7 @@ internal static class CraftingListContextMenu
             if (ingredientsSubCraft)
             {
                 var menuItem2 = new MenuItem();
-                menuItem2.Name = "Add to Current Artisan Crafting List (with Sub-crafts)";
+                menuItem2.Name = "添加到当前 Artisan 制作清单 (包含子配方)";
                 menuItem2.PrefixChar = 'A';
                 menuItem2.PrefixColor = 706;
                 menuItem2.OnClicked += clickedArgs => AddToList(ItemId, craftTypeIndex, true);

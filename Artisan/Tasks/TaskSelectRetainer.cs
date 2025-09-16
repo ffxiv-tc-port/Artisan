@@ -257,8 +257,8 @@ internal unsafe static class RetainerHandlers
                     quantity = item->Quantity;
                     Svc.Log.Debug($"Found item? {item->Quantity}");
                     var ag = AgentInventoryContext.Instance();
-                    ag->OpenForItemSlot(inv, i, AgentModule.Instance()->GetAgentByInternalId(AgentId.Retainer)->GetAddonId());
-                    var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu", 1);
+                    ag->OpenForItemSlot(inv, i, 0, AgentModule.Instance()->GetAgentByInternalId(AgentId.Retainer)->GetAddonId());
+                    var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu", 1).Address;
                     var contextAgent = AgentInventoryContext.Instance();
                     var indexOfRetrieveAll = -1;
                     var indexOfRetrieveQuantity = -1;
@@ -299,7 +299,7 @@ internal unsafe static class RetainerHandlers
 
     internal static bool InputNumericValue(int value)
     {
-        var numeric = (AtkUnitBase*)Svc.GameGui.GetAddonByName("InputNumeric", 1);
+        var numeric = (AtkUnitBase*)Svc.GameGui.GetAddonByName("InputNumeric", 1).Address;
         if (numeric != null)
         {
             Svc.Log.Debug($"{value}");
@@ -314,9 +314,9 @@ internal unsafe static class RetainerHandlers
         var text = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Addon>().GetRow(13530).Text.ToDalamudString().GetText();
         if (TryGetAddonByName<AtkUnitBase>("RetainerItemTransferProgress", out var addon) && IsAddonReady(addon))
         {
-            var button = (AtkComponentButton*)addon->UldManager.NodeList[2]->GetComponent();
-            var nodetext = MemoryHelper.ReadSeString(&addon->UldManager.NodeList[2]->GetComponent()->UldManager.NodeList[2]->GetAsAtkTextNode()->NodeText).GetText();
-            if (nodetext == text && addon->UldManager.NodeList[2]->IsVisible() && button->IsEnabled && RetainerInfo.GenericThrottle)
+            var button = addon->GetComponentButtonById(9);// (AtkComponentButton*)addon->UldManager.NodeList[2]->GetComponent();
+            var nodetext = MemoryHelper.ReadSeString(&button->GetTextNodeById(2)->NodeText).GetText();
+            if (nodetext == text && button->AtkResNode->IsVisible() && button->IsEnabled && RetainerInfo.GenericThrottle)
             {
                 button->ClickAddonButton(addon);
                 return true;

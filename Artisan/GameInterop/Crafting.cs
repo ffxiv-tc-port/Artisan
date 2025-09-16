@@ -6,6 +6,7 @@ using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Hooking;
+using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -458,7 +459,7 @@ public static unsafe class Crafting
 
     private static AddonSynthesis* GetAddon()
     {
-        var synthWindow = (AddonSynthesis*)Svc.GameGui.GetAddonByName("Synthesis");
+        var synthWindow = (AddonSynthesis*)Svc.GameGui.GetAddonByName("Synthesis").Address;
         if (synthWindow == null)
             return null; // not ready
 
@@ -473,7 +474,7 @@ public static unsafe class Crafting
 
     public static AtkUnitBase* GetCosmicAddon()
     {
-        var cosmicAddon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook");
+        var cosmicAddon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook").Address;
         if (cosmicAddon == null || !cosmicAddon->IsVisible || !cosmicAddon->IsReady)
             return null; // not ready
 
@@ -482,7 +483,7 @@ public static unsafe class Crafting
 
     private static AtkUnitBase* GetQuickSynthAddon()
     {
-        var addon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("SynthesisSimple");
+        var addon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("SynthesisSimple").Address;
         if (addon == null)
             return null;
 
@@ -523,7 +524,7 @@ public static unsafe class Crafting
     private static Condition GetStepCondition(AddonSynthesis* synthWindow) => (Condition)synthWindow->AtkUnitBase.AtkValues[12].Int;
     public static int DelineationCount() => InventoryManager.Instance()->GetInventoryItemCount(28724);
 
-    private unsafe static uint MaterialMiracleCharges()
+    public unsafe static uint MaterialMiracleCharges()
     {
         try
         {

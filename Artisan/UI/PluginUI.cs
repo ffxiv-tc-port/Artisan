@@ -12,7 +12,7 @@ using Dalamud.Interface.Windowing;
 using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using PunishLib.ImGuiMethods;
 using System;
@@ -20,6 +20,8 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using ThreadLoadImageHandler = ECommons.ImGuiMethods.ThreadLoadImageHandler;
+using ECommons.Automation;
+using ECommons.WindowsFormsReflector;
 
 namespace Artisan.UI
 {
@@ -59,6 +61,12 @@ namespace Artisan.UI
                 MinimumSize = new(250, 100),
                 MaximumSize = new(9999, 9999)
             };
+            this.TitleBarButtons.Add(new()
+            {
+                Icon = FontAwesomeIcon.Cog,
+                ShowTooltip = () => ImGuiEx.SetTooltip("Open Config"),
+                Click = (x) => P.PluginUi.IsOpen = true,
+            });
             P.ws.AddWindow(this);
         }
 
@@ -202,13 +210,20 @@ namespace Artisan.UI
 
 
 #if DEBUG
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("调试", OpenWindow == OpenWindow.Debug))
-                        {
-                            OpenWindow = OpenWindow.Debug;
-                        }
-                        ImGui.Spacing();
+                        drawDebugTab();
+#else
+                        if(GenericHelpers.IsKeyPressed(Keys.LControlKey) && GenericHelpers.IsKeyPressed(Keys.LShiftKey)) drawDebugTab();
 #endif
+                        void drawDebugTab()
+                        {
+                            ImGui.Spacing();
+                            if(ImGui.Selectable("调试", OpenWindow == OpenWindow.Debug))
+                            {
+                                OpenWindow = OpenWindow.Debug;
+                            }
+                            ImGui.Spacing();
+                        }
+
 
                     }
 
@@ -278,7 +293,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###ArtisanTextLogo", () =>
                 {
-                    ImGui.Image(logo.ImGuiHandle, new Vector2(logo.Width, 100f.Scale()));
+                    ImGui.Image(logo.Handle, new Vector2(logo.Width, 100f.Scale()));
                 });
             }
 
@@ -311,7 +326,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###AutoModeExample", () =>
                 {
-                    ImGui.Image(example.ImGuiHandle, new Vector2(example.Width, example.Height));
+                    ImGui.Image(example.Handle, new Vector2(example.Width, example.Height));
                 });
             }
 
@@ -324,7 +339,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###CraftWindowExample", () =>
                 {
-                    ImGui.Image(example.ImGuiHandle, new Vector2(example.Width, example.Height));
+                    ImGui.Image(example.Handle, new Vector2(example.Width, example.Height));
                 });
             }
 
@@ -339,7 +354,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###OutlineExample", () =>
                 {
-                    ImGui.Image(example.ImGuiHandle, new Vector2(example.Width, example.Height));
+                    ImGui.Image(example.Handle, new Vector2(example.Width, example.Height));
                 });
             }
 
@@ -376,7 +391,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###RecipeWindowExample", () =>
                 {
-                    ImGui.Image(example.ImGuiHandle, new Vector2(example.Width, example.Height));
+                    ImGui.Image(example.Handle, new Vector2(example.Width, example.Height));
                 });
             }
 
@@ -691,8 +706,10 @@ namespace Artisan.UI
 
                 if (ImGui.Checkbox($"Use Material Miracle when available", ref P.Config.UseMaterialMiracle))
                     P.Config.Save();
-
-                ImGuiComponents.HelpMarker($"这将在增益持续时间内将标准配方求解器切换到专家求解器。由于这是一个定时增益，而不是具有层数的永久增益，因此不会给您提供正确的模拟器结果，我们无法真正正确模拟它。");
+                ImGuiComponents.HelpMarker($"这将在增益持续时间内将标准配方求解器切换到专家求解器。由于这是一个定时增益，而不是具有层数的永久增益，因此不会给您提供正确的模拟器结果，我们无法真正正确模拟它。's a timed buff, not a permanent one with stacks, so we can't really simulate it properly.");
+				ImGui.PushItemWidth(250);
+				if (ImGui.SliderInt($"Minimum steps to execute before trying Material Miracle###P.Config.MinimumStepsBeforeMiracle", ref P.Config.MinimumStepsBeforeMiracle, 0, 20))
+					P.Config.Save();
 
                 if (P.Config.UseMaterialMiracle)
                 {
@@ -708,12 +725,21 @@ namespace Artisan.UI
             if (ImGui.CollapsingHeader("专家配方解算器设置"))
             {
                 openExpert = true;
+                if (P.Config.ExpertSolverConfig.expertIcon is not null)
+                {
+                    ImGui.SameLine();
+                    ImGui.Image(P.Config.ExpertSolverConfig.expertIcon.Handle, new(P.Config.ExpertSolverConfig.expertIcon.Width * ImGuiHelpers.GlobalScaleSafe, ImGui.GetItemRectSize().Y), new(0, 0), new Vector2(1, 1), new(0.94f, 0.57f, 0f, 1f));
+                }
                 if (P.Config.ExpertSolverConfig.Draw())
                     P.Config.Save();
             }
             if (!openExpert)
             {
-                // 移除图标显示代码
+                if (P.Config.ExpertSolverConfig.expertIcon is not null)
+                {
+                    ImGui.SameLine();
+                    ImGui.Image(P.Config.ExpertSolverConfig.expertIcon.Handle, new(P.Config.ExpertSolverConfig.expertIcon.Width * ImGuiHelpers.GlobalScaleSafe, ImGui.GetItemRectSize().Y), new(0, 0), new Vector2(1, 1), new(0.94f, 0.57f, 0f, 1f));
+                }
             }
 
             if (ImGui.CollapsingHeader("Raphael 求解器设置"))
@@ -967,7 +993,7 @@ namespace Artisan.UI
                 {
                     ImGuiEx.ImGuiLineCentered("###EnduranceNewSetting", () =>
                     {
-                        ImGui.Image(img.ImGuiHandle, new Vector2(img.Width, img.Height));
+                        ImGui.Image(img.Handle, new Vector2(img.Width, img.Height));
                     });
                 }
 

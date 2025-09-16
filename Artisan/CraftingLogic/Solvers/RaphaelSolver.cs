@@ -8,7 +8,7 @@ using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
 using ECommons.Logging;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -94,7 +94,7 @@ namespace Artisan.CraftingLogic.Solvers
                     StartInfo = new ProcessStartInfo
                     {
                         FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"),
-                        Arguments = $"solve {itemText} {manipulation} --level {craft.StatLevel} --stats {craft.StatCraftsmanship} {craft.StatControl} {craft.StatCP} {extraArgsBuilder} --output-variables ids", // Command to execute
+                        Arguments = $"solve {itemText} {manipulation} --level {craft.StatLevel} --stats {craft.StatCraftsmanship} {craft.StatControl} {craft.StatCP} {extraArgsBuilder} --output-variables action_ids", // Command to execute
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
                         UseShellExecute = false,
@@ -205,7 +205,7 @@ namespace Artisan.CraftingLogic.Solvers
             var recipes = LuminaSheets.RecipeSheet.Values.Where(x => x.CraftType.RowId == craftType && x.RecipeLevelTable.Value.ClassJobLevel == stats.Level);
             foreach (var recipe in recipes)
             {
-                var state = Crafting.BuildCraftStateForRecipe(default, Job.CRP + recipe.CraftType.RowId, recipe);
+                var state = Crafting.BuildCraftStateForRecipe(default, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
                 if (stats.Prog == state.CraftProgress &&
                     stats.Qual == state.CraftQualityMax &&
                     stats.Dur == state.CraftDurability)

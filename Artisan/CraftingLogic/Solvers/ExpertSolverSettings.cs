@@ -4,9 +4,10 @@ using Artisan.RawInformation.Character;
 using Dalamud.Interface.Components;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 using static Artisan.RawInformation.AddonExtensions;
+using System.Numerics;
 
 namespace Artisan.CraftingLogic.Solvers;
 
@@ -43,7 +44,9 @@ public class ExpertSolverSettings
     public bool MidObserveGoodOmenForTricks = false; // if true, we'll observe on good omen where otherwise we'd use tricks on good
     public bool FinisherBaitGoodByregot = true; // if true, use careful observations to try baiting good byregot
     public bool EmergencyCPBaitGood = false; // if true, we allow spending careful observations to try baiting good for tricks when we really lack cp
+	public bool RapidSynthYoloAllowed = true; // if false, expert crafting may lock up midway, so not good for AFK crafting. This yolo however is likely to fail the craft, so disabling gives opportunity for intervention
     public bool UseMaterialMiracle = false;
+	public int MinimumStepsBeforeMiracle = 10;
 
     public ExpertSolverSettings()
     {
@@ -53,7 +56,7 @@ public class ExpertSolverSettings
     public bool Draw()
     {
         ImGui.TextWrapped($"专家配方解算器并不是标准解算器的替代品。它仅用于专家配方。");
-        ImGui.TextWrapped($"该解算器仅适用于制作日志中标记为专家配方的食谱。");
+        ImGui.TextWrapped($"该解算器仅适用于制作日志中标记为专家图标的配方。");
         bool changed = false;
         ImGui.Indent();
         if (ImGui.CollapsingHeader("起手设置"))
@@ -95,6 +98,7 @@ public class ExpertSolverSettings
             changed |= ImGui.Checkbox($"在 [{Skills.Innovation.NameOfAction()}] + {QualityString} 组合之前使用 [{Skills.GreatStrides.NameOfAction()}]", ref MidGSBeforeInno);
             changed |= ImGui.Checkbox($"在开始 {QualityString} 阶段之前完成 {ProgressString}", ref MidFinishProgressBeforeQuality);
             changed |= ImGui.Checkbox($"在 [{Condition.GoodOmen.ToLocalizedString()}] {ConditionString} 下使用 [{Skills.Observe.NameOfAction()}]，如果我们本来会在 [{Condition.Good.ToLocalizedString()}] {ConditionString} 上使用 [{Skills.TricksOfTrade.NameOfAction()}]", ref MidObserveGoodOmenForTricks);
+            changed |= ImGui.Checkbox($"如果专家解算器卡住，允许使用 [{Skills.RapidSynthesis.NameOfAction()}]。禁用可能会中断挂机制作，但对半挂机更安全", ref RapidSynthYoloAllowed);
         }
         ImGui.Unindent();
         changed |= ImGui.Checkbox("充分利用伊修加德重建配方，而不是仅仅达到最大品质断点。", ref MaxIshgardRecipes);
@@ -102,6 +106,8 @@ public class ExpertSolverSettings
         changed |= ImGui.Checkbox($"终结技：使用 {Skills.CarefulObservation.NameOfAction()} 为 {Condition.Good.ToLocalizedString()} {ConditionString} 争取一下 {Skills.ByregotsBlessing.NameOfAction()}", ref FinisherBaitGoodByregot);
         changed |= ImGui.Checkbox($"紧急情况：如果制作力不够用了，使用 {Skills.CarefulObservation.NameOfAction()} 为 [{Condition.Good.ToLocalizedString()} {ConditionString} 争取一下 {Skills.TricksOfTrade.NameOfAction()}", ref EmergencyCPBaitGood);
         changed |= ImGui.Checkbox($"在宇宙探索中使用材料奇迹", ref UseMaterialMiracle);
+		ImGui.PushItemWidth(250);
+		changed |= ImGui.SliderInt($"在尝试 {Skills.MaterialMiracle.NameOfAction()} 前最少执行步数###MinimumStepsBeforeMiracle", ref MinimumStepsBeforeMiracle, 0, 20);
         if (ImGuiEx.ButtonCtrl("重置高难度配方设置到默认状态"))
         {
             P.Config.ExpertSolverConfig = new();

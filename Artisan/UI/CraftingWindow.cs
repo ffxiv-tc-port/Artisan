@@ -13,7 +13,7 @@ using Dalamud.Interface.Windowing;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
 using ECommons.Logging;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 
 namespace Artisan.UI
@@ -38,6 +38,13 @@ namespace Artisan.UI
             CraftingProcessor.SolverFailed += OnSolverFailed;
             CraftingProcessor.SolverFinished += OnSolverFinished;
             CraftingProcessor.RecommendationReady += OnRecommendationReady;
+
+            this.TitleBarButtons.Add(new()
+            {
+                Icon = FontAwesomeIcon.Cog,
+                ShowTooltip = () => ImGuiEx.SetTooltip("Open Config"),
+                Click = (x) => P.PluginUi.IsOpen = true,
+            });
         }
 
         public void Dispose()
@@ -75,11 +82,6 @@ namespace Artisan.UI
         {
             if (!P.Config.DisableHighlightedAction)
                 Hotbars.MakeButtonsGlow(CraftingProcessor.NextRec.Action);
-
-            if (ImGuiEx.AddHeaderIcon("OpenConfig", FontAwesomeIcon.Cog, new ImGuiEx.HeaderIconOptions() { Tooltip = "打开设置" }))
-            {
-                P.PluginUi.IsOpen = true;
-            }
 
             if (Crafting.CurCraft != null && !Crafting.CurCraft.CraftExpert && Crafting.CurRecipe?.SecretRecipeBook.RowId > 0 && Crafting.CurCraft?.CraftLevel == Crafting.CurCraft?.StatLevel && !CraftingProcessor.ActiveSolver.IsType<MacroSolver>())
             {

@@ -60,7 +60,7 @@ public unsafe class Artisan : IDalamudPlugin
 #endif
         ws = new();
         ri = new();
-        Icons = new(Svc.Data, Svc.Texture, Svc.Log);
+        Icons = new(Svc.Data, Svc.Texture);
         Config = P.Config;
         PluginUi = new();
 
@@ -96,7 +96,9 @@ public unsafe class Artisan : IDalamudPlugin
         UniversalsisClient = new();
 
         EnduranceCraftWatcher.Setup();
-        ws.AddWindow(new RecipeWindowUI());
+        ws.AddWindow(RecipeWindowUI.Create());
+        ws.AddWindow(RecipeWindowUI.AddCraftMenuWindow());
+        ws.AddWindow(RecipeWindowUI.AddCosmicCraftMenuWindow());
         ws.AddWindow(new ProcessingWindow());
         ws.AddWindow(new QuestHelper());
         cw = new();

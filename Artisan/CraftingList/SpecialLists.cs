@@ -4,7 +4,7 @@ using Dalamud.Interface.Components;
 using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using System.Collections.Generic;
 using System.Linq;
@@ -53,7 +53,7 @@ namespace Artisan.CraftingLists
             ImGui.PushItemWidth(ImGui.GetContentRegionAvail().X / 2);
             ImGui.InputText("###NameInput", ref listName, 300);
 
-            ImGui.Columns(6, null, false);
+            ImGui.Columns(6, border: false);
 
             ImGui.TextWrapped("选择职业");
 
@@ -72,7 +72,7 @@ namespace Artisan.CraftingLists
 
             if (ImGui.BeginListBox("###JobSelectListBox", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 110)))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, border: false);
                 foreach (var item in JobSelected)
                 {
                     // 获取职业的缩写
@@ -96,7 +96,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"已制作好的配方");
             if (ImGui.BeginListBox("###AlreadyCraftedRecipes", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2,    border: false);
                 bool yes = alreadyCrafted[1];
                 if (ImGui.Checkbox("是", ref yes))
                 {
@@ -114,7 +114,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"收藏品配方");
             if (ImGui.BeginListBox("###CollectableRecipes", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2,    border: false);
                 bool yes = isCollectable[1];
                 if (ImGui.Checkbox("是", ref yes))
                 {
@@ -134,7 +134,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"最大耐力");
             if (ImGui.BeginListBox("###SpecialListDurability", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 110)))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, border: false);
                 foreach (var dur in Durabilities)
                 {
                     var val = dur.Value;
@@ -152,7 +152,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"基于等级的配方");
             if (ImGui.BeginListBox("###IsLevelBasedRecipe", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "DefaultID"    , false);
                 bool yes = isLevelBased[1];
                 if (ImGui.Checkbox("是", ref yes))
                 {
@@ -172,7 +172,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"可高品质的配方");
             if (ImGui.BeginListBox("###HQRecipes", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, border: false);
                 bool yes = isHQAble[1];
                 if (ImGui.Checkbox("是", ref yes))
                 {
@@ -199,7 +199,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"来自秘籍中的配方");
             if (ImGui.BeginListBox("###UnlockableRecipe", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2,    border: false);
                 bool yes = hasToBeUnlocked[1];
                 if (ImGui.Checkbox("是", ref yes))
                 {
@@ -217,7 +217,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"仅任务配方");
             if (ImGui.BeginListBox("###QuestRecipe", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, border: false);
                 bool yes = questRecipe[1];
                 if (ImGui.Checkbox("是", ref yes))
                 {
@@ -251,7 +251,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"高难度配方");
             if (ImGui.BeginListBox("###ExpertRecipe", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, border: false);
                 bool yes = isExpert[1];
                 if (ImGui.Checkbox("是", ref yes))
                 {
@@ -269,7 +269,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped($"辅助配方");
             if (ImGui.BeginListBox("###SecondaryRecipes", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, border: false);
                 bool yes = isSecondary[1];
                 if (ImGui.Checkbox("是", ref yes))
                 {
@@ -294,7 +294,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("制作产出");
             if (ImGui.BeginListBox("###Yields", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 120f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, border: false);
                 foreach (var yield in Yields)
                 {
                     var val = yield.Value;
@@ -362,18 +362,18 @@ namespace Artisan.CraftingLists
 
             if (ImGui.BeginListBox("###Stats", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 120)))
             {
-                ImGui.Columns(6, null, false);
+                ImGui.Columns(6, border:false);
                 foreach (var stat in Stats)
                 {
                     var statName = Svc.Data.GetExcelSheet<BaseParam>()?.First(x => x.RowId == stat.Key).Name.ExtractText();
                     var translatedName = StatNameTranslations.TryGetValue(key: statName, out string? value) ? value : statName;
                     var val = stat.Value;
-                    if (ImGui.Checkbox($"###{statName}", ref val))
+                    if (ImGui.Checkbox($"###{Svc.Data.GetExcelSheet<BaseParam>()?.First(x => x.RowId == stat.Key).Name.GetText()}", ref val))
                     {
                         Stats[stat.Key] = val;
                     }
                     ImGui.SameLine();
-                    ImGui.TextWrapped($"{translatedName}");
+                    ImGui.TextWrapped($"{Svc.Data.GetExcelSheet<BaseParam>()?.First(x => x.RowId == stat.Key).Name.GetText()}");
                     ImGui.NextColumn();
                 }
 

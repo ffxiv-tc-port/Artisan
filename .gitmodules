@@ -3,7 +3,7 @@
 	url = https://github.com/MeowZWR/PunishLib.git
 [submodule "OtterGui"]
 	path = OtterGui
-	url = https://github.com/Limiana/OtterGui
+	url = https://github.com/MeowZWR/OtterGui
 	branch = Artisan
 [submodule "raphael-rs"]
 	path = raphael-rs

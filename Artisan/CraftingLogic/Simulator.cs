@@ -315,7 +315,7 @@ public static class Simulator
                 Skills.TrainedPerfection => "你已使用过工匠的神技",
                 Skills.DaringTouch => "仓促制作未成功",
                 Skills.QuickInnovation => !craft.Specialist ? "你不是专家" : Crafting.DelineationCount() == 0 ? "你的能工巧匠图纸已用尽。" : step.QuickInnoLeft == 0 ? "本次制作已无法再次使用快速改革" : step.InnovationLeft > 0 ? "你已有改革状态" : "",
-                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "本次制作无法使用素材奇迹" : step.MaterialMiracleActive ? "你已激活素材奇迹" : step.MaterialMiracleCharges == 0 ? "你已没有剩余的素材奇迹次数" : ""
+                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "本次制作无法使用“奇迹之材”" : step.MaterialMiracleActive ? "你已激活“奇迹之材”" : step.MaterialMiracleCharges == 0 ? "你已没有剩余的“奇迹之材”次数" : ""
             };
 
             return true;

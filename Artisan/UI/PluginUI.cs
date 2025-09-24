@@ -704,17 +704,17 @@ namespace Artisan.UI
                 if (ImGui.SliderInt($"###MaxIQStacksPrepTouch", ref P.Config.MaxIQPrepTouch, 0, 10))
                     P.Config.Save();
 
-                if (ImGui.Checkbox($"Use Material Miracle when available", ref P.Config.UseMaterialMiracle))
+                if (ImGui.Checkbox($"有可用时使用“奇迹之材”", ref P.Config.UseMaterialMiracle))
                     P.Config.Save();
-                ImGuiComponents.HelpMarker($"这将在增益持续时间内将标准配方求解器切换到专家求解器。由于这是一个定时增益，而不是具有层数的永久增益，因此不会给您提供正确的模拟器结果，我们无法真正正确模拟它。's a timed buff, not a permanent one with stacks, so we can't really simulate it properly.");
+                ImGuiComponents.HelpMarker($"这将在增益持续时间内将标准配方求解器切换到专家求解器。由于这是一个定时增益，而不是具有层数的永久增益，因此不会给您提供正确的模拟器结果，我们无法真正正确模拟它。");
 				ImGui.PushItemWidth(250);
-				if (ImGui.SliderInt($"Minimum steps to execute before trying Material Miracle###P.Config.MinimumStepsBeforeMiracle", ref P.Config.MinimumStepsBeforeMiracle, 0, 20))
+				if (ImGui.SliderInt($"尝试“奇迹之材”前最少执行步数###P.Config.MinimumStepsBeforeMiracle", ref P.Config.MinimumStepsBeforeMiracle, 0, 20))
 					P.Config.Save();
 
                 if (P.Config.UseMaterialMiracle)
                 {
                     ImGui.Indent();
-                    if (ImGui.Checkbox($"Use more than once per craft.", ref P.Config.MaterialMiracleMulti))
+                    if (ImGui.Checkbox($"每次制作中多次使用“奇迹之材”", ref P.Config.MaterialMiracleMulti))
                         P.Config.Save();
 
                     ImGui.Unindent();

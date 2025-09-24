@@ -286,7 +286,7 @@ public class RecipeConfig
             if (solver.Name != "专家配方求解器")
             {
                 if (craft.MissionHasMaterialMiracle && solver.Name == "标准配方求解器" && P.Config.UseMaterialMiracle)
-                    ImGuiEx.TextWrapped($"这将使用材料奇迹，与模拟器不兼容。");
+                    ImGuiEx.TextWrapped($"这将使用“奇迹之材”，与模拟器不兼容。");
                 else
                     ImGuiEx.TextWrapped(hintColor, solverHint);
             }

@@ -115,11 +115,11 @@ public class ExpertSolverSettings
         ImGui.Unindent();
         changed |= ImGui.Checkbox("充分利用伊修加德重建配方，而不是仅仅达到最大品质断点。", ref MaxIshgardRecipes);
         ImGuiComponents.HelpMarker("这将尝试最大限度地提高质量，以获得更多的技巧点。");
-        changed |= ImGui.Checkbox($"终结技：使用 {Skills.CarefulObservation.NameOfAction()} 为 {Condition.Good.ToLocalizedString()} {ConditionString} 争取一下 {Skills.ByregotsBlessing.NameOfAction()}", ref FinisherBaitGoodByregot);
-        changed |= ImGui.Checkbox($"紧急情况：如果制作力不够用了，使用 {Skills.CarefulObservation.NameOfAction()} 为 [{Condition.Good.ToLocalizedString()} {ConditionString} 争取一下 {Skills.TricksOfTrade.NameOfAction()}", ref EmergencyCPBaitGood);
-        changed |= ImGui.Checkbox($"在宇宙探索中使用材料奇迹", ref UseMaterialMiracle);
+        changed |= ImGui.Checkbox($"终结技：使用 [{Skills.CarefulObservation.NameOfAction()}] 为 [{Condition.Good.ToLocalizedString()}] {ConditionString} 争取一下 {Skills.ByregotsBlessing.NameOfAction()}", ref FinisherBaitGoodByregot);
+        changed |= ImGui.Checkbox($"紧急情况：如果制作力不够用了，使用 {Skills.CarefulObservation.NameOfAction()} 为 [{Condition.Good.ToLocalizedString()}] {ConditionString} 争取一下 {Skills.TricksOfTrade.NameOfAction()}", ref EmergencyCPBaitGood);
+        changed |= ImGui.Checkbox($"在宇宙探索中使用“奇迹之材”", ref UseMaterialMiracle);
 		ImGui.PushItemWidth(250);
-		changed |= ImGui.SliderInt($"在尝试 {Skills.MaterialMiracle.NameOfAction()} 前最少执行步数###MinimumStepsBeforeMiracle", ref MinimumStepsBeforeMiracle, 0, 20);
+		changed |= ImGui.SliderInt($"在尝试 [{Skills.MaterialMiracle.NameOfAction()}] 前最少执行步数###MinimumStepsBeforeMiracle", ref MinimumStepsBeforeMiracle, 0, 20);
         if (ImGuiEx.ButtonCtrl("重置高难度配方设置到默认状态"))
         {
             P.Config.ExpertSolverConfig = new();

@@ -60,7 +60,7 @@ namespace Artisan.UI
                         string name = val.NameString;
                         bool materiaDiff = gs->Value.Items.ToArray().Any(x => x.Flags.HasFlag(GearsetItemFlag.MateriaDiffers));
 
-                        return $"{name} (ilvl {val.ItemLevel}){(materiaDiff ? " Warning: Detected Materia difference. Please update gearset" : "")}";
+                        return $"{name}（物品品级 {val.ItemLevel}）{(materiaDiff ? " 警告：检测到魔晶石不同，请更新此装备配置" : "")}";
                     }
                 }
             }
@@ -164,7 +164,7 @@ namespace Artisan.UI
 
         private static void DrawIntro()
         {
-            ImGuiEx.TextWrapped($"在这个模拟器中，你可以根据配方测试不同的解算器，并分析它们的性能。你可以设置你的HQ素材配比，设置消耗品，甚至使用哪个装备套装。模拟器可以配置为随机化条件或仅使用\"Normal\"“正常”条件，因此实操效果可能会有所不同。");
+            ImGuiEx.TextWrapped($"在这个模拟器中，你可以根据配方测试不同的解算器，并分析它们的性能。你可以设置你的HQ素材配比，设置消耗品，甚至使用哪个装备套装。模拟器可以配置为随机化条件或仅使用\"Normal\"/\"正常\"条件，因此实操效果可能会有所不同。");
         }
 
         private static void DrawSolverMode()
@@ -887,7 +887,7 @@ namespace Artisan.UI
                     ImGuiEx.Text($"套装");
                     ImGui.SameLine(120f);
                     ImGuiEx.SetNextItemFullWidth();
-                    ImGuiEx.Text($"{name} (ilvl {SimGS?.ItemLevel}){(materiaDiff ? " Warning: Detected Materia difference. Please update gearset" : "")}");
+                    ImGuiEx.Text($"{name}（物品品级 {SimGS?.ItemLevel}）{(materiaDiff ? " 警告：检测到魔晶石不同，请更新装备套装" : "")}");
                     return;
                 }
 
@@ -912,7 +912,7 @@ namespace Artisan.UI
 
                     string name = gs.NameString;
                     bool materiaDiff = gs.Items.ToArray().Any(x => x.Flags.HasFlag(GearsetItemFlag.MateriaDiffers));
-                    var selected = ImGui.Selectable($"{name} (ilvl {gs.ItemLevel}){(materiaDiff ? " Warning: Detected Materia difference. Please update gearset" : "")}##GS{gs.Id}");
+                    var selected = ImGui.Selectable($"{name}（物品品级 {gs.ItemLevel}）{(materiaDiff ? " 警告：检测到魔晶石不同，请更新装备套装" : "")}##GS{gs.Id}");
 
                     if (selected)
                     {

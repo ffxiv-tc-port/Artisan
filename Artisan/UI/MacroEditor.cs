@@ -196,7 +196,7 @@ namespace Artisan.UI
                     for (int i = 0; i < SelectedMacro.Steps.Count; i++)
                     {
                         var step = SelectedMacro.Steps[i];
-                        var selectedAction = ImGui.Selectable($"{i + 1}. {(step.Action == Skills.None ? "Artisan Recommendation" : step.Action.NameOfAction())}{(step.HasExcludeCondition ? " | " : "")}{(step.HasExcludeCondition && step.ReplaceOnExclude ? step.ReplacementAction.NameOfAction() : step.HasExcludeCondition ? "Skip" : "")}###selectedAction{i}", i == selectedStepIndex);
+                        var selectedAction = ImGui.Selectable($"{i + 1}. {(step.Action == Skills.None ? "Artisan 建议" : step.Action.NameOfAction())}{(step.HasExcludeCondition ? " | " : "")}{(step.HasExcludeCondition && step.ReplaceOnExclude ? step.ReplacementAction.NameOfAction() : step.HasExcludeCondition ? "跳过" : "")}###selectedAction{i}", i == selectedStepIndex);
                         if (selectedAction)
                             selectedStepIndex = i;
                     }
@@ -268,15 +268,15 @@ namespace Artisan.UI
 
                         if (step.HasExcludeCondition)
                         {
-                            ImGuiEx.CenterColumnText($"Exclude options", true);
-                            if (ImGui.Checkbox($"Instead of skipping replace with:", ref step.ReplaceOnExclude))
+                            ImGuiEx.CenterColumnText($"排除选项", true);
+                            if (ImGui.Checkbox($"不跳过而是替换为:", ref step.ReplaceOnExclude))
                                 P.Config.Save();
 
                             if (step.ReplaceOnExclude)
                             {
                                 if (ImGui.BeginCombo("###Select Replacement", step.ReplacementAction.NameOfAction()))
                                 {
-                                    if (ImGui.Selectable($"Artisan Recommendation"))
+                                    if (ImGui.Selectable($"Artisan 建议"))
                                     {
                                         step.ReplacementAction = Skills.None;
                                         P.Config.Save();
@@ -284,21 +284,21 @@ namespace Artisan.UI
 
                                     ImGuiComponents.HelpMarker("适当使用默认解算器的推荐，即常规配方使用标准配方解算器，专家配方使用专家配方解算器。");
 
-                                    if (ImGui.Selectable($"Touch Combo"))
+                                    if (ImGui.Selectable($"加工连携"))
                                     {
                                         step.ReplacementAction = Skills.TouchCombo;
                                         P.Config.Save();
                                     }
 
-                                    ImGuiComponents.HelpMarker("This will use the appropriate step of the 3-step touch combo, depending on the last action actually used. Useful if upgrading quality actions or skipping on conditions.");
+                                    ImGuiComponents.HelpMarker("将根据最后实际使用的技能使用3步加工连携的适当步骤。对于提高品质的技能或跳过条件非常有用。");
 
-                                    if (ImGui.Selectable($"Touch Combo (Refined Touch Route)"))
+                                    if (ImGui.Selectable($"加工连携（精炼加工路线）"))
                                     {
                                         step.ReplacementAction = Skills.TouchComboRefined;
                                         P.Config.Save();
                                     }
 
-                                    ImGuiComponents.HelpMarker($"Similar to the other touch combo, this will alternate between Basic Touch & Refined Touch depending on the previous action used.");
+                                    ImGuiComponents.HelpMarker($"类似于其他加工连携，这将根据之前使用的技能在[加工]和[精炼加工]之间交替。");
 
                                     ImGui.Separator();
 
@@ -343,13 +343,13 @@ namespace Artisan.UI
 
                             ImGuiComponents.HelpMarker("这将根据最后实际使用的技能使用3步加工连携的适当步骤。对于提高品质的技能或跳过条件非常有用。");
 
-                            if (ImGui.Selectable($"Touch Combo (Refined Touch Route)"))
+                            if (ImGui.Selectable($"加工连携（精制加工路线）"))
                             {
                                 step.Action = Skills.TouchComboRefined;
                                 P.Config.Save();
                             }
 
-                            ImGuiComponents.HelpMarker($"Similar to the other touch combo, this will alternate between Basic Touch & Refined Touch depending on the previous action used.");
+                            ImGuiComponents.HelpMarker($"类似于其他加工连携，这将根据之前使用的技能在[加工]和[精炼加工]之间交替。");
 
                             ImGui.Separator();
 

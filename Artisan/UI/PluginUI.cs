@@ -613,7 +613,7 @@ namespace Artisan.UI
                 if (ImGui.Checkbox("耐力模式制作完成后播放提示音", ref P.Config.PlaySoundFinishEndurance))
                     P.Config.Save();
                 
-                if (ImGui.Checkbox("Play Sound After Crafting Has Errored", ref P.Config.PlaySoundError))
+                if (ImGui.Checkbox("制作发生错误后播放提示音", ref P.Config.PlaySoundError))
                     P.Config.Save();
 
                 if (ImGui.Checkbox($"清单制作完成后播放提示音", ref P.Config.PlaySoundFinishList))

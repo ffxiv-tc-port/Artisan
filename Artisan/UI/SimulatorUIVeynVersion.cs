@@ -74,12 +74,12 @@ internal static class SimulatorUIVeynVersion
             SetSelectedRecipe(r);
         ImGui.InputFloat("起手品质百分比", ref _startingQualityPct);
         for (int i = 1; i < craft.CraftConditionProbabilities.Length; ++i)
-            ImGui.InputFloat($"Transition probability to {(Condition)i}", ref craft.CraftConditionProbabilities[i]);
+            ImGui.InputFloat($"转变为 {(Condition)i} 的概率", ref craft.CraftConditionProbabilities[i]);
     }
 
     private static void DrawStatistics(CraftState craft)
     {
-        using var n = ImRaii.TreeNode("Statistics");
+        using var n = ImRaii.TreeNode("统计信息");
         if (!n)
             return;
 
@@ -128,7 +128,7 @@ internal static class SimulatorUIVeynVersion
 
     private static void DrawSimulator(CraftState craft)
     {
-        using var n = ImRaii.TreeNode("Simulator");
+        using var n = ImRaii.TreeNode("模拟器");
         if (!n)
             return;
 

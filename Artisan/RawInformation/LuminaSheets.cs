@@ -153,10 +153,10 @@ namespace Artisan.RawInformation
     {
         public static string NameOfAction(this Skills skill, bool raphParseEn = false)
         {
-            if (skill == Skills.TouchCombo) return "Touch Combo";
-            if (skill == Skills.TouchComboRefined) return "Touch Combo (Refined Touch Route)";
+            if (skill == Skills.TouchCombo) return "加工连携";
+            if (skill == Skills.TouchComboRefined) return "加工连携（精炼加工路线）";
             var id = skill.ActionId(ECommons.ExcelServices.Job.CRP);
-            return id == 0 ? "Artisan Recommendation" : id < 100000 ? Svc.Data.GetExcelSheet<Action>(raphParseEn ? Dalamud.Game.ClientLanguage.English : Svc.ClientState.ClientLanguage)[id].Name.ToString() : Svc.Data.GetExcelSheet<CraftAction>(raphParseEn ? Dalamud.Game.ClientLanguage.English : Svc.ClientState.ClientLanguage)[id].Name.ToString();
+            return id == 0 ? "Artisan 建议" : id < 100000 ? Svc.Data.GetExcelSheet<Action>(raphParseEn ? Dalamud.Game.ClientLanguage.English : Svc.ClientState.ClientLanguage)[id].Name.ToString() : Svc.Data.GetExcelSheet<CraftAction>(raphParseEn ? Dalamud.Game.ClientLanguage.English : Svc.ClientState.ClientLanguage)[id].Name.ToString();
         }
 
         public static ushort IconOfAction(this Skills skill, ECommons.ExcelServices.Job job)

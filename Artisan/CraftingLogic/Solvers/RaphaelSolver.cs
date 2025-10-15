@@ -1,6 +1,7 @@
 ﻿using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.UI;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
 using ECommons;
@@ -8,7 +9,6 @@ using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
 using ECommons.Logging;
-using Dalamud.Bindings.ImGui;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -93,7 +93,7 @@ namespace Artisan.CraftingLogic.Solvers
                 {
                     StartInfo = new ProcessStartInfo
                     {
-                        FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"),
+                        FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.bin"),
                         Arguments = $"solve {itemText} {manipulation} --level {craft.StatLevel} --stats {craft.StatCraftsmanship} {craft.StatControl} {craft.StatCP} {extraArgsBuilder} --output-variables action_ids", // Command to execute
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
@@ -153,35 +153,56 @@ namespace Artisan.CraftingLogic.Solvers
                         return;
                     }
 
+                    static bool autoSwitchOk(uint recipeId)
+                    {
+                        if (P.Config.RaphaelSolverConfig.AutoSwitchOverManual)
+                            return true;
+
+                        if (P.Config.RecipeConfigs.TryGetValue(recipeId, out var cfg))
+                            // flavours: 0 = standard, expert; 3 = raphael; otherwise = macro/script
+                            return cfg.SolverFlavour is 0 or 3;
+
+                        return true;
+                    }
 
                     if (P.Config.RaphaelSolverConfig.AutoSwitch)
                     {
                         if (!P.Config.RaphaelSolverConfig.AutoSwitchOnAll)
                         {
                             Svc.Log.Debug("切换到 Raphael 求解器");
-                            var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
-                            if (opt is not null)
+                            var nopt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
+                            if (nopt is { } opt)
                             {
-                                var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
-                                config.SolverType = opt?.Def.GetType().FullName!;
-                                config.SolverFlavour = (int)(opt?.Flavour);
-                                P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
+                                if (autoSwitchOk(craft.Recipe.RowId))
+                                {
+                                    var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
+                                    config.SolverType = opt.Def.GetType().FullName!;
+                                    config.SolverFlavour = opt.Flavour;
+                                    P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
+                                }
+                                else
+                                    Svc.Log.Debug("算了，配方已经有宏分配了");
                             }
                         }
                         else
                         {
                             var crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId).ToList();
-                            Svc.Log.Debug($"将求解器应用到 {crafts.Count()} 个配方。");
-                            var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
-                            if (opt is not null)
+                            Svc.Log.Debug($"将求解器应用到 {crafts.Count} 个配方。");
+                            var nopt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
+                            if (nopt is { } opt)
                             {
                                 var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
-                                config.SolverType = opt?.Def.GetType().FullName!;
-                                config.SolverFlavour = (int)(opt?.Flavour);
+                                config.SolverType = opt.Def.GetType().FullName!;
+                                config.SolverFlavour = opt.Flavour;
                                 foreach (var c in crafts)
                                 {
-                                    Svc.Log.Debug($"将 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) 切换到 Raphael 求解器");
-                                    P.Config.RecipeConfigs[c.Recipe.RowId] = config;
+                                    if (autoSwitchOk(c.Recipe.RowId))
+                                    {
+                                        Svc.Log.Debug($"将 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) 切换到 Raphael 求解器");
+                                        P.Config.RecipeConfigs[c.Recipe.RowId] = config;
+                                    }
+                                    else
+                                        Svc.Log.Debug($"跳过 {c.Recipe.RowId}（{c.Recipe.ItemResult.Value.Name}），因为该配方已分配了宏");
                                 }
                             }
                         }
@@ -259,7 +280,7 @@ namespace Artisan.CraftingLogic.Solvers
 
         internal static bool CLIExists()
         {
-            return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"));
+            return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.bin"));
         }
 
         public static bool DrawRaphaelDropdown(CraftState craft, bool liveStats = true)
@@ -387,6 +408,7 @@ namespace Artisan.CraftingLogic.Solvers
         public bool AutoGenerate = false;
         public bool AutoSwitch = false;
         public bool AutoSwitchOnAll = false;
+        public bool AutoSwitchOverManual = true;
         public int MaximumThreads = 0;
         public bool GenerateOnExperts = false;
         public int TimeOutMins = 1;
@@ -425,6 +447,7 @@ namespace Artisan.CraftingLogic.Solvers
             {
                 ImGui.Indent();
                 changed |= ImGui.Checkbox($"应用到所有有效制作", ref AutoSwitchOnAll);
+                changed |= ImGui.Checkbox("应用到已有宏分配的配方上", ref AutoSwitchOverManual);
                 ImGui.Unindent();
             }
 

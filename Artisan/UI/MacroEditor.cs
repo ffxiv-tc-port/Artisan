@@ -191,7 +191,7 @@ namespace Artisan.UI
 
                     ImGui.Columns(2, "actionColumns", true);
                     ImGui.SetColumnWidth(0, 220f.Scale());
-                    ImGuiEx.ImGuiLineCentered("###MacroActions", () => ImGuiEx.TextUnderlined("宏技能"));
+                    ImGuiEx.LineCentered("###MacroActions", () => ImGuiEx.TextUnderlined("宏技能"));
                     ImGui.Indent();
                     for (int i = 0; i < SelectedMacro.Steps.Count; i++)
                     {
@@ -435,15 +435,15 @@ namespace Artisan.UI
                 }
 
 
-                ImGuiEx.ImGuiLineCentered("MTimeHead", delegate
+                ImGuiEx.LineCentered("MTimeHead", delegate
                 {
                     ImGuiEx.TextUnderlined($"宏时长估算");
                 });
-                ImGuiEx.ImGuiLineCentered("MTimeArtisan", delegate
+                ImGuiEx.LineCentered("MTimeArtisan", delegate
                 {
                     ImGuiEx.Text($"Artisan宏耗时：{MacroUI.GetMacroLength(SelectedMacro)} 秒");
                 });
-                ImGuiEx.ImGuiLineCentered("MTimeTeamcraft", delegate
+                ImGuiEx.LineCentered("MTimeTeamcraft", delegate
                 {
                     ImGuiEx.Text($"普通宏耗时：{MacroUI.GetTeamcraftMacroLength(SelectedMacro)} 秒");
                 });

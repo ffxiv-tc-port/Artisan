@@ -368,7 +368,7 @@ namespace Artisan.UI
         {
             Vector2 childSize = new Vector2((widgetSize + ImGui.GetStyle().ItemSpacing.X) * itemCount + ImGui.GetStyle().WindowPadding.X, (ImGui.GetTextLineHeightWithSpacing() + (widgetSize + ImGui.GetStyle().WindowPadding.Y) + 12f));
             ImGui.BeginChild(label, childSize, true);
-            ImGuiEx.ImGuiLineCentered($"{label}", () => ImGuiEx.TextUnderlined($"{label}"));
+            ImGuiEx.LineCentered($"{label}", () => ImGuiEx.TextUnderlined($"{label}"));
             func();
             ImGui.EndChild();
         }
@@ -965,11 +965,11 @@ namespace Artisan.UI
                 var percentage = Math.Clamp((double)startingQuality / max * 100, 0, 100);
                 var hqChance = Calculations.GetHQChance(percentage);
 
-                ImGuiEx.ImGuiLineCentered("StartingQuality", () =>
+                ImGuiEx.LineCentered("StartingQuality", () =>
                 {
                     ImGuiEx.Text($"起手品质：{startingQuality} / {max} （{hqChance}% HQ机会, {percentage.ToString("N0")}% 品质）");
                 });
-                ImGuiEx.ImGuiLineCentered("ExpertInfo", () =>
+                ImGuiEx.LineCentered("ExpertInfo", () =>
                 {
                     ImGuiEx.Text($"{(SelectedRecipe.Value.IsExpert ? "高难度配方" : SelectedRecipe.Value.SecretRecipeBook.RowId > 0 ? "秘籍" : "普通配方")}");
                 });
@@ -990,7 +990,7 @@ namespace Artisan.UI
             if (!group)
                 return;
 
-            ImGuiEx.ImGuiLineCentered("###LayoutIngredients", () => ImGuiEx.TextUnderlined("原料配比"));
+            ImGuiEx.LineCentered("###LayoutIngredients", () => ImGuiEx.TextUnderlined("原料配比"));
             using var table = ImRaii.Table("###SimulatorRecipeIngredients", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.NoHostExtendX);
             if (!table)
                 return;

@@ -17,6 +17,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using ECommons.GameHelpers;
+using System.Diagnostics.Tracing;
 
 namespace Artisan.CraftingLogic;
 
@@ -49,7 +51,7 @@ public class RecipeConfig
     public bool RequiredFoodHQ => requiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : requiredFoodHQ;
     public bool RequiredPotionHQ => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : requiredPotionHQ;
 
-
+    
     public string FoodName => requiredFood == Default ? $"{P.Config.DefaultConsumables.FoodName} (默认)" : RequiredFood == Disabled ? "已禁用" : $"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
     public string PotionName => requiredPotion == Default ? $"{P.Config.DefaultConsumables.PotionName} (默认)" : RequiredPotion == Disabled ? "已禁用" : $"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
     public string ManualName => requiredManual == Default ? $"{P.Config.DefaultConsumables.ManualName} (默认)" : RequiredManual == Disabled ? "已禁用" : $"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
@@ -71,7 +73,7 @@ public class RecipeConfig
         changed |= DrawPotion();
         changed |= DrawManual();
         changed |= DrawSquadronManual();
-        changed |= DrawSolver(craft);
+        changed |= DrawSolver(craft, liveStats: Player.JobId == craft.Recipe.CraftType.RowId + 8);
         DrawSimulator(craft);
         return changed;
     }

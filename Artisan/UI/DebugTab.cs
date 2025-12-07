@@ -28,6 +28,7 @@ using System;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using static ECommons.GenericHelpers;
+using RepairManager = Artisan.Autocraft.RepairManager;
 
 namespace Artisan.UI
 {
@@ -179,7 +180,7 @@ namespace Artisan.UI
                         ImGui.TableNextColumn();
                         ImGui.Text($"{v.requiredSquadronManual}");
                         ImGui.TableNextColumn();
-                        ImGui.Text($"{v.SolverType}");
+                        ImGui.Text($"{v.SolverType.Split('.').Last()}");
                         ImGui.TableNextColumn();
                         ImGui.Text($"{v.SolverFlavour}");
                     }

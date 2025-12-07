@@ -1,6 +1,7 @@
 ﻿using Artisan.Autocraft;
 using Artisan.CraftingLogic;
 using Artisan.CraftingLogic.CraftData;
+using Artisan.CraftingLogic.Solvers;
 using Artisan.GameInterop.CSExt;
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
@@ -14,7 +15,6 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
-using OtterGui;
 using System;
 using System.Linq;
 using Condition = Artisan.CraftingLogic.CraftData.Condition;
@@ -57,11 +57,11 @@ public static unsafe class Crafting
     public static event CraftStartedDelegate? CraftStarted;
 
     // note: step index increases for most actions (except final appraisal / careful observation / heart&soul)
-    public delegate void CraftAdvancedDelegate(Recipe recipe, CraftState craft, StepState step);
+    public delegate void CraftAdvancedDelegate(Recipe? recipe, CraftState craft, StepState step);
     public static event CraftAdvancedDelegate? CraftAdvanced;
 
     // note: final action that completes/fails a craft does not advance step index
-    public delegate void CraftFinishedDelegate(Recipe recipe, CraftState craft, StepState finalStep, bool cancelled);
+    public delegate void CraftFinishedDelegate(Recipe? recipe, CraftState craft, StepState finalStep, bool cancelled);
     public static event CraftFinishedDelegate? CraftFinished;
 
     public delegate void QuickSynthProgressDelegate(int cur, int max);
@@ -118,7 +118,7 @@ public static unsafe class Crafting
             IsCosmic = recipe.Number == 0,
             ConditionFlags = (ConditionFlags)lt.ConditionsFlag,
             MissionHasMaterialMiracle = recipe.MissionHasMaterialMiracle(),
-            LevelTable = lt
+            LevelTable = lt,
         };
 
         if (res.CraftCollectible)
@@ -358,14 +358,37 @@ public static unsafe class Crafting
         var canHQ = CurRecipe.Value.CanHq;
         CurCraft = BuildCraftStateForRecipe(CharacterStats.GetCurrentStats(), CharacterInfo.JobID, CurRecipe!.Value);
         if (CurCraft != null)
+        {
             CurCraft.InitialQuality = InitialQuality;
-        CurStep = BuildStepState(synthWindow, null, CurCraft);
-        if (CurStep.Index != 1 || CurStep.Condition != Condition.Normal || CurStep.PrevComboAction != Skills.None)
-            Svc.Log.Error($"Unexpected initial state: {CurStep}");
+            if (P.Config.RecipeConfigs.TryGetValue(CurRecipe.Value.RowId, out var rc))
+            {
+                if (rc.SolverType.Contains("Raphael") && !RaphaelCache.HasSolution(CurCraft, out _))
+                {
+                    var key = RaphaelCache.GetKey(CurCraft);
+                    if (RaphaelCache.Tasks.ContainsKey(key))
+                        return State.WaitStart;
 
-        IsTrial = synthWindow->AtkUnitBase.AtkValues[1] is { Type: FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool, Byte: 1 };
-        CraftStarted?.Invoke(CurRecipe.Value, CurCraft, CurStep, IsTrial);
-        return State.InProgress;
+                    Svc.Log.Debug("Raphael set as config but has no solution, generating now...");
+                    var config = new RaphaelSolutionConfig();
+
+                    config.EnsureReliability = P.Config.RaphaelSolverConfig.AllowEnsureReliability;
+                    config.BackloadProgress = P.Config.RaphaelSolverConfig.AllowBackloadProgress;
+                    config.HeartAndSoul = P.Config.RaphaelSolverConfig.ShowSpecialistSettings && CurCraft.Specialist;
+                    config.QuickInno = P.Config.RaphaelSolverConfig.ShowSpecialistSettings && CurCraft.Specialist;
+
+                    RaphaelCache.Build(CurCraft, config);
+                    return State.WaitStart; // wait for solution to be ready
+                }
+            }
+            CurStep = BuildStepState(synthWindow, null, CurCraft);
+            if (CurStep.Index != 1 || CurStep.Condition != Condition.Normal || CurStep.PrevComboAction != Skills.None)
+                Svc.Log.Error($"Unexpected initial state: {CurStep}");
+
+            IsTrial = synthWindow->AtkUnitBase.AtkValues[1] is { Type: FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool, Byte: 1 };
+            CraftStarted?.Invoke(CurRecipe.Value, CurCraft, CurStep, IsTrial);
+            return State.InProgress;
+        }
+        return State.WaitStart;
     }
 
     private static State TransitionFromInProgress()
@@ -383,7 +406,7 @@ public static unsafe class Crafting
         if (synthWindow == null)
         {
             // craft was aborted
-            CraftFinished?.Invoke(CurRecipe.Value, CurCraft!, CurStep!, true);
+            CraftFinished?.Invoke(CurRecipe, CurCraft!, CurStep!, true);
             return State.WaitFinish;
         }
 
@@ -396,7 +419,7 @@ public static unsafe class Crafting
             CurStep = BuildStepState(synthWindow, _predictedNextStep, CurCraft);
             _predictedNextStep = null;
             _predictionDeadline = default;
-            CraftFinished?.Invoke(CurRecipe.Value!, CurCraft, CurStep, false);
+            CraftFinished?.Invoke(CurRecipe, CurCraft, CurStep, false);
             return State.WaitFinish;
         }
         else
@@ -420,7 +443,7 @@ public static unsafe class Crafting
             CurStep = step;
             _predictedNextStep = null;
             _predictionDeadline = default;
-            CraftAdvanced?.Invoke(CurRecipe.Value, CurCraft, CurStep);
+            CraftAdvanced?.Invoke(CurRecipe, CurCraft, CurStep);
             return State.InProgress;
         }
     }
@@ -594,26 +617,26 @@ public static unsafe class Crafting
         try
         {
             Svc.Log.Verbose($"CEH hook: {*payload}");
-            switch(*payload)
+            switch (*payload)
             {
                 case CraftingEventHandler.OperationId.StartPrepare:
                     // this is sent immediately upon starting (quick) synth and does nothing interesting other than resetting the state
                     // transition (ExecutingCraftingAction) is set slightly earlier by client when initiating the craft
                     // the actual crafting states (setting Crafting and clearing PreparingToCraft) set in response to this message
-                    if(CurState is not State.WaitStart and not State.IdleBetween)
+                    if (CurState is not State.WaitStart and not State.IdleBetween)
                         Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
                     break;
                 case CraftingEventHandler.OperationId.StartInfo:
                     // this is sent few 100s of ms after StartPrepare for normal synth and contains details of the recipe
                     // client stores the information in payload in event handler, but we continue waiting
                     var startPayload = (CraftingEventHandler.StartInfo*)payload;
-                    if(CurState != State.WaitStart)
+                    if (CurState != State.WaitStart)
                         Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
                     Svc.Log.Debug($"Starting craft: recipe #{startPayload->RecipeId}, initial quality {startPayload->StartingQuality}, u8={startPayload->u8}");
-                    if(CurRecipe != null)
+                    if (CurRecipe != null)
                         Svc.Log.Error($"Unexpected non-null recipe when receiving {*payload} message");
                     CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRow(startPayload->RecipeId);
-                    if(CurRecipe == null)
+                    if (CurRecipe == null)
                         Svc.Log.Error($"Failed to find recipe #{startPayload->RecipeId}");
 
                     InitialQuality = startPayload->StartingQuality;
@@ -622,13 +645,13 @@ public static unsafe class Crafting
                 case CraftingEventHandler.OperationId.StartReady:
                     // this is sent few 100s of ms after StartInfo for normal synth and instructs client to start synth session - set up addon, etc
                     // transition (ExecutingCraftingAction) will be cleared in a few frames
-                    if(CurState != State.WaitStart)
+                    if (CurState != State.WaitStart)
                         Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
                     break;
                 case CraftingEventHandler.OperationId.Finish:
                     // this is sent few seconds after last action that completed the craft or quick synth and instructs client to exit the finish transition
                     // transition (ExecutingCraftingAction) is cleared in response to this message
-                    if(CurState is not State.WaitFinish and not State.IdleBetween)
+                    if (CurState is not State.WaitFinish and not State.IdleBetween)
                         Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
                     break;
                 case CraftingEventHandler.OperationId.Abort:
@@ -636,11 +659,11 @@ public static unsafe class Crafting
                     // transition (ExecutingCraftingAction) is set slightly earlier by client when aborting the craft
                     // actual craft state (Crafting) is cleared several seconds later
                     // currently we rely on addon disappearing to detect aborts (for robustness), it can happen either before or after Abort message
-                    if(CurState is not State.WaitAction and not State.WaitFinish and not State.IdleBetween)
+                    if (CurState is not State.WaitAction and not State.WaitFinish and not State.IdleBetween)
                         Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
-                    if(_predictedNextStep != null)
+                    if (_predictedNextStep != null)
                         Svc.Log.Error($"Unexpected non-null predicted-next when receiving {*payload} message");
-                    if(CurCraft is not null && CurCraft.IsCosmic && Endurance.Enable)
+                    if (CurCraft is not null && CurCraft.IsCosmic && Endurance.Enable)
                         Endurance.ToggleEndurance(false);
 
                     CurState = State.Exiting;
@@ -652,13 +675,13 @@ public static unsafe class Crafting
                     // transition (ExecutingCraftingAction) will be cleared in a few frames, if this action did not complete the craft
                     // if there are any status changes (e.g. remaining step updates) and if craft is not complete, these will be updated by the next StatusEffectList packet, which might arrive with a delay
                     // because of that, we wait until statuses match prediction (or too much time passes) before transitioning to InProgress
-                    if(CurState is not State.WaitAction or State.InProgress)
+                    if (CurState is not State.WaitAction or State.InProgress)
                     {
                         Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message"); //Probably an invalid state, so most data will not be set causing CTD
                         _craftingEventHandlerUpdateHook.Original(self, a2, a3, payload);
                         return;
                     }
-                    if(_predictedNextStep != null)
+                    if (_predictedNextStep != null)
                     {
                         Svc.Log.Error($"Unexpected non-null predicted-next when receiving {*payload} message");
                         _predictedNextStep = null;
@@ -666,7 +689,7 @@ public static unsafe class Crafting
                     var advancePayload = (CraftingEventHandler.AdvanceStep*)payload;
                     bool complete = advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.CompleteSuccess) || advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.CompleteFail);
                     Svc.Log.Debug($"AdvanceActionComplete: {complete}");
-                    if(CurCraft == null || CurStep == null)
+                    if (CurCraft == null || CurStep == null)
                     {
                         PluginLog.Error($"An unexpected error occurred. CurCraft={CurCraft}, CurStep={CurStep}");
                         goto Original;
@@ -674,54 +697,54 @@ public static unsafe class Crafting
                     _predictedNextStep = Simulator.Execute(CurCraft!, CurStep!, advancePayload->LastActionId == (uint)Skills.MaterialMiracle ? Skills.MaterialMiracle : SkillActionMap.ActionToSkill(advancePayload->LastActionId), advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.LastActionSucceeded) ? 0 : 1, 1).Item2;
                     _predictedNextStep.Condition = (Condition)(advancePayload->ConditionPlus1 - 1);
                     // fix up predicted state to match what game sends
-                    if(complete)
+                    if (complete)
                         _predictedNextStep.Index = CurStep.Index; // step is not advanced for final actions
                     _predictedNextStep.Progress = Math.Min(_predictedNextStep.Progress, CurCraft.CraftProgress);
                     _predictedNextStep.Quality = Math.Min(_predictedNextStep.Quality, CurCraft.CraftQualityMax);
                     _predictedNextStep.Durability = Math.Max(_predictedNextStep.Durability, 0);
                     // validate sim predictions
-                    if(_predictedNextStep.Index != advancePayload->StepIndex)
+                    if (_predictedNextStep.Index != advancePayload->StepIndex)
                         Svc.Log.Error($"Prediction error: expected step #{advancePayload->StepIndex}, got {_predictedNextStep.Index}");
-                    if(_predictedNextStep.Progress != advancePayload->CurProgress)
+                    if (_predictedNextStep.Progress != advancePayload->CurProgress)
                         Svc.Log.Error($"Prediction error: expected progress {advancePayload->CurProgress}, got {_predictedNextStep.Progress}");
-                    if(_predictedNextStep.Quality != advancePayload->CurQuality)
+                    if (_predictedNextStep.Quality != advancePayload->CurQuality)
                         Svc.Log.Error($"Prediction error: expected quality {advancePayload->CurQuality}, got {_predictedNextStep.Quality}");
-                    if(_predictedNextStep.Durability != advancePayload->CurDurability)
+                    if (_predictedNextStep.Durability != advancePayload->CurDurability)
                         Svc.Log.Error($"Prediction error: expected durability {advancePayload->CurDurability}, got {_predictedNextStep.Durability}");
                     var predictedDeltaProgress = _predictedNextStep.PrevActionFailed ? 0 : Simulator.CalculateProgress(CurCraft!, CurStep!, _predictedNextStep.PrevComboAction);
                     var predictedDeltaQuality = _predictedNextStep.PrevActionFailed ? 0 : Simulator.CalculateQuality(CurCraft!, CurStep!, _predictedNextStep.PrevComboAction);
                     var predictedDeltaDurability = _predictedNextStep.PrevComboAction == Skills.MastersMend ? 30 : _predictedNextStep.PrevComboAction == Skills.ImmaculateMend ? 100 : -Simulator.GetDurabilityCost(CurStep!, _predictedNextStep.PrevComboAction);
-                    if(predictedDeltaProgress != advancePayload->DeltaProgress)
+                    if (predictedDeltaProgress != advancePayload->DeltaProgress)
                         Svc.Log.Error($"Prediction error: expected progress delta {advancePayload->DeltaProgress}, got {predictedDeltaProgress}");
-                    if(predictedDeltaQuality != advancePayload->DeltaQuality)
+                    if (predictedDeltaQuality != advancePayload->DeltaQuality)
                         Svc.Log.Error($"Prediction error: expected quality delta {advancePayload->DeltaQuality}, got {predictedDeltaQuality}");
-                    if(predictedDeltaDurability != advancePayload->DeltaDurability)
+                    if (predictedDeltaDurability != advancePayload->DeltaDurability)
                         Svc.Log.Error($"Prediction error: expected durability delta {advancePayload->DeltaDurability}, got {predictedDeltaDurability}");
-                    if((_predictedNextStep.Progress >= CurCraft!.CraftProgress || _predictedNextStep.Durability <= 0) != complete)
+                    if ((_predictedNextStep.Progress >= CurCraft!.CraftProgress || _predictedNextStep.Durability <= 0) != complete)
                         Svc.Log.Error($"Prediction error: unexpected completion state diff (got {complete})");
                     _predictionDeadline = DateTime.Now.AddSeconds(0.5f); // if we don't get status effect list quickly enough, bail out...
                     break;
                 case CraftingEventHandler.OperationId.QuickSynthStart:
                     // this is sent a few seconds after StartPrepare for quick synth and contains details of the recipe
                     // client stores the information in payload in event handler and opens the addon
-                    if(CurState != State.WaitStart)
+                    if (CurState != State.WaitStart)
                         Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
                     var quickSynthPayload = (CraftingEventHandler.QuickSynthStart*)payload;
                     Svc.Log.Debug($"Starting quicksynth: recipe #{quickSynthPayload->RecipeId}, count {quickSynthPayload->MaxCount}");
-                    if(CurRecipe != null)
+                    if (CurRecipe != null)
                         Svc.Log.Error($"Unexpected non-null recipe when receiving {*payload} message");
                     CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRow(quickSynthPayload->RecipeId);
-                    if(CurRecipe == null)
+                    if (CurRecipe == null)
                         Svc.Log.Error($"Failed to find recipe #{quickSynthPayload->RecipeId}");
                     break;
                 case CraftingEventHandler.OperationId.QuickSynthProgress:
                     // this is sent a ~second after ActorControl that contains the actual new counts
-                    if(CurState != State.QuickCraft)
+                    if (CurState != State.QuickCraft)
                         Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
                     break;
             }
         }
-        catch(Exception e)
+        catch (Exception e)
         {
             e.Log();
         }

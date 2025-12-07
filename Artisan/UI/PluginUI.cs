@@ -994,7 +994,7 @@ namespace Artisan.UI
 
                 if (ThreadLoadImageHandler.TryGetTextureWrap(imagePath, out var img))
                 {
-                    ImGuiEx.ImGuiLineCentered("###EnduranceNewSetting", () =>
+                    ImGuiEx.LineCentered("###EnduranceNewSetting", () =>
                     {
                         ImGui.Image(img.Handle, new Vector2(img.Width, img.Height));
                     });

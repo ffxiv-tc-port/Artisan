@@ -1,4 +1,5 @@
-﻿using Artisan.GameInterop;
+﻿using Artisan.Autocraft;
+using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.UI;
 using Dalamud.Bindings.ImGui;
@@ -7,8 +8,10 @@ using Dalamud.Interface.Components;
 using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
+using ECommons.GameHelpers;
 using ECommons.ImGuiMethods;
 using ECommons.Logging;
+using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -105,7 +108,19 @@ namespace Artisan.CraftingLogic.Solvers
                 Svc.Log.Information(process.StartInfo.Arguments);
 
                 var cts = new CancellationTokenSource();
-                cts.Token.Register(() => { process.Kill(); Tasks.Remove(key, out var _); });
+                cts.Token.Register(() =>
+                {
+                    try
+                    {
+                        process?.Kill();
+                    }
+                    catch (Exception ex)
+                    {
+                        ex.Log("Couldn't remove process, likely already completed.");
+                    }
+                    Tasks.TryRemove(key, out var _);
+                } 
+                );
                 cts.CancelAfter(TimeSpan.FromMinutes(P.Config.RaphaelSolverConfig.TimeOutMins));
 
                 var task = Task.Run(() =>
@@ -119,6 +134,9 @@ namespace Artisan.CraftingLogic.Solvers
                         cts.Cancel();
                         return;
                     }
+                    cts.Token.ThrowIfCancellationRequested();
+
+                    Svc.Log.Information("Raphael process completed, output generated");
                     var rng = new Random();
                     var ID = rng.Next(50001, 10000000);
                     while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
@@ -141,7 +159,7 @@ namespace Artisan.CraftingLogic.Solvers
                         }
                     };
 
-                    cts.Token.ThrowIfCancellationRequested();
+                    Svc.Log.Information("Raphael macro generated and stored in cache.");
                     if (P.Config.RaphaelSolverCacheV3[key] == null || P.Config.RaphaelSolverCacheV3[key].Steps.Count == 0)
                     {
                         Svc.Log.Error($"Raphael 无法生成有效的宏。这可能是以下原因之一：" +
@@ -167,27 +185,29 @@ namespace Artisan.CraftingLogic.Solvers
 
                     if (P.Config.RaphaelSolverConfig.AutoSwitch)
                     {
+                        Svc.Log.Information("已启用自动切换，如果适用，则切换求解器。");
                         if (!P.Config.RaphaelSolverConfig.AutoSwitchOnAll)
                         {
-                            Svc.Log.Debug("切换到 Raphael 求解器");
+                            Svc.Log.Debug("切换到 Raphael 求解器 - 单个配方");
                             var nopt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
                             if (nopt is { } opt)
                             {
                                 if (autoSwitchOk(craft.Recipe.RowId))
                                 {
+                                    Svc.Log.Information("自动切换检查通过，正在设置配置");    
                                     var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
                                     config.SolverType = opt.Def.GetType().FullName!;
                                     config.SolverFlavour = opt.Flavour;
                                     P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
                                 }
                                 else
-                                    Svc.Log.Debug("算了，配方已经有宏分配了");
+                                    Svc.Log.Information("配方已有宏分配，跳过切换。");
                             }
                         }
                         else
                         {
                             var crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId).ToList();
-                            Svc.Log.Debug($"将求解器应用到 {crafts.Count} 个配方。");
+                            Svc.Log.Information($"将求解器应用到 {crafts.Count} 个配方。");
                             var nopt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
                             if (nopt is { } opt)
                             {
@@ -198,16 +218,19 @@ namespace Artisan.CraftingLogic.Solvers
                                 {
                                     if (autoSwitchOk(c.Recipe.RowId))
                                     {
-                                        Svc.Log.Debug($"将 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) 切换到 Raphael 求解器");
+                                        Svc.Log.Information($"将 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) 切换到 Raphael 求解器");
                                         P.Config.RecipeConfigs[c.Recipe.RowId] = config;
                                     }
                                     else
-                                        Svc.Log.Debug($"跳过 {c.Recipe.RowId}（{c.Recipe.ItemResult.Value.Name}），因为该配方已分配了宏");
+                                        Svc.Log.Information($"跳过 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name})，该配方已分配了宏");
                                 }
                             }
                         }
                     }
+                    Svc.Log.Information("保存 Raphael 生成后的配置更改。");
                     P.Config.Save();
+
+                    Svc.Log.Information("清理任务。");
                     Tasks.Remove(key, out var _);
                 }, cts.Token);
 
@@ -306,12 +329,6 @@ namespace Artisan.CraftingLogic.Solvers
                     var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
                     var solverIsRaph = config.SolverType == opt?.Def.GetType().FullName!;
                     var curStats = CharacterStats.GetCurrentStats();
-                    //Svc.Log.Debug($"{curStats.Craftsmanship}/{craft.StatCraftsmanship} - {curStats.Control}/{craft.StatControl} - {curStats.CP}/{craft.StatCP}");
-                    if (liveStats && craft.StatCraftsmanship != curStats.Craftsmanship && solverIsRaph)
-                    {
-                        var craftsmanshipError = curStats.Craftsmanship - craft.StatCraftsmanship > 0 ? $"(超出 {curStats.Craftsmanship - craft.StatCraftsmanship}) " : "";
-                        ImGuiEx.Text(ImGuiColors.DalamudRed, $"您当前的制作力 {craftsmanshipError}与生成的结果不匹配。\n由于可能提前完成，此求解器在匹配之前不会被使用。\n(您可能需要应用正确的增益效果)");
-                    }
 
                     if (!solverIsRaph)
                     {
@@ -330,17 +347,60 @@ namespace Artisan.CraftingLogic.Solvers
                             ImGuiEx.TextCentered($"已生成 Raphael 解决方案。");
                         }
                     }
+                    else
+                    {
+                        ImGuiEx.TextCentered($"解决方案密钥: {key}");
+                        var playerIsJob = Player.JobId == craft.Recipe.CraftType.RowId + 8;
+                        var parts = KeyParts(key);
+                        if (!playerIsJob)
+                            ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"当前不是对应职业。");
+                        else
+                        {
+                            if (curStats.Craftsmanship == craft.StatCraftsmanship)
+                                ImGuiEx.TextCentered(ImGuiColors.HealerGreen, $"作业精度满足解决方案需求: {parts.Crafts}。");
+                            else
+                            {
+                                ImGuiEx.TextCentered(ImGuiColors.DPSRed, $"解决方案({craft.StatCraftsmanship})与当前作业精度({curStats.Craftsmanship})存在差异。\n在解决此问题前不会使用Raphael。");
+                                var foodIsCrafts = ConsumableChecker.GetItemConsumableProperties(LuminaSheets.ItemSheet[config.RequiredFood], false)?.Params.Any(x => x.BaseParam.RowId is 70);
+                                if (foodIsCrafts == true)
+                                    ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(设置的食物是作业精度食物，此问题在增益生效后可能会解决)");
+
+                                var potIsCrafts = ConsumableChecker.GetItemConsumableProperties(LuminaSheets.ItemSheet[config.RequiredPotion], false)?.Params.Any(x => x.BaseParam.RowId is 70);
+                                if (potIsCrafts == true)
+                                    ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(设置的药水是作业精度药水，此问题在增益生效后可能会解决)");
+
+                                if ((foodIsCrafts == null || foodIsCrafts == false) && (potIsCrafts == null || potIsCrafts == false))
+                                    ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(您当前有提供作业精度的进食/药剂增益\n但未设置为食物/药水，移除这些增益可能解决此问题)");
+
+                                var diffPos = Math.Abs(craft.StatCraftsmanship - curStats.Craftsmanship);
+                                var diffAct = (craft.StatCraftsmanship - curStats.Craftsmanship);
+                                if (diffPos % 5 == 0)
+                                    if (diffAct > 0)
+                                        ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(此解决方案可能是在有部队作业精度增益时生成的，而您现在没有)");
+                                    else
+                                        ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(您可能有部队作业精度增益，但在生成解决方案时该增益未激活)");
+                            }
+                        }
+
+                    }
                 }
                 else
                 {
-                    if (liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
+                    if (P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any() && (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts)))
                     {
-                        if (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts))
+                        if (liveStats && Player.JobId == craft.Recipe.CraftType.RowId + 8)
+                        {
                             Build(craft, TempConfigs[key]);
+                        }
+                        else
+                        {
+                            ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"Raphael解决方案将在当前职业为{Svc.Data.GetExcelSheet<ClassJob>().GetRow(craft.Recipe.CraftType.RowId + 8).Abbreviation}时自动生成。");
+                        }
                     }
                 }
 
                 ImGui.Separator();
+
                 var inProgress = InProgress(craft);
                 var raphChanges = false;
 
@@ -402,7 +462,7 @@ namespace Artisan.CraftingLogic.Solvers
     public class RaphaelSolverSettings
     {
         public bool AllowEnsureReliability = false;
-        public bool AllowBackloadProgress = false;
+        public bool AllowBackloadProgress = true;
         public bool ShowSpecialistSettings = false;
         public bool ExactCraftsmanship = false;
         public bool AutoGenerate = false;

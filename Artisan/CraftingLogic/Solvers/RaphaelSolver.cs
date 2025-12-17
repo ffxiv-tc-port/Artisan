@@ -39,8 +39,8 @@ namespace Artisan.CraftingLogic.Solvers
 
         public IEnumerable<ISolverDefinition.Desc> Flavours(CraftState craft)
         {
-            if (RaphaelCache.HasSolution(craft, out var solution))
-                yield return new(this, 3, 0, $"Raphael 配方求解器");
+            //if (RaphaelCache.HasSolution(craft, out var solution))
+            yield return new(this, 3, 0, $"Raphael 配方求解器");
         }
     }
 
@@ -119,7 +119,7 @@ namespace Artisan.CraftingLogic.Solvers
                         ex.Log("Couldn't remove process, likely already completed.");
                     }
                     Tasks.TryRemove(key, out var _);
-                } 
+                }
                 );
                 cts.CancelAfter(TimeSpan.FromMinutes(P.Config.RaphaelSolverConfig.TimeOutMins));
 
@@ -194,7 +194,7 @@ namespace Artisan.CraftingLogic.Solvers
                             {
                                 if (autoSwitchOk(craft.Recipe.RowId))
                                 {
-                                    Svc.Log.Information("自动切换检查通过，正在设置配置");    
+                                    Svc.Log.Information("自动切换检查通过，正在设置配置");
                                     var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
                                     config.SolverType = opt.Def.GetType().FullName!;
                                     config.SolverFlavour = opt.Flavour;
@@ -324,10 +324,10 @@ namespace Artisan.CraftingLogic.Solvers
                     TempConfigs[key].QuickInno = P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist;
                 }
 
+                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael Recipe Solver");
+                var solverIsRaph = config.SolverType == opt?.Def.GetType().FullName!;
                 if (hasSolution)
                 {
-                    var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
-                    var solverIsRaph = config.SolverType == opt?.Def.GetType().FullName!;
                     var curStats = CharacterStats.GetCurrentStats();
 
                     if (!solverIsRaph)
@@ -386,6 +386,7 @@ namespace Artisan.CraftingLogic.Solvers
                 }
                 else
                 {
+                    ImGuiEx.TextCentered(ImGuiColors.DalamudRed, "No Raphael Solution Generated.");
                     if (P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any() && (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts)))
                     {
                         if (liveStats && Player.JobId == craft.Recipe.CraftType.RowId + 8)

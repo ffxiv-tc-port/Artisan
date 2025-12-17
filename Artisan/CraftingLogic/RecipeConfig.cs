@@ -290,6 +290,9 @@ public class RecipeConfig
                 if (craft.MissionHasMaterialMiracle && solver.Name == "标准配方求解器" && P.Config.UseMaterialMiracle)
                     ImGuiEx.TextWrapped($"这将使用“奇迹之材”，与模拟器不兼容。");
                 else
+                if (solver.Name == "Raphael Recipe Solver" && !RaphaelCache.HasSolution(craft, out _))
+                    ImGuiEx.TextWrapped($"Unable to generate a simulator without a Raphael solution generated.");
+                else
                     ImGuiEx.TextWrapped(hintColor, solverHint);
             }
             else

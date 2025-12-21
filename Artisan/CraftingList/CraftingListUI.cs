@@ -54,16 +54,20 @@ namespace Artisan.CraftingLists
 
         internal static void Draw()
         {
-            ImGui.TextWrapped($"制作清单是将不同的制作品按队列排序依次制作的绝佳方式。请使用底部的按钮导入Teamcraft清单来创建制作清单，或单击“+”图标并命名来创建制作清单。" +
-                              $" 你也可以右键单击游戏配方菜单中的某个物品，如果未选择它，则将其添加到新清单中，或者如果未选择清单，则将其作为第一个物品创建新清单。");
+            try
+            {
+                ImGui.TextWrapped($"制作清单是将不同的制作品按队列排序依次制作的绝佳方式。请使用底部的按钮导入Teamcraft清单来创建制作清单，或单击“+”图标并命名来创建制作清单。" +
+                                  $"你也可以右键单击游戏配方菜单中的某个物品，如果未选择它，则将其添加到新清单中，或者如果未选择清单，则将其作为第一个物品创建新清单。");
 
-            ImGui.Dummy(new Vector2(0, 14f));
-            ImGui.TextWrapped("左键单击清单打开编辑器。右键单击清单将其选中而不打开编辑器。");
+                ImGui.Dummy(new Vector2(0, 14f));
+                ImGui.TextWrapped("左键单击清单打开编辑器。右键单击清单将其选中而不打开编辑器。");
 
-            ImGui.Separator();
+                ImGui.Separator();
 
-            DrawListOptions();
-            ImGui.Spacing();
+                DrawListOptions();
+                ImGui.Spacing();
+            }
+            catch { }
         }
 
         private static void DrawListOptions()

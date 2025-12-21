@@ -64,7 +64,7 @@ namespace Artisan.UI
             this.TitleBarButtons.Add(new()
             {
                 Icon = FontAwesomeIcon.Cog,
-                ShowTooltip = () => ImGuiEx.SetTooltip("Open Config"),
+                ShowTooltip = () => ImGuiEx.SetTooltip("打开配置"),
                 Click = (x) => P.PluginUi.IsOpen = true,
             });
             P.ws.AddWindow(this);
@@ -96,193 +96,196 @@ namespace Artisan.UI
 
         public override void Draw()
         {
-            if (DalamudInfo.IsOnStaging())
-            {
-                var scale = ImGui.GetIO().FontGlobalScale;
-                ImGui.GetIO().FontGlobalScale = scale * 1.5f;
-                using (var f = ImRaii.PushFont(ImGui.GetFont()))
-                {
-                    ImGuiEx.TextWrapped($"听着，兄弟，你现在用的是Dalamud的测试版，遇到任何问题都可能是在Dalamud测试版上特有的，跟Artisan无关。这个插件不是为测试版开发的，所以除非问题出现在Dalamud正式版中，否则别指望我会修复。");
-                    ImGui.Separator();
-
-                    ImGui.Spacing();
-                    ImGui.GetIO().FontGlobalScale = scale;
-                }
-
-            }
-            var region = ImGui.GetContentRegionAvail();
-            var itemSpacing = ImGui.GetStyle().ItemSpacing;
-
-            var topLeftSideHeight = region.Y;
-
-            ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(5f.Scale(), 0));
             try
             {
-                ShowEnduranceMessage();
-
-                using (var table = ImRaii.Table($"ArtisanTableContainer", 2, ImGuiTableFlags.Resizable))
+                if (DalamudInfo.IsOnStaging())
                 {
-                    if (!table)
-                        return;
-
-                    ImGui.TableSetupColumn("##LeftColumn", ImGuiTableColumnFlags.WidthFixed, ImGui.GetWindowWidth() / 2);
-
-                    ImGui.TableNextColumn();
-
-                    var regionSize = ImGui.GetContentRegionAvail();
-
-                    ImGui.PushStyleVar(ImGuiStyleVar.SelectableTextAlign, new Vector2(0.5f, 0.5f));
-                    using (var leftChild = ImRaii.Child($"###ArtisanLeftSide", regionSize with { Y = topLeftSideHeight }, false, ImGuiWindowFlags.NoDecoration))
+                    var scale = ImGui.GetIO().FontGlobalScale;
+                    ImGui.GetIO().FontGlobalScale = scale * 1.5f;
+                    using (var f = ImRaii.PushFont(ImGui.GetFont()))
                     {
-                        var imagePath = Path.Combine(Svc.PluginInterface.AssemblyLocation.DirectoryName!, "Images/artisan-icon.png");
-
-                        if (ThreadLoadImageHandler.TryGetTextureWrap(imagePath, out var logo))
-                        {
-                            ImGuiEx.LineCentered("###ArtisanLogo", () =>
-                            {
-                                ImGui.Image(logo.Handle, new(100f.Scale(), 100f.Scale()));
-                                if (ImGui.IsItemHovered())
-                                {
-                                    ImGui.BeginTooltip();
-                                    ImGui.Text($"真棒！你是第69个发现这个秘密的人。");
-                                    ImGui.EndTooltip();
-                                }
-                            });
-
-                        }
-                        ImGui.Spacing();
+                        ImGuiEx.TextWrapped($"听着，兄弟，你现在用的是Dalamud的测试版，遇到任何问题都可能是在Dalamud测试版上特有的，跟Artisan无关。这个插件不是为测试版开发的，所以除非问题出现在Dalamud正式版中，否则别指望我会修复。");
                         ImGui.Separator();
 
-                        if (ImGui.Selectable("插件概述", OpenWindow == OpenWindow.Overview))
-                        {
-                            OpenWindow = OpenWindow.Overview;
-                        }
                         ImGui.Spacing();
-                        if (ImGui.Selectable("插件设置", OpenWindow == OpenWindow.Main))
+                        ImGui.GetIO().FontGlobalScale = scale;
+                    }
+
+                }
+                var region = ImGui.GetContentRegionAvail();
+                var itemSpacing = ImGui.GetStyle().ItemSpacing;
+
+                var topLeftSideHeight = region.Y;
+
+                ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(5f.Scale(), 0));
+                try
+                {
+                    ShowEnduranceMessage();
+
+                    using (var table = ImRaii.Table($"ArtisanTableContainer", 2, ImGuiTableFlags.Resizable))
+                    {
+                        if (!table)
+                            return;
+
+                        ImGui.TableSetupColumn("##LeftColumn", ImGuiTableColumnFlags.WidthFixed, ImGui.GetWindowWidth() / 2);
+
+                        ImGui.TableNextColumn();
+
+                        var regionSize = ImGui.GetContentRegionAvail();
+
+                        ImGui.PushStyleVar(ImGuiStyleVar.SelectableTextAlign, new Vector2(0.5f, 0.5f));
+                        using (var leftChild = ImRaii.Child($"###ArtisanLeftSide", regionSize with { Y = topLeftSideHeight }, false, ImGuiWindowFlags.NoDecoration))
                         {
-                            OpenWindow = OpenWindow.Main;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("耐力模式", OpenWindow == OpenWindow.Endurance))
-                        {
-                            OpenWindow = OpenWindow.Endurance;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("宏", OpenWindow == OpenWindow.Macro))
-                        {
-                            OpenWindow = OpenWindow.Macro;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("Raphael 缓存", OpenWindow == OpenWindow.RaphaelCache))
-                        {
-                            OpenWindow = OpenWindow.RaphaelCache;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("配方分配器", OpenWindow == OpenWindow.Assigner))
-                        {
-                            OpenWindow = OpenWindow.Assigner;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("制作清单", OpenWindow == OpenWindow.Lists))
-                        {
-                            OpenWindow = OpenWindow.Lists;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("清单生成器", OpenWindow == OpenWindow.SpecialList))
-                        {
-                            OpenWindow = OpenWindow.SpecialList;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("部队工房", OpenWindow == OpenWindow.FCWorkshop))
-                        {
-                            OpenWindow = OpenWindow.FCWorkshop;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("模拟器", OpenWindow == OpenWindow.Simulator))
-                        {
-                            OpenWindow = OpenWindow.Simulator;
-                        }
-                        ImGui.Spacing();
-                        if (ImGui.Selectable("关于", OpenWindow == OpenWindow.About))
-                        {
-                            OpenWindow = OpenWindow.About;
-                        }
+                            var imagePath = Path.Combine(Svc.PluginInterface.AssemblyLocation.DirectoryName!, "Images/artisan-icon.png");
+
+                            if (ThreadLoadImageHandler.TryGetTextureWrap(imagePath, out var logo))
+                            {
+                                ImGuiEx.LineCentered("###ArtisanLogo", () =>
+                                {
+                                    ImGui.Image(logo.Handle, new(125f.Scale(), 125f.Scale()));
+                                    if (ImGui.IsItemHovered())
+                                    {
+                                        ImGui.BeginTooltip();
+                                        ImGui.Text($"真棒！你是第69个发现这个秘密的人。");
+                                        ImGui.EndTooltip();
+                                    }
+                                });
+
+                            }
+                            ImGui.Spacing();
+                            ImGui.Separator();
+
+                            if (ImGui.Selectable("插件概述", OpenWindow == OpenWindow.Overview))
+                            {
+                                OpenWindow = OpenWindow.Overview;
+                            }
+                            if (ImGui.Selectable("插件设置", OpenWindow == OpenWindow.Main))
+                            {
+                                OpenWindow = OpenWindow.Main;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("耐力模式", OpenWindow == OpenWindow.Endurance))
+                            {
+                                OpenWindow = OpenWindow.Endurance;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("宏", OpenWindow == OpenWindow.Macro))
+                            {
+                                OpenWindow = OpenWindow.Macro;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("Raphael 缓存", OpenWindow == OpenWindow.RaphaelCache))
+                            {
+                                OpenWindow = OpenWindow.RaphaelCache;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("配方分配器", OpenWindow == OpenWindow.Assigner))
+                            {
+                                OpenWindow = OpenWindow.Assigner;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("制作清单", OpenWindow == OpenWindow.Lists))
+                            {
+                                OpenWindow = OpenWindow.Lists;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("清单生成器", OpenWindow == OpenWindow.SpecialList))
+                            {
+                                OpenWindow = OpenWindow.SpecialList;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("部队工房", OpenWindow == OpenWindow.FCWorkshop))
+                            {
+                                OpenWindow = OpenWindow.FCWorkshop;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("模拟器", OpenWindow == OpenWindow.Simulator))
+                            {
+                                OpenWindow = OpenWindow.Simulator;
+                            }
+                            ImGui.Spacing();
+                            if (ImGui.Selectable("关于", OpenWindow == OpenWindow.About))
+                            {
+                                OpenWindow = OpenWindow.About;
+                            }
 
 
 #if DEBUG
-                        drawDebugTab();
+                            drawDebugTab();
 #else
                         if(GenericHelpers.IsKeyPressed(Keys.LControlKey) && GenericHelpers.IsKeyPressed(Keys.LShiftKey)) drawDebugTab();
 #endif
-                        void drawDebugTab()
-                        {
-                            ImGui.Spacing();
-                            if(ImGui.Selectable("调试", OpenWindow == OpenWindow.Debug))
+                            void drawDebugTab()
                             {
-                                OpenWindow = OpenWindow.Debug;
+                                ImGui.Spacing();
+                                if (ImGui.Selectable("调试", OpenWindow == OpenWindow.Debug))
+                                {
+                                    OpenWindow = OpenWindow.Debug;
+                                }
+                                ImGui.Spacing();
                             }
-                            ImGui.Spacing();
+
+
                         }
 
-
-                    }
-
-                    ImGui.PopStyleVar();
-                    ImGui.TableNextColumn();
-                    using (var rightChild = ImRaii.Child($"###ArtisanRightSide", Vector2.Zero, false))
-                    {
-                        switch (OpenWindow)
+                        ImGui.PopStyleVar();
+                        ImGui.TableNextColumn();
+                        using (var rightChild = ImRaii.Child($"###ArtisanRightSide", Vector2.Zero, false))
                         {
-                            case OpenWindow.Main:
-                                DrawMainWindow();
-                                break;
-                            case OpenWindow.Endurance:
-                                Endurance.Draw();
-                                break;
-                            case OpenWindow.Lists:
-                                CraftingListUI.Draw();
-                                break;
-                            case OpenWindow.About:
-                                AboutTab.Draw("Artisan");
-                                break;
-                            case OpenWindow.Debug:
-                                DebugTab.Draw();
-                                break;
-                            case OpenWindow.Macro:
-                                MacroUI.Draw();
-                                break;
-                            case OpenWindow.RaphaelCache:
-                                RaphaelCacheUI.Draw();
-                                break;
-                            case OpenWindow.Assigner:
-                                AssignerUI.Draw();
-                                break;
-                            case OpenWindow.FCWorkshop:
-                                FCWorkshopUI.Draw();
-                                break;
-                            case OpenWindow.SpecialList:
-                                SpecialLists.Draw();
-                                break;
-                            case OpenWindow.Overview:
-                                DrawOverview();
-                                break;
-                            case OpenWindow.Simulator:
-                                SimulatorUI.Draw();
-                                break;
-                            case OpenWindow.None:
-                                break;
-                            default:
-                                break;
+                            switch (OpenWindow)
+                            {
+                                case OpenWindow.Main:
+                                    DrawMainWindow();
+                                    break;
+                                case OpenWindow.Endurance:
+                                    Endurance.Draw();
+                                    break;
+                                case OpenWindow.Lists:
+                                    CraftingListUI.Draw();
+                                    break;
+                                case OpenWindow.About:
+                                    AboutTab.Draw("Artisan");
+                                    break;
+                                case OpenWindow.Debug:
+                                    DebugTab.Draw();
+                                    break;
+                                case OpenWindow.Macro:
+                                    MacroUI.Draw();
+                                    break;
+                                case OpenWindow.RaphaelCache:
+                                    RaphaelCacheUI.Draw();
+                                    break;
+                                case OpenWindow.Assigner:
+                                    AssignerUI.Draw();
+                                    break;
+                                case OpenWindow.FCWorkshop:
+                                    FCWorkshopUI.Draw();
+                                    break;
+                                case OpenWindow.SpecialList:
+                                    SpecialLists.Draw();
+                                    break;
+                                case OpenWindow.Overview:
+                                    DrawOverview();
+                                    break;
+                                case OpenWindow.Simulator:
+                                    SimulatorUI.Draw();
+                                    break;
+                                case OpenWindow.None:
+                                    break;
+                                default:
+                                    break;
+                            }
+                            ;
                         }
-                        ;
                     }
                 }
+                catch (Exception ex)
+                {
+                    ex.Log();
+                }
+                ImGui.PopStyleVar();
             }
-            catch (Exception ex)
-            {
-                ex.Log();
-            }
-            ImGui.PopStyleVar();
+            catch { }
         }
 
         private void DrawOverview()

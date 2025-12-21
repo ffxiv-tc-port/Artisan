@@ -36,11 +36,15 @@ namespace Artisan.UI
 
         public static void Draw()
         {
-            ImGuiEx.TextWrapped($"本标签页可根据配方条件，快速为配方批量分配解算器与消耗品。");
-            ImGui.Separator();
-            ImGui.Spacing();
-            DrawCriteria();
-            DrawAssignables();
+            try
+            {
+                ImGuiEx.TextWrapped($"本标签页可根据配方条件，快速为配方批量分配解算器与消耗品。");
+                ImGui.Separator();
+                ImGui.Spacing();
+                DrawCriteria();
+                DrawAssignables();
+            }
+            catch { }
         }
 
         private static void DrawCriteria()

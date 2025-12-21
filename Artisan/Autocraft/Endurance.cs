@@ -97,123 +97,127 @@ namespace Artisan.Autocraft
 
         internal static void Draw()
         {
-            if (CraftingListUI.Processing)
+            try
             {
-                ImGui.TextWrapped("正在处理清单...");
-                return;
-            }
-
-            ImGui.TextWrapped("耐力模式是Artisan一遍又一遍地重复制作相同配方的方式，直到完成指定数量或用完素材。它具有完整的功能：当身上的某件装备低于设定的耐久度会自动修理你的装备、可以自动使用食物/药水/指南、装备精炼度满值时精制魔晶石。请注意，这里的设置是独立的，不会影响制作清单的设置，仅用于重复制作一件物品。");
-            ImGui.Separator();
-            ImGui.Spacing();
-
-            if (RecipeID == 0)
-            {
-                ImGuiEx.TextV(ImGuiColors.DalamudRed, "未选中配方");
-            }
-            else
-            {
-                if (!CraftingListFunctions.HasItemsForRecipe(RecipeID))
-                    ImGui.BeginDisabled();
-
-                if (ImGui.Checkbox("启用耐力模式", ref enable))
+                if (CraftingListUI.Processing)
                 {
-                    ToggleEndurance(enable);
+                    ImGui.TextWrapped("正在处理清单...");
+                    return;
                 }
 
-                if (!CraftingListFunctions.HasItemsForRecipe(RecipeID))
-                {
-                    ImGui.EndDisabled();
+                ImGui.TextWrapped("耐力模式是Artisan一遍又一遍地重复制作相同配方的方式，直到完成指定数量或用完素材。它具有完整的功能：当身上的某件装备低于设定的耐久度会自动修理你的装备、可以自动使用食物/药水/指南、装备精炼度满值时精制魔晶石。请注意，这里的设置是独立的，不会影响制作清单的设置，仅用于重复制作一件物品。");
+                ImGui.Separator();
+                ImGui.Spacing();
 
-                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                if (RecipeID == 0)
+                {
+                    ImGuiEx.TextV(ImGuiColors.DalamudRed, "未选中配方");
+                }
+                else
+                {
+                    if (!CraftingListFunctions.HasItemsForRecipe(RecipeID))
+                        ImGui.BeginDisabled();
+
+                    if (ImGui.Checkbox("启用耐力模式", ref enable))
                     {
-                        ImGui.BeginTooltip();
-                        ImGui.Text($"你不能开始耐力模式，因为你没有制作这个配方的素材。");
-                        ImGui.EndTooltip();
+                        ToggleEndurance(enable);
+                    }
+
+                    if (!CraftingListFunctions.HasItemsForRecipe(RecipeID))
+                    {
+                        ImGui.EndDisabled();
+
+                        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                        {
+                            ImGui.BeginTooltip();
+                            ImGui.Text($"你不能开始耐力模式，因为你没有制作这个配方的素材。");
+                            ImGui.EndTooltip();
+                        }
+                    }
+
+                    ImGuiComponents.HelpMarker("为了开始耐力模式制作，你应该先在制作菜单中选择一个配方。\n耐力模式将自动地重复制作选择的配方，并且会考虑维持指定的食物/药物buff。");
+
+                    ImGuiEx.Text($"配方：{RecipeName} {(RecipeID != 0 ? $"({LuminaSheets.ClassJobSheet[LuminaSheets.RecipeSheet[RecipeID].CraftType.RowId + 8].Abbreviation})" : "")}");
+                }
+
+                bool repairs = P.Config.Repair;
+                if (ImGui.Checkbox("自动修理", ref repairs))
+                {
+                    P.Config.Repair = repairs;
+                    P.Config.Save();
+                }
+                ImGuiComponents.HelpMarker($"如果启用，当任何部位的装备达到设置的修复阈值时，Artisan将自动修复你的装备。\n\n当前装备的最小耐久度为 {RepairManager.GetMinEquippedPercent()}% ，在修理工处修理的价格为 {RepairManager.GetNPCRepairPrice()} 金币。\n\n如果无法用暗物质修理，将尝试使用附近的修理NPC。");
+                if (P.Config.Repair)
+                {
+                    //ImGui.SameLine();
+                    ImGui.PushItemWidth(200);
+                    int percent = P.Config.RepairPercent;
+                    if (ImGui.SliderInt("##repairp", ref percent, 10, 100, $"%d%%"))
+                    {
+                        P.Config.RepairPercent = percent;
+                        P.Config.Save();
                     }
                 }
 
-                ImGuiComponents.HelpMarker("为了开始耐力模式制作，你应该先在制作菜单中选择一个配方。\n耐力模式将自动地重复制作选择的配方，并且会考虑维持指定的食物/药物buff。");
+                if (!CharacterInfo.MateriaExtractionUnlocked())
+                    ImGui.BeginDisabled();
 
-                ImGuiEx.Text($"配方：{RecipeName} {(RecipeID != 0 ? $"({LuminaSheets.ClassJobSheet[LuminaSheets.RecipeSheet[RecipeID].CraftType.RowId + 8].Name})" : "")}");
-            }
-
-            bool repairs = P.Config.Repair;
-            if (ImGui.Checkbox("自动修理", ref repairs))
-            {
-                P.Config.Repair = repairs;
-                P.Config.Save();
-            }
-            ImGuiComponents.HelpMarker($"如果启用，当任何部位的装备达到设置的修复阈值时，Artisan将自动修复你的装备。\n\n当前装备的最小耐久度为 {RepairManager.GetMinEquippedPercent()}% ，在修理工处修理的价格为 {RepairManager.GetNPCRepairPrice()} 金币。\n\n如果无法用暗物质修理，将尝试使用附近的修理NPC。");
-            if (P.Config.Repair)
-            {
-                //ImGui.SameLine();
-                ImGui.PushItemWidth(200);
-                int percent = P.Config.RepairPercent;
-                if (ImGui.SliderInt("##repairp", ref percent, 10, 100, $"%d%%"))
+                bool materia = P.Config.Materia;
+                if (ImGui.Checkbox("自动精制魔晶石", ref materia))
                 {
-                    P.Config.RepairPercent = percent;
+                    P.Config.Materia = materia;
                     P.Config.Save();
                 }
-            }
 
-            if (!CharacterInfo.MateriaExtractionUnlocked())
-                ImGui.BeginDisabled();
-
-            bool materia = P.Config.Materia;
-            if (ImGui.Checkbox("自动精制魔晶石", ref materia))
-            {
-                P.Config.Materia = materia;
-                P.Config.Save();
-            }
-
-            if (!CharacterInfo.MateriaExtractionUnlocked())
-            {
-                ImGui.EndDisabled();
-
-                ImGuiComponents.HelpMarker("此角色尚未解锁精制魔晶石。此设置将被忽略。");
-            }
-            else
-                ImGuiComponents.HelpMarker("一旦装备的精炼度达到100%，就会自动从装备中精致魔晶石。");
-
-            ImGui.Checkbox("指定制作次数", ref P.Config.CraftingX);
-            if (P.Config.CraftingX)
-            {
-                ImGui.Text("次数：");
-                ImGui.SameLine();
-                ImGui.PushItemWidth(200);
-                if (ImGui.InputInt("###TimesRepeat", ref P.Config.CraftX))
+                if (!CharacterInfo.MateriaExtractionUnlocked())
                 {
-                    if (P.Config.CraftX < 0)
-                        P.Config.CraftX = 0;
+                    ImGui.EndDisabled();
+
+                    ImGuiComponents.HelpMarker("此角色尚未解锁精制魔晶石。此设置将被忽略。");
                 }
-            }
+                else
+                    ImGuiComponents.HelpMarker("一旦装备的精炼度达到100%，就会自动从装备中精制魔晶石。");
 
-            if (ImGui.Checkbox("尽可能使用简易制作", ref P.Config.QuickSynthMode))
-            {
-                P.Config.Save();
-            }
+                ImGui.Checkbox("只制作X次", ref P.Config.CraftingX);
+                if (P.Config.CraftingX)
+                {
+                    ImGui.Text("制作次数：");
+                    ImGui.SameLine();
+                    ImGui.PushItemWidth(200);
+                    if (ImGui.InputInt("###TimesRepeat", ref P.Config.CraftX))
+                    {
+                        if (P.Config.CraftX < 0)
+                            P.Config.CraftX = 0;
+                    }
+                }
 
-            bool stopIfFail = P.Config.EnduranceStopFail;
-            if (ImGui.Checkbox("制作失败时自动停止耐力模式。", ref stopIfFail))
-            {
-                P.Config.EnduranceStopFail = stopIfFail;
-                P.Config.Save();
-            }
+                if (ImGui.Checkbox("尽可能使用简易制作", ref P.Config.QuickSynthMode))
+                {
+                    P.Config.Save();
+                }
 
-            bool stopIfNQ = P.Config.EnduranceStopNQ;
-            if (ImGui.Checkbox("制作出NQ装备时自动停止耐力模式。", ref stopIfNQ))
-            {
-                P.Config.EnduranceStopNQ = stopIfNQ;
-                P.Config.Save();
-            }
+                bool stopIfFail = P.Config.EnduranceStopFail;
+                if (ImGui.Checkbox("制作失败时自动停止耐力模式。", ref stopIfFail))
+                {
+                    P.Config.EnduranceStopFail = stopIfFail;
+                    P.Config.Save();
+                }
 
-            if (ImGui.Checkbox("最大数量模式", ref P.Config.MaxQuantityMode))
-            {
-                P.Config.Save();
-            }
+                bool stopIfNQ = P.Config.EnduranceStopNQ;
+                if (ImGui.Checkbox("制作出NQ装备时自动停止耐力模式。", ref stopIfNQ))
+                {
+                    P.Config.EnduranceStopNQ = stopIfNQ;
+                    P.Config.Save();
+                }
 
-            ImGuiComponents.HelpMarker("将为你设置素材，以最大限度地增加制品数量。");
+                if (ImGui.Checkbox("最大数量模式", ref P.Config.MaxQuantityMode))
+                {
+                    P.Config.Save();
+                }
+
+                ImGuiComponents.HelpMarker("将为你设置素材，以最大限度地增加制品数量。");
+            }
+            catch { }
         }
 
         internal static void DrawRecipeData()
@@ -244,7 +248,7 @@ namespace Artisan.Autocraft
             }
             catch (Exception ex)
             {
-                Svc.Log.Error(ex, "Setting Recipe ID");
+                Svc.Log.Error(ex, "设置配方ID");
                 RecipeID = 0;
             }
 

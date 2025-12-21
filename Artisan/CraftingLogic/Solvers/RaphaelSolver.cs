@@ -22,6 +22,7 @@ using System.Numerics;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using TerraFX.Interop.Windows;
 
 namespace Artisan.CraftingLogic.Solvers
 {
@@ -56,7 +57,7 @@ namespace Artisan.CraftingLogic.Solvers
 
             if (CLIExists() && !Tasks.ContainsKey(key))
             {
-                P.Config.RaphaelSolverCacheV3.TryRemove(key, out _);
+                P.Config.RaphaelSolverCacheV4.TryRemove(key, out _);
 
                 Svc.Log.Information("启动 Raphael 进程");
 
@@ -96,7 +97,7 @@ namespace Artisan.CraftingLogic.Solvers
                 {
                     StartInfo = new ProcessStartInfo
                     {
-                        FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.bin"),
+                        FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"),
                         Arguments = $"solve {itemText} {manipulation} --level {craft.StatLevel} --stats {craft.StatCraftsmanship} {craft.StatControl} {craft.StatCP} {extraArgsBuilder} --output-variables action_ids", // Command to execute
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
@@ -116,7 +117,7 @@ namespace Artisan.CraftingLogic.Solvers
                     }
                     catch (Exception ex)
                     {
-                        ex.Log("Couldn't remove process, likely already completed.");
+                        ex.Log("无法移除进程，可能已结束。");
                     }
                     Tasks.TryRemove(key, out var _);
                 }
@@ -136,14 +137,14 @@ namespace Artisan.CraftingLogic.Solvers
                     }
                     cts.Token.ThrowIfCancellationRequested();
 
-                    Svc.Log.Information("Raphael process completed, output generated");
+                    Svc.Log.Information("Raphael 进程完成，输出生成");
                     var rng = new Random();
                     var ID = rng.Next(50001, 10000000);
-                    while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
+                    while (P.Config.RaphaelSolverCacheV4.Any(kv => kv.Value.ID == ID))
                         ID = rng.Next(50001, 10000000);
 
                     var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
-                    P.Config.RaphaelSolverCacheV3[key] = new MacroSolverSettings.Macro()
+                    P.Config.RaphaelSolverCacheV4[key] = new MacroSolverSettings.Macro()
                     {
                         ID = ID,
                         Name = key,
@@ -159,13 +160,13 @@ namespace Artisan.CraftingLogic.Solvers
                         }
                     };
 
-                    Svc.Log.Information("Raphael macro generated and stored in cache.");
-                    if (P.Config.RaphaelSolverCacheV3[key] == null || P.Config.RaphaelSolverCacheV3[key].Steps.Count == 0)
+                    Svc.Log.Information("Raphael 宏生成并存储在缓存中。");
+                    if (P.Config.RaphaelSolverCacheV4[key] == null || P.Config.RaphaelSolverCacheV4[key].Steps.Count == 0)
                     {
                         Svc.Log.Error($"Raphael 无法生成有效的宏。这可能是以下原因之一：" +
                             $"\n- 如果您不在运行 Windows，Raphael 可能与您的操作系统不兼容。" +
                             $"\n- 您取消了生成过程。" +
-                            $"\n- Raphael 在找不到结果后放弃了。{(P.Config.RaphaelSolverConfig.AutoGenerate ? "\n自动生成将因此被禁用。" : "")}");
+                            $"\n- Raphael 在找不到结果后放弃了。{(P.Config.RaphaelSolverConfig.AutoGenerate ? "\n自动生成将被禁用。" : "")}");
                         P.Config.RaphaelSolverConfig.AutoGenerate = false;
                         cts.Cancel();
                         return;
@@ -240,7 +241,22 @@ namespace Artisan.CraftingLogic.Solvers
 
         public static string GetKey(CraftState craft)
         {
-            return $"{craft.CraftLevel}/{craft.CraftProgress}/{craft.CraftQualityMax}/{craft.CraftDurability}-{craft.StatCraftsmanship}/{craft.StatControl}/{craft.StatCP}-{(craft.CraftExpert ? "Expert" : "Standard")}/{craft.InitialQuality}";
+            return $"{craft.CraftLevel}/{craft.CraftProgress}/{craft.CraftQualityMax}/{craft.CraftDurability}-{craft.StatCraftsmanship}/{craft.StatControl}/{craft.StatCP}-{(craft.CraftExpert ? "Ex" : "St")}/{craft.InitialQuality}/{(craft.Specialist ? "Sp" : "Re")}";
+        }
+
+        public static RaphaelSolutionConfig GetConfigFromTempOrDefault(CraftState craft)
+        {
+            var key = GetKey(craft);
+            var config = new RaphaelSolutionConfig();
+
+            var hasTempConfig = TempConfigs.TryGetValue(key, out var tempconfig);
+            var hasDelins = Crafting.DelineationCount() > 0;
+            config.EnsureReliability = hasTempConfig ? tempconfig.EnsureReliability : P.Config.RaphaelSolverConfig.AllowEnsureReliability;
+            config.BackloadProgress = hasTempConfig ? tempconfig.BackloadProgress : P.Config.RaphaelSolverConfig.AllowBackloadProgress;
+            config.HeartAndSoul = hasTempConfig ? tempconfig.HeartAndSoul : P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist && hasDelins;
+            config.QuickInno = hasTempConfig ? tempconfig.QuickInno : P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist && hasDelins;
+
+            return config;
         }
 
         public static IEnumerable<CraftState> AllValidCrafts(string key, uint craftType)
@@ -257,7 +273,7 @@ namespace Artisan.CraftingLogic.Solvers
             }
         }
 
-        public static (int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP) KeyParts(string key)
+        public static (int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP, bool SP) KeyParts(string key)
         {
             var parts = key.Split('/');
 
@@ -269,32 +285,44 @@ namespace Artisan.CraftingLogic.Solvers
             int.TryParse(parts[4], out var ctrl);
             int.TryParse(parts[5].Split('-')[0], out var cp);
             int.TryParse(parts[6], out var initial);
+            var sp = parts[7] == "Sp";
 
-            return (lvl, prog, qual, dur, initial, crafts, ctrl, cp);
+            return (lvl, prog, qual, dur, initial, crafts, ctrl, cp, sp);
         }
 
         public static bool HasSolution(CraftState craft, out MacroSolverSettings.Macro? raphaelSolutionConfig)
         {
-            foreach (var solution in P.Config.RaphaelSolverCacheV3.OrderByDescending(x => KeyParts(x.Key).Control))
-            {
-                if (solution.Value.Steps.Count == 0) continue;
-
-                var solKey = KeyParts(solution.Key);
-
-                if (solKey.Level == craft.CraftLevel &&
-                    solKey.Prog == craft.CraftProgress &&
-                    solKey.Qual == craft.CraftQualityMax &&
-                    solKey.Crafts == craft.StatCraftsmanship &&
-                    solKey.Control <= craft.StatControl &&
-                    solKey.Initial == craft.InitialQuality &&
-                    solKey.CP <= craft.StatCP)
-                {
-                    raphaelSolutionConfig = solution.Value;
-                    return true;
-                }
-            }
+            var thisKey = GetKey(craft);
             raphaelSolutionConfig = null;
-            return false;
+            var sol = P.Config.RaphaelSolverCacheV4.FirstOrNull(x => x.Key == thisKey);
+            if (sol != null)
+            {
+                raphaelSolutionConfig = sol.Value.Value;
+                return true;
+            }
+            else
+                return false;
+
+            //foreach (var solution in P.Config.RaphaelSolverCacheV4.OrderByDescending(x => KeyParts(x.Key).Control))
+            //{
+            //    if (solution.Value.Steps.Count == 0) continue;
+
+            //    var solKey = KeyParts(solution.Key);
+
+            //    if (solKey.Level == craft.CraftLevel &&
+            //        solKey.Prog == craft.CraftProgress &&
+            //        solKey.Qual == craft.CraftQualityMax &&
+            //        solKey.Crafts == craft.StatCraftsmanship &&
+            //        solKey.Control <= craft.StatControl &&
+            //        solKey.Initial == craft.InitialQuality &&
+            //        solKey.CP <= craft.StatCP &&
+            //        solKey.SP == craft.Specialist)
+            //    {
+            //        raphaelSolutionConfig = solution.Value;
+            //        return true;
+            //    }
+            //}
+            //return false;
         }
 
         public static bool InProgress(CraftState craft) => Tasks.TryGetValue(GetKey(craft), out var _);
@@ -303,7 +331,7 @@ namespace Artisan.CraftingLogic.Solvers
 
         internal static bool CLIExists()
         {
-            return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.bin"));
+            return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"));
         }
 
         public static bool DrawRaphaelDropdown(CraftState craft, bool liveStats = true)
@@ -386,7 +414,7 @@ namespace Artisan.CraftingLogic.Solvers
                 }
                 else
                 {
-                    ImGuiEx.TextCentered(ImGuiColors.DalamudRed, "No Raphael Solution Generated.");
+                    ImGuiEx.TextCentered(ImGuiColors.DalamudRed, "未生成 Raphael 解决方案。");
                     if (P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any() && (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts)))
                     {
                         if (liveStats && Player.JobId == craft.Recipe.CraftType.RowId + 8)
@@ -476,53 +504,58 @@ namespace Artisan.CraftingLogic.Solvers
 
         public bool Draw()
         {
-            bool changed = false;
-
-            ImGui.Indent();
-            ImGui.TextWrapped($"Raphael 设置会改变性能和系统内存消耗。如果您内存较少，请尽量不要更改设置，建议至少保留 2GB 可用内存");
-
-            if (ImGui.SliderInt("最大线程数", ref MaximumThreads, 0, Environment.ProcessorCount))
+                bool changed = false;
+            try
             {
-                P.Config.Save();
-            }
-            ImGuiEx.TextWrapped("默认使用所有可用资源，但在低端机器上您可能需要使用更少的 CPU 以牺牲速度为代价。(0 = 全部)");
 
-            changed |= ImGui.Checkbox("在宏生成中确保 100% 可靠性", ref AllowEnsureReliability);
-            ImGui.PushTextWrapPos(0);
-            ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "确保可靠性可能并不总是有效，且非常消耗 CPU 和内存，建议至少保留 16GB+ 可用内存。启用此选项后将不提供任何支持");
-            ImGui.PopTextWrapPos();
-            changed |= ImGui.Checkbox("在宏生成中允许后置进度", ref AllowBackloadProgress);
-            changed |= ImGui.Checkbox("在可用时显示专家选项", ref ShowSpecialistSettings);
-            changed |= ImGui.Checkbox($"如果尚未创建有效解决方案，则自动生成解决方案。", ref AutoGenerate);
-
-            if (AutoGenerate)
-            {
                 ImGui.Indent();
-                changed |= ImGui.Checkbox($"在专家配方上生成", ref GenerateOnExperts);
+                ImGui.TextWrapped($"Raphael 设置可以改变性能和系统内存消耗。如果您内存较少，请尽量不要更改设置，建议至少保留 2GB 可用内存");
+
+                if (ImGui.SliderInt("最大线程数", ref MaximumThreads, 0, Environment.ProcessorCount))
+                {
+                    P.Config.Save();
+                }
+                ImGuiEx.TextWrapped("默认使用所有可用资源，但在低端机器上您可能需要使用更少的 CPU 以牺牲速度为代价。(0 = 全部)");
+
+                changed |= ImGui.Checkbox("在宏生成中确保 100% 可靠性", ref AllowEnsureReliability);
+                ImGui.PushTextWrapPos(0);
+                ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "确保可靠性可能并不总是有效，且非常消耗 CPU 和内存，建议至少保留 16GB+ 可用内存。启用此选项后将不提供任何支持");
+                ImGui.PopTextWrapPos();
+                changed |= ImGui.Checkbox("在宏生成中允许后置进度", ref AllowBackloadProgress);
+                changed |= ImGui.Checkbox("在可用时显示专家选项", ref ShowSpecialistSettings);
+                changed |= ImGui.Checkbox($"如果尚未创建有效解决方案，则自动生成解决方案。", ref AutoGenerate);
+
+                if (AutoGenerate)
+                {
+                    ImGui.Indent();
+                    changed |= ImGui.Checkbox($"在专家配方上生成", ref GenerateOnExperts);
+                    ImGui.Unindent();
+                }
+
+                changed |= ImGui.Checkbox($"一旦创建解决方案，自动切换到 Raphael 求解器。", ref AutoSwitch);
+
+                if (AutoSwitch)
+                {
+                    ImGui.Indent();
+                    changed |= ImGui.Checkbox($"应用到所有有效制作", ref AutoSwitchOnAll);
+                    changed |= ImGui.Checkbox("应用到已有宏分配的配方上", ref AutoSwitchOverManual);
+                    ImGui.Unindent();
+                }
+
+                changed |= ImGui.SliderInt("解决方案生成超时", ref TimeOutMins, 1, 15);
+
+                ImGuiComponents.HelpMarker($"如果解决方案生成时间超过此分钟数，将取消生成任务。");
+
+                if (ImGui.Button($"清除 raphael 宏缓存 (当前存储 {P.Config.RaphaelSolverCacheV4.Count} 个)"))
+                {
+                    P.Config.RaphaelSolverCacheV4.Clear();
+                    changed |= true;
+                }
+
                 ImGui.Unindent();
+                return changed;
             }
-
-            changed |= ImGui.Checkbox($"一旦创建解决方案，自动切换到 Raphael 求解器。", ref AutoSwitch);
-
-            if (AutoSwitch)
-            {
-                ImGui.Indent();
-                changed |= ImGui.Checkbox($"应用到所有有效制作", ref AutoSwitchOnAll);
-                changed |= ImGui.Checkbox("应用到已有宏分配的配方上", ref AutoSwitchOverManual);
-                ImGui.Unindent();
-            }
-
-            changed |= ImGui.SliderInt("解决方案生成超时", ref TimeOutMins, 1, 15);
-
-            ImGuiComponents.HelpMarker($"如果解决方案生成时间超过此分钟数，将取消生成任务。");
-
-            if (ImGui.Button($"清除 raphael 宏缓存 (当前存储 {P.Config.RaphaelSolverCacheV3.Count} 个)"))
-            {
-                P.Config.RaphaelSolverCacheV3.Clear();
-                changed |= true;
-            }
-
-            ImGui.Unindent();
+            catch { }
             return changed;
         }
     }

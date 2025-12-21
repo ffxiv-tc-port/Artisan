@@ -43,87 +43,91 @@ namespace Artisan.UI
 
         internal static void Draw()
         {
-            ImGui.TextWrapped("此选项卡将允许你添加Artisan可以使用的宏，使用指定的宏而不是内置解算器来制作。创建新宏后，从下面的列表中单击它以打开独立的宏编辑器窗口。");
-            ImGui.Separator();
-
-            if (Svc.ClientState.IsLoggedIn && Crafting.CurState is not Crafting.State.IdleNormal and not Crafting.State.IdleBetween)
+            try
             {
-                ImGui.Text($"制作正在进行。宏设置将不可用，直到停止制作。");
-                return;
-            }
-            ImGui.Spacing();
-            if (ImGui.Button("从剪贴板数据导入宏"))
-                OpenMacroNamePopup(MacroNameUse.FromClipboard);
+                ImGui.TextWrapped("此选项卡将允许你添加Artisan可以使用的宏，使用指定的宏而不是内置解算器来制作。创建新宏后，从下面的列表中单击它以打开独立的宏编辑器窗口。");
+                ImGui.Separator();
 
-            if (ImGui.Button("从剪贴板数据导入宏 (Artisan导出的)"))
-            {
-                try
+                if (Svc.ClientState.IsLoggedIn && Crafting.CurState is not Crafting.State.IdleNormal and not Crafting.State.IdleBetween)
                 {
-                    var import = JsonConvert.DeserializeObject<MacroSolverSettings.Macro>(ImGui.GetClipboardText());
-                    if (import != null)
+                    ImGui.Text($"制作正在进行。宏设置将不可用，直到停止制作。");
+                    return;
+                }
+                ImGui.Spacing();
+                if (ImGui.Button("从剪贴板数据导入宏"))
+                    OpenMacroNamePopup(MacroNameUse.FromClipboard);
+
+                if (ImGui.Button("从剪贴板数据导入宏 (Artisan导出的)"))
+                {
+                    try
                     {
-                        P.Config.MacroSolverConfig.AddNewMacro(import);
-                        P.Config.Save();
+                        var import = JsonConvert.DeserializeObject<MacroSolverSettings.Macro>(ImGui.GetClipboardText());
+                        if (import != null)
+                        {
+                            P.Config.MacroSolverConfig.AddNewMacro(import);
+                            P.Config.Save();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        ex.Log();
+                        Notify.Error("无法导入。");
                     }
                 }
-                catch (Exception ex)
+
+                if (ImGui.Button("新宏"))
+                    OpenMacroNamePopup(MacroNameUse.NewMacro);
+
+                DrawMacroNamePopup(MacroNameUse.FromClipboard);
+                DrawMacroNamePopup(MacroNameUse.NewMacro);
+
+                if (P.Config.MacroSolverConfig.Macros.Count > 0)
                 {
-                    ex.Log();
-                    Notify.Error("无法导入");
-                }
-            }
+                    if (P.Config.MacroSolverConfig.Macros.Count > 1)
+                        ImGui.Checkbox("排序模式（点击拖拽进行排序）", ref reorderMode);
+                    else
+                        reorderMode = false;
 
-            if (ImGui.Button("新宏"))
-                OpenMacroNamePopup(MacroNameUse.NewMacro);
+                    if (reorderMode)
+                        ImGuiEx.CenterColumnText("排序模式");
+                    else
+                        ImGuiEx.CenterColumnText("宏编辑器选择");
 
-            DrawMacroNamePopup(MacroNameUse.FromClipboard);
-            DrawMacroNamePopup(MacroNameUse.NewMacro);
-
-            if (P.Config.MacroSolverConfig.Macros.Count > 0)
-            {
-                if (P.Config.MacroSolverConfig.Macros.Count > 1)
-                    ImGui.Checkbox("排序模式（点击拖拽进行排序）", ref reorderMode);
-                else
-                    reorderMode = false;
-
-                if (reorderMode)
-                    ImGuiEx.CenterColumnText("排序模式");
-                else
-                    ImGuiEx.CenterColumnText("宏编辑器选择");
-
-                if (ImGui.BeginChild("##selector", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y), true))
-                {
-                    for (int i = 0; i < P.Config.MacroSolverConfig.Macros.Count; i++)
+                    if (ImGui.BeginChild("##selector", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y), true))
                     {
-                        var m = P.Config.MacroSolverConfig.Macros[i];
-                        int cpCost = GetCPCost(m);
-                        var selected = ImGui.Selectable($"{m.Name} (制作力消耗： {cpCost}) (ID: {m.ID})###{m.ID}");
-
-                        if (ImGui.IsItemActive() && !ImGui.IsItemHovered() && reorderMode)
+                        for (int i = 0; i < P.Config.MacroSolverConfig.Macros.Count; i++)
                         {
-                            int i_next = i + (ImGui.GetMouseDragDelta(ImGuiMouseButton.Left).Y < 0f ? -1 : 1);
-                            if (i_next >= 0 && i_next < P.Config.MacroSolverConfig.Macros.Count)
+                            var m = P.Config.MacroSolverConfig.Macros[i];
+                            int cpCost = GetCPCost(m);
+                            var selected = ImGui.Selectable($"{m.Name} (制作力消耗：{cpCost}) (ID: {m.ID})###{m.ID}");
+
+                            if (ImGui.IsItemActive() && !ImGui.IsItemHovered() && reorderMode)
                             {
-                                P.Config.MacroSolverConfig.Macros[i] = P.Config.MacroSolverConfig.Macros[i_next];
-                                P.Config.MacroSolverConfig.Macros[i_next] = m;
-                                P.Config.Save();
-                                ImGui.ResetMouseDragDelta();
+                                int i_next = i + (ImGui.GetMouseDragDelta(ImGuiMouseButton.Left).Y < 0f ? -1 : 1);
+                                if (i_next >= 0 && i_next < P.Config.MacroSolverConfig.Macros.Count)
+                                {
+                                    P.Config.MacroSolverConfig.Macros[i] = P.Config.MacroSolverConfig.Macros[i_next];
+                                    P.Config.MacroSolverConfig.Macros[i_next] = m;
+                                    P.Config.Save();
+                                    ImGui.ResetMouseDragDelta();
+                                }
+                            }
+
+                            if (selected && !reorderMode && !P.ws.Windows.Any(x => x.WindowName.Contains(m.ID.ToString())))
+                            {
+                                new MacroEditor(m);
                             }
                         }
 
-                        if (selected && !reorderMode && !P.ws.Windows.Any(x => x.WindowName.Contains(m.ID.ToString())))
-                        {
-                            new MacroEditor(m);
-                        }
                     }
-
+                    ImGui.EndChild();
                 }
-                ImGui.EndChild();
+                else
+                {
+                    selectedAssignMacro = null;
+                }
             }
-            else
-            {
-                selectedAssignMacro = null;
-            }
+            catch { }
         }
 
         public static int GetCPCost(MacroSolverSettings.Macro m)

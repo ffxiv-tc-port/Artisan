@@ -62,51 +62,54 @@ public class ScriptSolverSettings
 
     public bool Draw()
     {
-        ImGui.TextWrapped($"这是一个非常进阶的功能，面向希望使用C#创建自己的动态解算器的用户。请访问GitHub源代码并查看Demoscript文件夹以获取示例。对于如何学习C#来做到这一点，我们不会提供任何支持。");
-        ImGui.Separator();
-        Script? toDel = null;
-        foreach (var s in Scripts)
+        try
         {
-            var state = s.CompilationState();
-
-            using var scope = ImRaii.PushId(s.ID);
-
-            using (ImRaii.Disabled(state == CompilationState.InProgress))
+            ImGui.TextWrapped($"这是一个非常进阶的功能，面向希望使用C#创建自己的动态解算器的用户。请访问GitHub源代码并查看Demoscripts文件夹以获取示例。对于如何学习C#来做到这一点，我们不会提供任何支持。");
+            ImGui.Separator();
+            Script? toDel = null;
+            foreach (var s in Scripts)
             {
-                // TODO: show icon depending on state...
-                if (ImGui.Button($"Recompile: {state}", new(100, 0)))
-                    _compiler.Recompile(s);
-                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                var state = s.CompilationState();
+
+                using var scope = ImRaii.PushId(s.ID);
+
+                using (ImRaii.Disabled(state == CompilationState.InProgress))
                 {
-                    ImGui.BeginTooltip();
-                    ImGui.TextUnformatted($"Compilation output:\n{s.CompilationOutput()}");
-                    ImGui.EndTooltip();
+                    // TODO: show icon depending on state...
+                    if (ImGui.Button($"重新编译: {state}", new(100, 0)))
+                        _compiler.Recompile(s);
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.TextUnformatted($"编译输出:\n{s.CompilationOutput()}");
+                        ImGui.EndTooltip();
+                    }
                 }
+
+                ImGui.SameLine();
+                if (ImGui.Button("删除"))
+                    toDel = s;
+                ImGui.SameLine();
+                ImGui.TextUnformatted($"[{s.ID}] {s.SourcePath}");
             }
 
+            ImGui.InputText("新脚本路径", ref _newPath, 256);
             ImGui.SameLine();
-            if (ImGui.Button("删除"))
-                toDel = s;
-            ImGui.SameLine();
-            ImGui.TextUnformatted($"[{s.ID}] {s.SourcePath}");
-        }
+            if (ImGui.Button("添加") && _newPath.Length > 0 && !Scripts.Any(s => s.SourcePath == _newPath))
+            {
+                AddNewScript(new(_newPath));
+                _newPath = "";
+                return true;
+            }
 
-        ImGui.InputText("新脚本路径", ref _newPath, 256);
-        ImGui.SameLine();
-        if (ImGui.Button("添加") && _newPath.Length > 0 && !Scripts.Any(s => s.SourcePath == _newPath))
-        {
-            AddNewScript(new(_newPath));
-            _newPath = "";
-            return true;
+            if (toDel != null)
+            {
+                toDel.UpdateCompilation(CompilationState.Deleted, "正在删除", null);
+                Scripts.Remove(toDel);
+                return true;
+            }
         }
-
-        if (toDel != null)
-        {
-            toDel.UpdateCompilation(CompilationState.Deleted, "正在删除", null);
-            Scripts.Remove(toDel);
-            return true;
-        }
-
+        catch { }
         return false;
     }
 

@@ -23,274 +23,196 @@ namespace Artisan.FCWorkshops
 
         internal static void Draw()
         {
-            if (NumberOfLoops <= 0)
+            try
             {
-                NumberOfLoops = 1;
-            }
-
-            ImGui.TextWrapped($"在此选项卡中, 你可以浏览游戏内所有的部队工房制作项目。 " +
-                $"包含3个部分. 第一部分展示项目信息概览。 " +
-                $"第二部分展示每个部件." +
-                $"第三个部分展示每个阶段。" +
-                $"在每个部分，你可以点击“创建制作清单”按钮来创建一个制作清单，" +
-                $"其中包含制作该部分所需要的一切素材的清单。");
-
-
-            ImGui.Separator();
-            string preview = SelectedProject != 0 ? LuminaSheets.ItemSheet[LuminaSheets.WorkshopSequenceSheet[SelectedProject].ResultItem.RowId].Name.ToString() : "";
-            if (ImGui.BeginCombo("###Workshop Project", preview))
-            {
-                ImGui.Text("搜索");
-                ImGui.SameLine();
-                ImGui.InputText("###ProjectSearch", ref Search, 100);
-
-                if (ImGui.Selectable("", SelectedProject == 0))
+                if (NumberOfLoops <= 0)
                 {
-                    SelectedProject = 0;
+                    NumberOfLoops = 1;
                 }
 
-                foreach (var project in LuminaSheets.WorkshopSequenceSheet.Values.Where(x => x.RowId > 0).Where(x => x.ResultItem.Value.Name.ToString().Contains(Search, StringComparison.CurrentCultureIgnoreCase)))
+                ImGui.TextWrapped($"在此选项卡中, 你可以浏览游戏内所有的部队工房制作项目。 " +
+                    $"包含3个部分. 第一部分展示项目信息概览。 " +
+                    $"第二部分展示每个部件." +
+                    $"第三个部分展示每个阶段。" +
+                    $"在每个部分，你可以点击“创建制作清单”按钮来创建一个制作清单，" +
+                    $"其中包含制作该部分所需要的一切素材的清单。");
+
+
+                ImGui.Separator();
+                string preview = SelectedProject != 0 ? LuminaSheets.ItemSheet[LuminaSheets.WorkshopSequenceSheet[SelectedProject].ResultItem.RowId].Name.ToString() : "";
+                if (ImGui.BeginCombo("###Workshop Project", preview))
                 {
-                    bool selected = ImGui.Selectable($"{project.ResultItem.Value.Name.ToString()}", project.RowId == SelectedProject);
+                    ImGui.Text("搜索");
+                    ImGui.SameLine();
+                    ImGui.InputText("###ProjectSearch", ref Search, 100);
 
-                    if (selected)
+                    if (ImGui.Selectable("", SelectedProject == 0))
                     {
-                        SelectedProject = project.RowId;
+                        SelectedProject = 0;
                     }
-                }
 
-                ImGui.EndCombo();
-            }
-
-            if (SelectedProject != 0)
-            {
-                var project = LuminaSheets.WorkshopSequenceSheet[SelectedProject];
-
-                if (ImGui.CollapsingHeader("项目信息"))
-                {
-                    if (ImGui.BeginTable($"FCWorkshopProjectContainer", 2, ImGuiTableFlags.Resizable))
+                    foreach (var project in LuminaSheets.WorkshopSequenceSheet.Values.Where(x => x.RowId > 0).Where(x => x.ResultItem.Value.Name.ToString().Contains(Search, StringComparison.CurrentCultureIgnoreCase)))
                     {
-                        ImGui.TableSetupColumn($"###Description", ImGuiTableColumnFlags.WidthFixed);
+                        bool selected = ImGui.Selectable($"{project.ResultItem.Value.Name.ToString()}", project.RowId == SelectedProject);
 
-                        ImGui.TableNextColumn();
-
-                        ImGuiEx.Text($"选中的项目：");
-                        ImGui.TableNextColumn();
-                        ImGui.Text($"{project.ResultItem.Value.Name.ToString()}");
-                        ImGui.TableNextColumn();
-                        ImGuiEx.Text($"部件编号：");
-                        ImGui.TableNextColumn();
-                        ImGui.Text($"{project.CompanyCraftPart.Where(x => x.RowId > 0).Count()}");
-                        ImGui.TableNextColumn();
-                        ImGuiEx.Text($"阶段总数：");
-                        ImGui.TableNextColumn();
-                        ImGui.Text($"{project.CompanyCraftPart.Where(x => x.RowId > 0).SelectMany(x => x.Value.CompanyCraftProcess).Where(x => x.RowId > 0).Count()}");
-
-                        ImGui.EndTable();
-                    }
-                    if (ImGui.BeginTable($"###FCWorkshopProjectItemsContainer", RetainerInfo.ATools ? 4 : 3, ImGuiTableFlags.Borders))
-                    {
-                        ImGui.TableSetupColumn($"物品", ImGuiTableColumnFlags.WidthFixed);
-                        ImGui.TableSetupColumn($"所需总数", ImGuiTableColumnFlags.WidthFixed);
-                        ImGui.TableSetupColumn($"包裹库存", ImGuiTableColumnFlags.WidthFixed);
-                        if (RetainerInfo.ATools) ImGui.TableSetupColumn($"雇员", ImGuiTableColumnFlags.WidthFixed);
-
-                        ImGui.TableHeadersRow();
-
-                        Dictionary<uint, int> TotalItems = new Dictionary<uint, int>();
-                        foreach (var item in project.CompanyCraftPart.Where(x => x.RowId > 0).SelectMany(x => x.Value.CompanyCraftProcess).Where(x => x.RowId > 0).SelectMany(x => x.Value.SupplyItems()).Where(x => x.SupplyItem.RowId > 0).GroupBy(x => x))
+                        if (selected)
                         {
-                            if (TotalItems.ContainsKey(LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId))
-                                TotalItems[LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId] += item.Sum(x => x.SetQuantity * x.SetsRequired);
-                            else
-                                TotalItems.TryAdd(LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId, item.Sum(x => x.SetQuantity * x.SetsRequired));
+                            SelectedProject = project.RowId;
                         }
+                    }
 
-                        foreach (var item in TotalItems)
+                    ImGui.EndCombo();
+                }
+
+                if (SelectedProject != 0)
+                {
+                    var project = LuminaSheets.WorkshopSequenceSheet[SelectedProject];
+
+                    if (ImGui.CollapsingHeader("项目信息"))
+                    {
+                        if (ImGui.BeginTable($"FCWorkshopProjectContainer", 2, ImGuiTableFlags.Resizable))
                         {
-                            ImGui.TableNextRow();
-                            ImGui.TableNextColumn();
-                            ImGui.Text($"{LuminaSheets.ItemSheet[item.Key].Name.ToString()}");
-                            ImGui.TableNextColumn();
-                            ImGui.Text($"{item.Value * NumberOfLoops}");
-                            ImGui.TableNextColumn();
-                            int invCount = CraftingListUI.NumberOfIngredient(LuminaSheets.ItemSheet[item.Key].RowId);
-                            ImGui.Text($"{invCount}");
-                            bool hasEnoughInInv = invCount >= item.Value * NumberOfLoops;
-                            if (hasEnoughInInv)
-                            {
-                                var color = ImGuiColors.HealerGreen;
-                                color.W -= 0.3f;
-                                ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
-                            }
-                            if (RetainerInfo.ATools)
-                            {
-                                ImGui.TableNextColumn();
-                                ImGui.Text($"{RetainerInfo.GetRetainerItemCount(LuminaSheets.ItemSheet[item.Key].RowId)}");
+                            ImGui.TableSetupColumn($"###Description", ImGuiTableColumnFlags.WidthFixed);
 
-                                bool hasEnoughWithRetainer = (invCount + RetainerInfo.GetRetainerItemCount(LuminaSheets.ItemSheet[item.Key].RowId) >= item.Value * NumberOfLoops);
-                                if (!hasEnoughInInv && hasEnoughWithRetainer)
+                            ImGui.TableNextColumn();
+
+                            ImGuiEx.Text($"选中的项目：");
+                            ImGui.TableNextColumn();
+                            ImGui.Text($"{project.ResultItem.Value.Name.ToString()}");
+                            ImGui.TableNextColumn();
+                            ImGuiEx.Text($"部件编号：");
+                            ImGui.TableNextColumn();
+                            ImGui.Text($"{project.CompanyCraftPart.Where(x => x.RowId > 0).Count()}");
+                            ImGui.TableNextColumn();
+                            ImGuiEx.Text($"阶段总数：");
+                            ImGui.TableNextColumn();
+                            ImGui.Text($"{project.CompanyCraftPart.Where(x => x.RowId > 0).SelectMany(x => x.Value.CompanyCraftProcess).Where(x => x.RowId > 0).Count()}");
+
+                            ImGui.EndTable();
+                        }
+                        if (ImGui.BeginTable($"###FCWorkshopProjectItemsContainer", RetainerInfo.ATools ? 4 : 3, ImGuiTableFlags.Borders))
+                        {
+                            ImGui.TableSetupColumn($"物品", ImGuiTableColumnFlags.WidthFixed);
+                            ImGui.TableSetupColumn($"所需总数", ImGuiTableColumnFlags.WidthFixed);
+                            ImGui.TableSetupColumn($"包裹库存", ImGuiTableColumnFlags.WidthFixed);
+                            if (RetainerInfo.ATools) ImGui.TableSetupColumn($"雇员", ImGuiTableColumnFlags.WidthFixed);
+
+                            ImGui.TableHeadersRow();
+
+                            Dictionary<uint, int> TotalItems = new Dictionary<uint, int>();
+                            foreach (var item in project.CompanyCraftPart.Where(x => x.RowId > 0).SelectMany(x => x.Value.CompanyCraftProcess).Where(x => x.RowId > 0).SelectMany(x => x.Value.SupplyItems()).Where(x => x.SupplyItem.RowId > 0).GroupBy(x => x))
+                            {
+                                if (TotalItems.ContainsKey(LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId))
+                                    TotalItems[LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId] += item.Sum(x => x.SetQuantity * x.SetsRequired);
+                                else
+                                    TotalItems.TryAdd(LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId, item.Sum(x => x.SetQuantity * x.SetsRequired));
+                            }
+
+                            foreach (var item in TotalItems)
+                            {
+                                ImGui.TableNextRow();
+                                ImGui.TableNextColumn();
+                                ImGui.Text($"{LuminaSheets.ItemSheet[item.Key].Name.ToString()}");
+                                ImGui.TableNextColumn();
+                                ImGui.Text($"{item.Value * NumberOfLoops}");
+                                ImGui.TableNextColumn();
+                                int invCount = CraftingListUI.NumberOfIngredient(LuminaSheets.ItemSheet[item.Key].RowId);
+                                ImGui.Text($"{invCount}");
+                                bool hasEnoughInInv = invCount >= item.Value * NumberOfLoops;
+                                if (hasEnoughInInv)
                                 {
-                                    var color = ImGuiColors.DalamudOrange;
-                                    color.W -= 0.6f;
+                                    var color = ImGuiColors.HealerGreen;
+                                    color.W -= 0.3f;
                                     ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
                                 }
-                            }
-
-                        }
-
-                        ImGui.EndTable();
-                    }
-
-                    ImGui.InputInt("Number of Times###LoopProject", ref NumberOfLoops);
-
-                    if (ImGui.Button($"为此项目创建制作清单", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
-                    {
-                        Notify.Info($"正在创建清单，请等待...");
-                        Task.Run(() => CreateProjectList(project, false)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
-                    }
-
-                    if (ImGui.Button($"为此项目创建制作清单（包含前置配方）", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
-                    {
-                        Notify.Info($"正在创建清单，请等待...");
-                        Task.Run(() => CreateProjectList(project, true)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
-                    }
-                }
-                if (ImGui.CollapsingHeader("项目部件"))
-                {
-                    ImGui.Indent();
-                    string partNum = "";
-                    foreach (var part in project.CompanyCraftPart.Where(x => x.RowId > 0).Select(x => x.Value))
-                    {
-                        partNum = part.CompanyCraftType.Value.Name.ToString();
-                        if (ImGui.CollapsingHeader($"{partNum}"))
-                        {
-                            if (ImGui.BeginTable($"FCWorkshopPartsContainer###{part.RowId}", 2, ImGuiTableFlags.None))
-                            {
-                                ImGui.TableSetupColumn($"###PartType{part.RowId}", ImGuiTableColumnFlags.WidthFixed);
-                                ImGui.TableSetupColumn($"###Phases{part.RowId}", ImGuiTableColumnFlags.WidthFixed);
-                                ImGui.TableNextColumn();
-
-                                ImGuiEx.Text($"部件类型：");
-                                ImGui.TableNextColumn();
-                                ImGui.Text($"{part.CompanyCraftType.Value.Name.ToString()}");
-                                ImGui.TableNextColumn();
-                                ImGuiEx.Text($"阶段数量：");
-                                ImGui.TableNextColumn();
-                                ImGui.Text($"{part.CompanyCraftProcess.Where(x => x.RowId > 0).Count()}");
-                                ImGui.TableNextColumn();
-
-                                ImGui.EndTable();
-                            }
-                            if (ImGui.BeginTable($"###FCWorkshopPartItemsContainer{part.RowId}", RetainerInfo.ATools ? 4 : 3, ImGuiTableFlags.Borders))
-                            {
-                                ImGui.TableSetupColumn($"物品", ImGuiTableColumnFlags.WidthFixed);
-                                ImGui.TableSetupColumn($"所需总数", ImGuiTableColumnFlags.WidthFixed);
-                                ImGui.TableSetupColumn($"包裹库存", ImGuiTableColumnFlags.WidthFixed);
-                                if (RetainerInfo.ATools) ImGui.TableSetupColumn($"雇员", ImGuiTableColumnFlags.WidthFixed);
-                                ImGui.TableHeadersRow();
-
-                                Dictionary<uint, int> TotalItems = new Dictionary<uint, int>();
-                                foreach (var item in part.CompanyCraftProcess.Where(x => x.RowId > 0).SelectMany(x => x.Value.SupplyItems()).Where(x => x.SupplyItem.RowId > 0).GroupBy(x => x.SupplyItem))
+                                if (RetainerInfo.ATools)
                                 {
-                                    if (TotalItems.ContainsKey(LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId))
-                                        TotalItems[LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId] += item.Sum(x => x.SetQuantity * x.SetsRequired);
-                                    else
-                                        TotalItems.TryAdd(LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId, item.Sum(x => x.SetQuantity * x.SetsRequired));
+                                    ImGui.TableNextColumn();
+                                    ImGui.Text($"{RetainerInfo.GetRetainerItemCount(LuminaSheets.ItemSheet[item.Key].RowId)}");
 
-                                }
-
-                                foreach (var item in TotalItems)
-                                {
-                                    ImGui.TableNextRow();
-                                    ImGui.TableNextColumn();
-                                    ImGui.Text($"{LuminaSheets.ItemSheet[item.Key].Name.ToString()}");
-                                    ImGui.TableNextColumn();
-                                    ImGui.Text($"{item.Value * NumberOfLoops}");
-                                    ImGui.TableNextColumn();
-                                    int invCount = CraftingListUI.NumberOfIngredient(item.Key);
-                                    ImGui.Text($"{invCount}");
-                                    bool hasEnoughInInv = invCount >= item.Value * NumberOfLoops;
-                                    if (hasEnoughInInv)
+                                    bool hasEnoughWithRetainer = (invCount + RetainerInfo.GetRetainerItemCount(LuminaSheets.ItemSheet[item.Key].RowId) >= item.Value * NumberOfLoops);
+                                    if (!hasEnoughInInv && hasEnoughWithRetainer)
                                     {
-                                        var color = ImGuiColors.HealerGreen;
-                                        color.W -= 0.3f;
+                                        var color = ImGuiColors.DalamudOrange;
+                                        color.W -= 0.6f;
                                         ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
                                     }
-                                    if (RetainerInfo.ATools)
-                                    {
-                                        ImGui.TableNextColumn();
-                                        ImGui.Text($"{RetainerInfo.GetRetainerItemCount(item.Key)}");
-
-                                        bool hasEnoughWithRetainer = (invCount + RetainerInfo.GetRetainerItemCount(item.Key)) >= item.Value * NumberOfLoops;
-                                        if (!hasEnoughInInv && hasEnoughWithRetainer)
-                                        {
-                                            var color = ImGuiColors.DalamudOrange;
-                                            color.W -= 0.6f;
-                                            ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
-                                        }
-                                    }
                                 }
 
-                                ImGui.EndTable();
                             }
 
-                            ImGui.InputInt("次数###LoopPart", ref NumberOfLoops);
+                            ImGui.EndTable();
+                        }
 
+                        ImGui.InputInt("次数###LoopProject", ref NumberOfLoops);
 
-                            if (ImGui.Button($"为此部件创建制作清单", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
-                            {
-                                Notify.Info($"正在创建清单，请等待...");
-                                Task.Run(() => CreatePartList(part, partNum, false)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
-                            }
+                        if (ImGui.Button($"为此项目创建制作清单", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
+                        {
+                            Notify.Info($"正在创建清单，请等待...");
+                            Task.Run(() => CreateProjectList(project, false)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
+                        }
 
-                            if (ImGui.Button($"为此项目创建制作清单（包含前置配方）", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
-                            {
-                                Notify.Info($"正在创建清单，请等待...");
-                                Task.Run(() => CreatePartList(part, partNum, true)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
-                            }
+                        if (ImGui.Button($"为此项目创建制作清单（包含前置配方）", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
+                        {
+                            Notify.Info($"正在创建清单，请等待...");
+                            Task.Run(() => CreateProjectList(project, true)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
                         }
                     }
-                    ImGui.Unindent();
-                }
-
-                if (ImGui.CollapsingHeader("项目阶段"))
-                {
-                    string pNum = "";
-                    foreach (var part in project.CompanyCraftPart.Where(x => x.RowId > 0).Select(x => x.Value))
+                    if (ImGui.CollapsingHeader("项目部件"))
                     {
                         ImGui.Indent();
-                        int phaseNum = 1;
-                        pNum = part.CompanyCraftType.Value.Name.ToString();
-                        foreach (var phase in part.CompanyCraftProcess.Where(x => x.RowId > 0))
+                        string partNum = "";
+                        foreach (var part in project.CompanyCraftPart.Where(x => x.RowId > 0).Select(x => x.Value))
                         {
-                            if (ImGui.CollapsingHeader($"{pNum} - 阶段 {phaseNum}"))
+                            partNum = part.CompanyCraftType.Value.Name.ToString();
+                            if (ImGui.CollapsingHeader($"{partNum}"))
                             {
-                                if (ImGui.BeginTable($"###FCWorkshopPhaseContainer{phase.RowId}", RetainerInfo.ATools ? 6 : 5, ImGuiTableFlags.Borders))
+                                if (ImGui.BeginTable($"FCWorkshopPartsContainer###{part.RowId}", 2, ImGuiTableFlags.None))
+                                {
+                                    ImGui.TableSetupColumn($"###PartType{part.RowId}", ImGuiTableColumnFlags.WidthFixed);
+                                    ImGui.TableSetupColumn($"###Phases{part.RowId}", ImGuiTableColumnFlags.WidthFixed);
+                                    ImGui.TableNextColumn();
+
+                                    ImGuiEx.Text($"部件类型：");
+                                    ImGui.TableNextColumn();
+                                    ImGui.Text($"{part.CompanyCraftType.Value.Name.ToString()}");
+                                    ImGui.TableNextColumn();
+                                    ImGuiEx.Text($"阶段数量：");
+                                    ImGui.TableNextColumn();
+                                    ImGui.Text($"{part.CompanyCraftProcess.Where(x => x.RowId > 0).Count()}");
+                                    ImGui.TableNextColumn();
+
+                                    ImGui.EndTable();
+                                }
+                                if (ImGui.BeginTable($"###FCWorkshopPartItemsContainer{part.RowId}", RetainerInfo.ATools ? 4 : 3, ImGuiTableFlags.Borders))
                                 {
                                     ImGui.TableSetupColumn($"物品", ImGuiTableColumnFlags.WidthFixed);
-                                    ImGui.TableSetupColumn($"每合建需求数量", ImGuiTableColumnFlags.WidthFixed);
-                                    ImGui.TableSetupColumn($"合建次数", ImGuiTableColumnFlags.WidthFixed);
-                                    ImGui.TableSetupColumn($"需求总数量", ImGuiTableColumnFlags.WidthFixed);
+                                    ImGui.TableSetupColumn($"所需总数", ImGuiTableColumnFlags.WidthFixed);
                                     ImGui.TableSetupColumn($"包裹库存", ImGuiTableColumnFlags.WidthFixed);
                                     if (RetainerInfo.ATools) ImGui.TableSetupColumn($"雇员", ImGuiTableColumnFlags.WidthFixed);
                                     ImGui.TableHeadersRow();
 
-                                    foreach (var item in phase.Value.SupplyItems().Where(x => x.SupplyItem.RowId > 0))
+                                    Dictionary<uint, int> TotalItems = new Dictionary<uint, int>();
+                                    foreach (var item in part.CompanyCraftProcess.Where(x => x.RowId > 0).SelectMany(x => x.Value.SupplyItems()).Where(x => x.SupplyItem.RowId > 0).GroupBy(x => x.SupplyItem))
+                                    {
+                                        if (TotalItems.ContainsKey(LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId))
+                                            TotalItems[LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId] += item.Sum(x => x.SetQuantity * x.SetsRequired);
+                                        else
+                                            TotalItems.TryAdd(LuminaSheets.WorkshopSupplyItemSheet[item.Select(x => x.SupplyItem.RowId).First()].Item.RowId, item.Sum(x => x.SetQuantity * x.SetsRequired));
+
+                                    }
+
+                                    foreach (var item in TotalItems)
                                     {
                                         ImGui.TableNextRow();
                                         ImGui.TableNextColumn();
-                                        ImGui.Text($"{LuminaSheets.WorkshopSupplyItemSheet[item.SupplyItem.RowId].Item.Value.Name.ToString()}");
+                                        ImGui.Text($"{LuminaSheets.ItemSheet[item.Key].Name.ToString()}");
                                         ImGui.TableNextColumn();
-                                        ImGui.Text($"{item.SetQuantity}");
+                                        ImGui.Text($"{item.Value * NumberOfLoops}");
                                         ImGui.TableNextColumn();
-                                        ImGui.Text($"{item.SetsRequired * NumberOfLoops}");
-                                        ImGui.TableNextColumn();
-                                        ImGui.Text($"{item.SetsRequired * item.SetQuantity * NumberOfLoops}");
-                                        ImGui.TableNextColumn();
-                                        int invCount = CraftingListUI.NumberOfIngredient(LuminaSheets.WorkshopSupplyItemSheet[item.SupplyItem.RowId].Item.RowId);
+                                        int invCount = CraftingListUI.NumberOfIngredient(item.Key);
                                         ImGui.Text($"{invCount}");
-                                        bool hasEnoughInInv = invCount >= (item.SetQuantity * item.SetsRequired);
+                                        bool hasEnoughInInv = invCount >= item.Value * NumberOfLoops;
                                         if (hasEnoughInInv)
                                         {
                                             var color = ImGuiColors.HealerGreen;
@@ -300,9 +222,9 @@ namespace Artisan.FCWorkshops
                                         if (RetainerInfo.ATools)
                                         {
                                             ImGui.TableNextColumn();
-                                            ImGui.Text($"{RetainerInfo.GetRetainerItemCount(LuminaSheets.WorkshopSupplyItemSheet[item.SupplyItem.RowId].Item.RowId)}");
+                                            ImGui.Text($"{RetainerInfo.GetRetainerItemCount(item.Key)}");
 
-                                            bool hasEnoughWithRetainer = (invCount + RetainerInfo.GetRetainerItemCount(LuminaSheets.WorkshopSupplyItemSheet[item.SupplyItem.RowId].Item.RowId)) >= (item.SetQuantity * item.SetsRequired);
+                                            bool hasEnoughWithRetainer = (invCount + RetainerInfo.GetRetainerItemCount(item.Key)) >= item.Value * NumberOfLoops;
                                             if (!hasEnoughInInv && hasEnoughWithRetainer)
                                             {
                                                 var color = ImGuiColors.DalamudOrange;
@@ -310,34 +232,116 @@ namespace Artisan.FCWorkshops
                                                 ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
                                             }
                                         }
-
                                     }
 
                                     ImGui.EndTable();
                                 }
 
-                                ImGui.InputInt("次数###LoopPhase", ref NumberOfLoops);
+                                ImGui.InputInt("次数###LoopPart", ref NumberOfLoops);
 
-                                if (ImGui.Button($"为此阶段创建制作清单###PhaseButton{phaseNum}", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
+
+                                if (ImGui.Button($"为此部件创建制作清单", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
                                 {
                                     Notify.Info($"正在创建清单，请等待...");
-                                    Task.Run(() => CreatePhaseList(phase.Value!, pNum, phaseNum, false)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
+                                    Task.Run(() => CreatePartList(part, partNum, false)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
                                 }
 
-                                if (ImGui.Button($"为此阶段创建制作清单（包含前置配方）###PhaseButtonPC{phaseNum}", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
+                                if (ImGui.Button($"为此部件创建制作清单（包含前置配方）", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
                                 {
                                     Notify.Info($"正在创建清单，请等待...");
-                                    Task.Run(() => CreatePhaseList(phase.Value!, pNum, phaseNum, true)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
+                                    Task.Run(() => CreatePartList(part, partNum, true)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
                                 }
-
                             }
-                            phaseNum++;
                         }
                         ImGui.Unindent();
                     }
 
+                    if (ImGui.CollapsingHeader("项目阶段"))
+                    {
+                        string pNum = "";
+                        foreach (var part in project.CompanyCraftPart.Where(x => x.RowId > 0).Select(x => x.Value))
+                        {
+                            ImGui.Indent();
+                            int phaseNum = 1;
+                            pNum = part.CompanyCraftType.Value.Name.ToString();
+                            foreach (var phase in part.CompanyCraftProcess.Where(x => x.RowId > 0))
+                            {
+                                if (ImGui.CollapsingHeader($"{pNum} - Phase {phaseNum}"))
+                                {
+                                    if (ImGui.BeginTable($"###FCWorkshopPhaseContainer{phase.RowId}", RetainerInfo.ATools ? 6 : 5, ImGuiTableFlags.Borders))
+                                    {
+                                        ImGui.TableSetupColumn($"物品", ImGuiTableColumnFlags.WidthFixed);
+                                        ImGui.TableSetupColumn($"合建次数", ImGuiTableColumnFlags.WidthFixed);
+                                        ImGui.TableSetupColumn($"每合建需求数量", ImGuiTableColumnFlags.WidthFixed);
+                                        ImGui.TableSetupColumn($"所需总数", ImGuiTableColumnFlags.WidthFixed);
+                                        ImGui.TableSetupColumn($"包裹库存", ImGuiTableColumnFlags.WidthFixed);
+                                        if (RetainerInfo.ATools) ImGui.TableSetupColumn($"雇员", ImGuiTableColumnFlags.WidthFixed);
+                                        ImGui.TableHeadersRow();
+
+                                        foreach (var item in phase.Value.SupplyItems().Where(x => x.SupplyItem.RowId > 0))
+                                        {
+                                            ImGui.TableNextRow();
+                                            ImGui.TableNextColumn();
+                                            ImGui.Text($"{LuminaSheets.WorkshopSupplyItemSheet[item.SupplyItem.RowId].Item.Value.Name.ToString()}");
+                                            ImGui.TableNextColumn();
+                                            ImGui.Text($"{item.SetQuantity}");
+                                            ImGui.TableNextColumn();
+                                            ImGui.Text($"{item.SetsRequired * NumberOfLoops}");
+                                            ImGui.TableNextColumn();
+                                            ImGui.Text($"{item.SetsRequired * item.SetQuantity * NumberOfLoops}");
+                                            ImGui.TableNextColumn();
+                                            int invCount = CraftingListUI.NumberOfIngredient(LuminaSheets.WorkshopSupplyItemSheet[item.SupplyItem.RowId].Item.RowId);
+                                            ImGui.Text($"{invCount}");
+                                            bool hasEnoughInInv = invCount >= (item.SetQuantity * item.SetsRequired);
+                                            if (hasEnoughInInv)
+                                            {
+                                                var color = ImGuiColors.HealerGreen;
+                                                color.W -= 0.3f;
+                                                ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
+                                            }
+                                            if (RetainerInfo.ATools)
+                                            {
+                                                ImGui.TableNextColumn();
+                                                ImGui.Text($"{RetainerInfo.GetRetainerItemCount(LuminaSheets.WorkshopSupplyItemSheet[item.SupplyItem.RowId].Item.RowId)}");
+
+                                                bool hasEnoughWithRetainer = (invCount + RetainerInfo.GetRetainerItemCount(LuminaSheets.WorkshopSupplyItemSheet[item.SupplyItem.RowId].Item.RowId)) >= (item.SetQuantity * item.SetsRequired);
+                                                if (!hasEnoughInInv && hasEnoughWithRetainer)
+                                                {
+                                                    var color = ImGuiColors.DalamudOrange;
+                                                    color.W -= 0.6f;
+                                                    ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
+                                                }
+                                            }
+
+                                        }
+
+                                        ImGui.EndTable();
+                                    }
+
+                                    ImGui.InputInt("次数###LoopPhase", ref NumberOfLoops);
+
+                                    if (ImGui.Button($"为此阶段创建制作清单###PhaseButton{phaseNum}", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
+                                    {
+                                        Notify.Info($"正在创建清单，请等待...");
+                                        Task.Run(() => CreatePhaseList(phase.Value!, pNum, phaseNum, false)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
+                                    }
+
+                                    if (ImGui.Button($"为此阶段创建制作清单（包含前置配方）###PhaseButtonPC{phaseNum}", new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
+                                    {
+                                        Notify.Info($"正在创建清单，请等待...");
+                                        Task.Run(() => CreatePhaseList(phase.Value!, pNum, phaseNum, true)).ContinueWith((_) => Notify.Success("部队工房清单已创建"));
+                                    }
+
+                                }
+                                phaseNum++;
+                            }
+                            ImGui.Unindent();
+                        }
+
+                    }
                 }
             }
+            catch { }
         }
 
         private static void CreatePartList(CompanyCraftPart value, string partNum, bool includePrecraft, NewCraftingList? existingList = null)

@@ -99,21 +99,24 @@ namespace Artisan.UI
 
         public static void Draw()
         {
-            if (ImGui.BeginTabBar("Simulator Select"))
+            try
             {
-                if (ImGui.BeginTabItem("图形化模拟"))
+                if (ImGui.BeginTabBar("选择模拟器"))
                 {
-                    DrawGUISim();
-                    ImGui.EndTabItem();
-                }
+                    if (ImGui.BeginTabItem("图形化模拟"))
+                    {
+                        DrawGUISim();
+                        ImGui.EndTabItem();
+                    }
 
-                if (ImGui.BeginTabItem("大规模模拟模式"))
-                {
-                    SimulatorUIVeynVersion.Draw();
-                    ImGui.EndTabItem();
+                    if (ImGui.BeginTabItem("大规模模拟模式"))
+                    {
+                        SimulatorUIVeynVersion.Draw();
+                        ImGui.EndTabItem();
+                    }
                 }
             }
-
+            catch { }
 
         }
 

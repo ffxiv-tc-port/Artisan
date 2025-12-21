@@ -82,90 +82,94 @@ namespace Artisan.UI
 
         public override void Draw()
         {
-            if (RaphaelCache.InProgressAny())
+            try
             {
-                ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "Raphael is generating. Please wait...");
-                return;
-            }
-
-            if (!P.Config.DisableHighlightedAction)
-                Hotbars.MakeButtonsGlow(CraftingProcessor.NextRec.Action);
-
-            if (Crafting.CurCraft != null && !Crafting.CurCraft.CraftExpert && Crafting.CurRecipe?.SecretRecipeBook.RowId > 0 && Crafting.CurCraft?.CraftLevel == Crafting.CurCraft?.StatLevel && !CraftingProcessor.ActiveSolver.IsType<MacroSolver>())
-            {
-                ImGui.Dummy(new System.Numerics.Vector2(12f));
-                ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "这是当前等级的高难度配方。成功率可能会不稳定，建议使用Artisan的宏功能或手动完成该配方。");
-            }
-
-            bool autoMode = P.Config.AutoMode;
-            if (ImGui.Checkbox("自动制作模式", ref autoMode))
-            {
-                P.Config.AutoMode = autoMode;
-                P.Config.Save();
-            }
-
-            if (autoMode && !P.Config.ReplicateMacroDelay)
-            {
-                var delay = P.Config.AutoDelay;
-                ImGui.PushItemWidth(200);
-                if (ImGui.SliderInt("设置延迟（毫秒）", ref delay, 0, 1000))
+                if (RaphaelCache.InProgressAny())
                 {
-                    if (delay < 0) delay = 0;
-                    if (delay > 1000) delay = 1000;
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "Raphael正在生成。请稍候...");
+                    return;
+                }
 
-                    P.Config.AutoDelay = delay;
+                if (!P.Config.DisableHighlightedAction)
+                    Hotbars.MakeButtonsGlow(CraftingProcessor.NextRec.Action);
+
+                if (Crafting.CurCraft != null && !Crafting.CurCraft.CraftExpert && Crafting.CurRecipe?.SecretRecipeBook.RowId > 0 && Crafting.CurCraft?.CraftLevel == Crafting.CurCraft?.StatLevel && !CraftingProcessor.ActiveSolver.IsType<MacroSolver>())
+                {
+                    ImGui.Dummy(new System.Numerics.Vector2(12f));
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "这是当前等级的高难度配方。成功率可能会不稳定，建议使用Artisan的宏功能或手动完成该配方。");
+                }
+
+                bool autoMode = P.Config.AutoMode;
+                if (ImGui.Checkbox("自动制作模式", ref autoMode))
+                {
+                    P.Config.AutoMode = autoMode;
                     P.Config.Save();
                 }
-            }
 
-            if (Endurance.RecipeID != 0 && !CraftingListUI.Processing && Endurance.Enable)
-            {
-                if (ImGui.Button("禁用耐力模式"))
+                if (autoMode && !P.Config.ReplicateMacroDelay)
                 {
-                    Endurance.ToggleEndurance(false);
-                    P.TM.Abort();
-                    CraftingListFunctions.CLTM.Abort();
-                    PreCrafting.Tasks.Clear();
+                    var delay = P.Config.AutoDelay;
+                    ImGui.PushItemWidth(200);
+                    if (ImGui.SliderInt("设置延迟（毫秒）", ref delay, 0, 1000))
+                    {
+                        if (delay < 0) delay = 0;
+                        if (delay > 1000) delay = 1000;
+
+                        P.Config.AutoDelay = delay;
+                        P.Config.Save();
+                    }
+                }
+
+                if (Endurance.RecipeID != 0 && !CraftingListUI.Processing && Endurance.Enable)
+                {
+                    if (ImGui.Button("禁用耐力模式"))
+                    {
+                        Endurance.ToggleEndurance(false);
+                        P.TM.Abort();
+                        CraftingListFunctions.CLTM.Abort();
+                        PreCrafting.Tasks.Clear();
+                    }
+                }
+
+                if (!Endurance.Enable && Crafting.IsTrial)
+                    ImGui.Checkbox("重复制作练习", ref RepeatTrial);
+
+                if (CraftingProcessor.ActiveSolver)
+                {
+                    var text = $"使用{CraftingProcessor.ActiveSolver.Name}";
+                    if (CraftingProcessor.NextRec.Comment.Length > 0)
+                        text += $" ({CraftingProcessor.NextRec.Comment})";
+                    ImGuiEx.TextWrapped(text.Replace("%", ""));
+                }
+
+                if (P.Config.CraftingX && Endurance.Enable)
+                    ImGui.Text($"剩余制作：{P.Config.CraftX}");
+
+                if (_estimatedCraftEnd != default)
+                {
+                    var diff = _estimatedCraftEnd - DateTime.Now;
+                    string duration = string.Format("{0:D2}时 {1:D2}分 {2:D2}秒", diff.Hours, diff.Minutes, diff.Seconds);
+                    ImGui.Text($"大致剩余时间：{duration}");
+                }
+
+                if (!P.Config.AutoMode)
+                {
+                    ImGui.Text("半手动模式");
+
+                    var action = CraftingProcessor.NextRec.Action;
+                    using var disable = ImRaii.Disabled(action == Skills.None);
+
+                    if (ImGui.Button("执行建议的技能"))
+                    {
+                        ActionManagerEx.UseSkill(action);
+                    }
+                    if (ImGui.Button("获取建议"))
+                    {
+                        ShowRecommendation(action);
+                    }
                 }
             }
-
-            if (!Endurance.Enable && Crafting.IsTrial)
-                ImGui.Checkbox("重复制作练习", ref RepeatTrial);
-
-            if (CraftingProcessor.ActiveSolver)
-            {
-                var text = $"使用[{CraftingProcessor.ActiveSolver.Name}]";
-                if (CraftingProcessor.NextRec.Comment.Length > 0)
-                    text += $" ({CraftingProcessor.NextRec.Comment})";
-                ImGuiEx.TextWrapped(text.Replace("%", ""));
-            }
-
-            if (P.Config.CraftingX && Endurance.Enable)
-                ImGui.Text($"剩余制作：{P.Config.CraftX}");
-
-            if (_estimatedCraftEnd != default)
-            {
-                var diff = _estimatedCraftEnd - DateTime.Now;
-                string duration = string.Format("{0:D2}时 {1:D2}分 {2:D2}秒", diff.Hours, diff.Minutes, diff.Seconds);
-                ImGui.Text($"大致剩余时间：{duration}");
-            }
-
-            if (!P.Config.AutoMode)
-            {
-                ImGui.Text("半手动模式");
-
-                var action = CraftingProcessor.NextRec.Action;
-                using var disable = ImRaii.Disabled(action == Skills.None);
-
-                if (ImGui.Button("执行建议的操作"))
-                {
-                    ActionManagerEx.UseSkill(action);
-                }
-                if (ImGui.Button("获取建议"))
-                {
-                    ShowRecommendation(action);
-                }
-            }
+            catch { } //Idaf about your error windows
         }
 
         private void ShowRecommendation(Skills action)

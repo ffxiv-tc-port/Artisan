@@ -7,4 +7,5 @@
 	branch = Artisan
 [submodule "raphael-rs"]
 	path = raphael-rs
-	url = https://github.com/KonaeAkira/raphael-rs
+	url = https://github.com/MeowZWR/raphael-rs
+	branch = upstream-preview

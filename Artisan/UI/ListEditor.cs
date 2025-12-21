@@ -246,7 +246,6 @@ internal class ListEditor : Window, IDisposable
                     ImGuiEx.Text(ImGuiColors.DalamudYellow, $"你已经关闭 Allagan Tools 集成。");
             }
 
-            if (ImGui.BeginTabItem("从其他清单复制"))
             if (ImGui.BeginTabBar("CraftingListEditor", ImGuiTabBarFlags.None))
             {
                 if (ImGui.BeginTabItem("配方表"))

@@ -207,7 +207,7 @@ namespace Artisan.CraftingLogic.Solvers
                         }
                         else
                         {
-                            var crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId).ToList();
+                            var crafts = AllValidCrafts(key).ToList();
                             Svc.Log.Information($"将求解器应用到 {crafts.Count} 个配方。");
                             var nopt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
                             if (nopt is { } opt)
@@ -251,7 +251,7 @@ namespace Artisan.CraftingLogic.Solvers
 
             var hasTempConfig = TempConfigs.TryGetValue(key, out var tempconfig);
             var hasDelins = Crafting.DelineationCount() > 0;
-            config.EnsureReliability = hasTempConfig ? tempconfig.EnsureReliability : P.Config.RaphaelSolverConfig.AllowEnsureReliability;
+            //config.EnsureReliability = hasTempConfig ? tempconfig.EnsureReliability : P.Config.RaphaelSolverConfig.AllowEnsureReliability;
             config.BackloadProgress = hasTempConfig ? tempconfig.BackloadProgress : P.Config.RaphaelSolverConfig.AllowBackloadProgress;
             config.HeartAndSoul = hasTempConfig ? tempconfig.HeartAndSoul : P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist && hasDelins;
             config.QuickInno = hasTempConfig ? tempconfig.QuickInno : P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist && hasDelins;
@@ -259,10 +259,10 @@ namespace Artisan.CraftingLogic.Solvers
             return config;
         }
 
-        public static IEnumerable<CraftState> AllValidCrafts(string key, uint craftType)
+        public static IEnumerable<CraftState> AllValidCrafts(string key)
         {
             var stats = KeyParts(key);
-            var recipes = LuminaSheets.RecipeSheet.Values.Where(x => x.CraftType.RowId == craftType && x.RecipeLevelTable.Value.ClassJobLevel == stats.Level);
+            var recipes = LuminaSheets.RecipeSheet.Values.Where(x => x.RecipeLevelTable.Value.ClassJobLevel == stats.Level);
             foreach (var recipe in recipes)
             {
                 var state = Crafting.BuildCraftStateForRecipe(default, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
@@ -346,7 +346,7 @@ namespace Artisan.CraftingLogic.Solvers
                 if (!TempConfigs.ContainsKey(key))
                 {
                     TempConfigs.Add(key, new());
-                    TempConfigs[key].EnsureReliability = P.Config.RaphaelSolverConfig.AllowEnsureReliability;
+                    //TempConfigs[key].EnsureReliability = P.Config.RaphaelSolverConfig.AllowEnsureReliability;
                     TempConfigs[key].BackloadProgress = P.Config.RaphaelSolverConfig.AllowBackloadProgress;
                     TempConfigs[key].HeartAndSoul = P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist;
                     TempConfigs[key].QuickInno = P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist;
@@ -436,8 +436,8 @@ namespace Artisan.CraftingLogic.Solvers
                 if (inProgress)
                     ImGui.BeginDisabled();
 
-                if (P.Config.RaphaelSolverConfig.AllowEnsureReliability)
-                    raphChanges |= ImGui.Checkbox($"确保可靠性##{key}Reliability", ref TempConfigs[key].EnsureReliability);
+                //if (P.Config.RaphaelSolverConfig.AllowEnsureReliability)
+                //    raphChanges |= ImGui.Checkbox($"确保可靠性##{key}Reliability", ref TempConfigs[key].EnsureReliability);
                 if (P.Config.RaphaelSolverConfig.AllowBackloadProgress)
                     raphChanges |= ImGui.Checkbox($"后置进度##{key}Progress", ref TempConfigs[key].BackloadProgress);
                 if (P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist)
@@ -490,7 +490,6 @@ namespace Artisan.CraftingLogic.Solvers
 
     public class RaphaelSolverSettings
     {
-        public bool AllowEnsureReliability = false;
         public bool AllowBackloadProgress = true;
         public bool ShowSpecialistSettings = false;
         public bool ExactCraftsmanship = false;
@@ -517,10 +516,10 @@ namespace Artisan.CraftingLogic.Solvers
                 }
                 ImGuiEx.TextWrapped("默认使用所有可用资源，但在低端机器上您可能需要使用更少的 CPU 以牺牲速度为代价。(0 = 全部)");
 
-                changed |= ImGui.Checkbox("在宏生成中确保 100% 可靠性", ref AllowEnsureReliability);
-                ImGui.PushTextWrapPos(0);
-                ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "确保可靠性可能并不总是有效，且非常消耗 CPU 和内存，建议至少保留 16GB+ 可用内存。启用此选项后将不提供任何支持");
-                ImGui.PopTextWrapPos();
+                //changed |= ImGui.Checkbox("在宏生成中确保 100% 可靠性", ref AllowEnsureReliability);
+                //ImGui.PushTextWrapPos(0);
+                //ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "确保可靠性可能并不总是有效，且非常消耗 CPU 和内存，建议至少保留 16GB+ 可用内存。启用此选项后将不提供任何支持");
+                //ImGui.PopTextWrapPos();
                 changed |= ImGui.Checkbox("在宏生成中允许后置进度", ref AllowBackloadProgress);
                 changed |= ImGui.Checkbox("在可用时显示专家选项", ref ShowSpecialistSettings);
                 changed |= ImGui.Checkbox($"如果尚未创建有效解决方案，则自动生成解决方案。", ref AutoGenerate);

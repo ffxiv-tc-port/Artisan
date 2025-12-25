@@ -6,22 +6,12 @@ using Artisan.RawInformation.Character;
 using Artisan.UI;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
-using Dalamud.Interface.Utility.Raii;
-using ECommons;
-using ECommons.Configuration;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
-using ECommons.GameHelpers;
 using ECommons.ImGuiMethods;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using Lumina.Excel.Sheets;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics.Tracing;
 using System.Linq;
-using System.Numerics;
-using TerraFX.Interop.Windows;
-using static FFXIVClientStructs.FFXIV.Client.UI.AddonItemDetailCompare;
 
 namespace Artisan.CraftingLogic;
 
@@ -54,7 +44,7 @@ public class RecipeConfig
     public bool RequiredFoodHQ => requiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : requiredFoodHQ;
     public bool RequiredPotionHQ => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : requiredPotionHQ;
 
-    
+
     public string FoodName => requiredFood == Default ? $"{P.Config.DefaultConsumables.FoodName} (默认)" : RequiredFood == Disabled ? "已禁用" : $"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
     public string PotionName => requiredPotion == Default ? $"{P.Config.DefaultConsumables.PotionName} (默认)" : RequiredPotion == Disabled ? "已禁用" : $"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
     public string ManualName => requiredManual == Default ? $"{P.Config.DefaultConsumables.ManualName} (默认)" : RequiredManual == Disabled ? "已禁用" : $"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
@@ -70,7 +60,8 @@ public class RecipeConfig
         var stats = CharacterStats.GetBaseStatsForClassHeuristic((Job)((uint)Job.CRP + recipe.CraftType.RowId));
         stats.AddConsumables(new(config.RequiredFood, config.RequiredFoodHQ), new(config.RequiredPotion, config.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
         var craft = Crafting.BuildCraftStateForRecipe(stats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
-        craft.InitialQuality = Simulator.GetStartingQuality(recipe, false, craft.StatLevel);
+        if (craft.InitialQuality == 0)
+            craft.InitialQuality = Simulator.GetStartingQuality(recipe, false, craft.StatLevel);
         bool changed = false;
         changed |= DrawFood();
         changed |= DrawPotion();
@@ -302,10 +293,10 @@ public class RecipeConfig
                 if (craft.MissionHasMaterialMiracle && solver.Name == "标准配方求解器" && P.Config.UseMaterialMiracle)
                     ImGuiEx.TextWrapped($"这将使用“奇迹之材”，与模拟器不兼容。");
                 else
-                if (solver.Name == "Raphael Recipe Solver" && !RaphaelCache.HasSolution(craft, out _))
-                    ImGuiEx.TextWrapped($"Unable to generate a simulator without a Raphael solution generated.");
-                else
-                    ImGuiEx.TextWrapped(hintColor, solverHint);
+                    if (solver.Name == "Raphael Recipe Solver" && !RaphaelCache.HasSolution(craft, out _))
+                        ImGuiEx.TextWrapped($"Unable to generate a simulator without a Raphael solution generated.");
+                    else
+                        ImGuiEx.TextWrapped(hintColor, solverHint);
             }
             else
                 ImGuiEx.TextWrapped($"请在模拟器中运行此配方以获得结果。");

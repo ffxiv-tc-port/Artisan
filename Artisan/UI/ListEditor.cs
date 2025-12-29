@@ -2,6 +2,7 @@
 
 using Autocraft;
 using CraftingLists;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
@@ -17,7 +18,6 @@ using global::Artisan.CraftingLogic.Solvers;
 using global::Artisan.GameInterop;
 using global::Artisan.RawInformation.Character;
 using global::Artisan.UI.Tables;
-using Dalamud.Bindings.ImGui;
 using IPC;
 using Lumina.Excel.Sheets;
 using Newtonsoft.Json;
@@ -63,7 +63,7 @@ internal class ListEditor : Window, IDisposable
 
     private ListFolders ListsUI = new();
 
-    private bool TidyAfter;
+    private bool TidyAfter = true;
 
     private int timesToAdd = 1;
 
@@ -92,6 +92,8 @@ internal class ListEditor : Window, IDisposable
     IngredientHelpers IngredientHelper = new();
 
     private bool hqSim = false;
+
+    private int addMoreCount = 0;
 
     public ListEditor(int listId)
         : base($"清单编辑器###{listId}")
@@ -130,7 +132,7 @@ internal class ListEditor : Window, IDisposable
     {
         token = source.Token;
         Table = null;
-        P.UniversalsisClient.PlayerWorld = Svc.ClientState.LocalPlayer?.CurrentWorld.RowId;
+        P.UniversalsisClient.PlayerWorld = Svc.Objects.LocalPlayer?.CurrentWorld.RowId;
         if (RegenerateTask == null || RegenerateTask.IsCompleted)
         {
             Svc.Log.Debug($"Starting regeneration");
@@ -563,44 +565,16 @@ internal class ListEditor : Window, IDisposable
             if (timesToAdd < 1)
                 ImGui.EndDisabled();
 
-            ImGui.Checkbox("添加后移除所有不必要的子配方", ref TidyAfter);
-        }
 
+        }
+        ImGui.Checkbox("更改数量后自动调整所有子配方", ref TidyAfter);
+        ImGuiComponents.HelpMarker("此功能已重新设计！启用后，将根据清单自动调整所有配方的数量，不仅仅是移除多余的子配方，还会在需要时添加更多的子配方，并在最终整理排序，确保制作顺序正确（尤其是在你移除了一些材料时）。\n\n" +
+            "注意：这里会把你选择的物品当做“最终产物”，只会调整该物品需要的子配方，而不会影响该物品作为材料被其他配方使用的情况。例如：更改木材的数量并不会自动调整使用该木材的其他配方。");
         ImGui.Separator();
 
         if (ImGui.Button($"排序配方"))
         {
-            List<ListItem> newList = new();
-            List<ListOrderCheck> order = new();
-            foreach (var item in SelectedList.Recipes.Distinct())
-            {
-                var orderCheck = new ListOrderCheck();
-                var r = LuminaSheets.RecipeSheet[item.ID];
-                orderCheck.RecID = r.RowId;
-                int maxDepth = 0;
-                foreach (var ing in r.Ingredients().Where(x => x.Amount > 0).Select(x => x.Item.RowId))
-                {
-                    CheckIngredientRecipe(ing, orderCheck);
-                    if (orderCheck.RecipeDepth > maxDepth)
-                    {
-                        maxDepth = orderCheck.RecipeDepth;
-                    }
-                    orderCheck.RecipeDepth = 0;
-                }
-                orderCheck.RecipeDepth = maxDepth;
-                orderCheck.ListQuantity = item.Quantity;
-                orderCheck.ops = item.ListItemOptions ?? new ListItemOptions();
-                order.Add(orderCheck);
-            }
-
-            foreach (var ord in order.OrderBy(x => x.RecipeDepth).ThenBy(x => x.RecipeDiff).ThenBy(x => x.CraftType))
-            {
-                newList.Add(new ListItem() { ID = ord.RecID, Quantity = ord.ListQuantity, ListItemOptions = ord.ops });
-            }
-
-            SelectedList.Recipes = newList;
-            RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
-            P.Config.Save();
+            SortList();
         }
 
         if (ImGui.IsItemHovered())
@@ -618,6 +592,41 @@ internal class ListEditor : Window, IDisposable
         string duration = listTime == TimeSpan.Zero ? "未知" : string.Format("{0:D2}d {1:D2}h {2:D2}m {3:D2}s", listTime.Days, listTime.Hours, listTime.Minutes, listTime.Seconds);
         ImGui.SameLine();
         ImGui.Text($"大致清单时间：{duration}");
+    }
+
+    private void SortList()
+    {
+        List<ListItem> newList = new();
+        List<ListOrderCheck> order = new();
+        foreach (var item in SelectedList.Recipes.Distinct())
+        {
+            var orderCheck = new ListOrderCheck();
+            var r = LuminaSheets.RecipeSheet[item.ID];
+            orderCheck.RecID = r.RowId;
+            int maxDepth = 0;
+            foreach (var ing in r.Ingredients().Where(x => x.Amount > 0).Select(x => x.Item.RowId))
+            {
+                CheckIngredientRecipe(ing, orderCheck);
+                if (orderCheck.RecipeDepth > maxDepth)
+                {
+                    maxDepth = orderCheck.RecipeDepth;
+                }
+                orderCheck.RecipeDepth = 0;
+            }
+            orderCheck.RecipeDepth = maxDepth;
+            orderCheck.ListQuantity = item.Quantity;
+            orderCheck.ops = item.ListItemOptions ?? new ListItemOptions();
+            order.Add(orderCheck);
+        }
+
+        foreach (var ord in order.OrderBy(x => x.RecipeDepth).ThenBy(x => x.RecipeDiff).ThenBy(x => x.CraftType))
+        {
+            newList.Add(new ListItem() { ID = ord.RecID, Quantity = ord.ListQuantity, ListItemOptions = ord.ops });
+        }
+
+        SelectedList.Recipes = newList;
+        RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+        P.Config.Save();
     }
 
     TimeSpan listTime;
@@ -1102,16 +1111,37 @@ internal class ListEditor : Window, IDisposable
         var recipe = LuminaSheets.RecipeSheet[RecipeSelector.Current.ID];
         var count = RecipeSelector.Items[RecipeSelector.CurrentIdx].Quantity;
 
-        ImGui.TextWrapped("调整数量");
+        ImGuiEx.LineCentered(() => ImGuiEx.TextUnderlined($"{recipe.ItemResult.Value.Name}"));
+
+		ImGui.TextWrapped("调整数量");
         ImGuiEx.SetNextItemFullWidth(-30);
-        if (ImGui.InputInt("###AdjustQuantity", ref count))
+        if (ImGui.InputInt("###AdjustQuantity", ref count, flags: ImGuiInputTextFlags.EnterReturnsTrue))
         {
             if (count >= 0)
             {
                 SelectedList.Recipes.First(x => x.ID == selectedListItem).Quantity = count;
+
+                if (TidyAfter)
+                {
+                    CraftingListHelpers.TidyUpList(SelectedList);
+
+                    SelectedListMateralsNew.Clear();
+                    listMaterialsNew.Clear();
+
+                    CraftingListUI.AddAllSubcrafts(recipe, SelectedList, 1, count);
+
+                    RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+                    RefreshTable(null, true);
+                    P.Config.Save();
+
+                    CraftingListHelpers.TidyUpList(SelectedList);
+                    SortList();
+                    var newIdx = RecipeSelector.Items.IndexOf(x => x.ID == selectedListItem);
+                    RecipeSelector.SetCurrent(newIdx);
+                }
+
                 P.Config.Save();
             }
-
             NeedsToRefreshTable = true;
         }
 
@@ -1291,12 +1321,28 @@ internal class ListEditor : Window, IDisposable
         stats.AddConsumables(new(config.RequiredFood, config.RequiredFoodHQ), new(config.RequiredPotion, config.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
         var craft = Crafting.BuildCraftStateForRecipe(stats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
         craft.InitialQuality = Simulator.GetStartingQuality(recipe, hqSim, craft.StatLevel);
-        if (config.DrawSolver(craft))
+        if (config.DrawSolver(craft, true, false))
         {
             P.Config.RecipeConfigs[selectedListItem] = config;
             P.Config.Save();
         }
-        
+
+        ImGui.SameLine();
+
+        if (ImGui.Button($"应用到所有###SolverOnAll"))
+        {
+            foreach (var r in SelectedList.Recipes.Distinct())
+            {
+                var o = P.Config.RecipeConfigs.GetValueOrDefault(r.ID) ?? new();
+                o.SolverType = config.SolverType;
+                o.SolverFlavour = config.SolverFlavour;
+                P.Config.RecipeConfigs[r.ID] = o;
+            }
+            P.Config.Save();
+        }
+
+        RaphaelCache.DrawRaphaelDropdown(craft, false);
+
         ImGuiEx.TextV("制作要求：");
         ImGui.SameLine();
         using var style = ImRaii.PushStyle(ImGuiStyleVar.ItemSpacing, new Vector2(0, ImGui.GetStyle().ItemSpacing.Y));

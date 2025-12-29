@@ -331,9 +331,8 @@ namespace Artisan.CraftingLogic.Solvers
             return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"));
         }
 
-        public static bool DrawRaphaelDropdown(CraftState craft, bool liveStats = true)
+        public static void DrawRaphaelDropdown(CraftState craft, bool liveStats = true)
         {
-            bool changed = false;
             var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.RecipeId) ?? new();
             if (CLIExists())
             {
@@ -350,7 +349,7 @@ namespace Artisan.CraftingLogic.Solvers
                 }
 
                 var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael Recipe Solver");
-                var solverIsRaph = config.SolverType == opt?.Def.GetType().FullName!;
+                var solverIsRaph = config.CurrentSolverType == opt?.Def.GetType().FullName!;
                 if (hasSolution)
                 {
                     var curStats = CharacterStats.GetCurrentStats();
@@ -364,7 +363,6 @@ namespace Artisan.CraftingLogic.Solvers
                             {
                                 config.SolverType = opt?.Def.GetType().FullName!;
                                 config.SolverFlavour = (int)(opt?.Flavour);
-                                changed = true;
                             }
                         }
                         else
@@ -375,7 +373,7 @@ namespace Artisan.CraftingLogic.Solvers
                     else
                     {
                         ImGuiEx.TextCentered($"解决方案密钥: {key}");
-                        var playerIsJob = Player.JobId == craft.Recipe.CraftType.RowId + 8;
+                        var playerIsJob = Player.ClassJob.RowId == craft.Recipe.CraftType.RowId + 8;
                         var parts = KeyParts(key);
                         if (!playerIsJob)
                             ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"当前不是对应职业。");
@@ -421,7 +419,6 @@ namespace Artisan.CraftingLogic.Solvers
                 ImGui.Separator();
 
                 var inProgress = InProgress(craft);
-                var raphChanges = false;
 
                 if (inProgress)
                     ImGui.BeginDisabled();
@@ -429,13 +426,11 @@ namespace Artisan.CraftingLogic.Solvers
                 //if (P.Config.RaphaelSolverConfig.AllowEnsureReliability)
                 //    raphChanges |= ImGui.Checkbox($"确保可靠性##{key}Reliability", ref TempConfigs[key].EnsureReliability);
                 if (P.Config.RaphaelSolverConfig.AllowBackloadProgress)
-                    raphChanges |= ImGui.Checkbox($"后置进度##{key}Progress", ref TempConfigs[key].BackloadProgress);
+                    ImGui.Checkbox($"后置进度##{key}Progress", ref TempConfigs[key].BackloadProgress);
                 if (P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist)
-                    raphChanges |= ImGui.Checkbox($"允许使用专心致志##{key}HS", ref TempConfigs[key].HeartAndSoul);
+                    ImGui.Checkbox($"允许使用专心致志##{key}HS", ref TempConfigs[key].HeartAndSoul);
                 if (P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist)
-                    raphChanges |= ImGui.Checkbox($"允许使用快速改革##{key}QI", ref TempConfigs[key].QuickInno);
-
-                changed |= raphChanges;
+                    ImGui.Checkbox($"允许使用快速改革##{key}QI", ref TempConfigs[key].QuickInno);
 
                 if (inProgress)
                     ImGui.EndDisabled();
@@ -473,8 +468,6 @@ namespace Artisan.CraftingLogic.Solvers
                     ImGuiEx.TextCentered("生成中...");
                 }
             }
-
-            return changed;
         }
     }
 

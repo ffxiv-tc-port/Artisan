@@ -890,6 +890,9 @@ namespace Artisan.UI
                     P.Config.Save();
                 }
 
+                if (ImGui.Checkbox("Adjust all sub-crafts after changing quantities", ref P.Config.DefaultAdjustQuantities))
+                    P.Config.Save();
+
                 if (ImGui.Checkbox($@"添加到列表后重置“添加次数”。", ref P.Config.ResetTimesToAdd))
                     P.Config.Save();
 

@@ -63,8 +63,6 @@ internal class ListEditor : Window, IDisposable
 
     private ListFolders ListsUI = new();
 
-    private bool TidyAfter = true;
-
     private int timesToAdd = 1;
 
     public readonly RecipeSelector RecipeSelector;
@@ -94,6 +92,7 @@ internal class ListEditor : Window, IDisposable
     private bool hqSim = false;
 
     private int addMoreCount = 0;
+    private bool loading;
 
     public ListEditor(int listId)
         : base($"清单编辑器###{listId}")
@@ -504,7 +503,7 @@ internal class ListEditor : Window, IDisposable
                     SelectedList.Recipes.Add(new ListItem() { ID = SelectedRecipe.Value.RowId, Quantity = checked(timesToAdd) });
                 }
 
-                if (TidyAfter)
+                if (SelectedList.TidyAfter)
                     CraftingListHelpers.TidyUpList(SelectedList);
 
                 if (SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions is null)
@@ -543,7 +542,7 @@ internal class ListEditor : Window, IDisposable
                     SelectedList.Recipes.Add(new ListItem() { ID = SelectedRecipe.Value.RowId, Quantity = timesToAdd });
                 }
 
-                if (TidyAfter)
+                if (SelectedList.TidyAfter)
                     CraftingListHelpers.TidyUpList(SelectedList);
 
                 if (SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions is null)
@@ -567,8 +566,10 @@ internal class ListEditor : Window, IDisposable
 
 
         }
-        ImGui.Checkbox("更改数量后自动调整所有子配方", ref TidyAfter);
-        ImGuiComponents.HelpMarker("此功能已重新设计！启用后，将根据清单自动调整所有配方的数量，不仅仅是移除多余的子配方，还会在需要时添加更多的子配方，并在最终整理排序，确保制作顺序正确（尤其是在你移除了一些材料时）。\n\n" +
+        if (ImGui.Checkbox("更改数量后自动调整所有子配方", ref SelectedList.TidyAfter))
+            P.Config.Save();
+
+        ImGuiComponents.HelpMarker("此功能已重新设计！启用后，将根据清单自动调整所有配方的数量，不仅仅是移除不必要的配方，还会在需要时添加更多的配方，并在最终整理排序，确保制作顺序正确（尤其是在你移除了一些材料时）。\n\n" +
             "注意：这里会把你选择的物品当做“最终产物”，只会调整该物品需要的子配方，而不会影响该物品作为材料被其他配方使用的情况。例如：更改木材的数量并不会自动调整使用该木材的其他配方。");
         ImGui.Separator();
 
@@ -592,6 +593,13 @@ internal class ListEditor : Window, IDisposable
         string duration = listTime == TimeSpan.Zero ? "未知" : string.Format("{0:D2}d {1:D2}h {2:D2}m {3:D2}s", listTime.Days, listTime.Hours, listTime.Minutes, listTime.Seconds);
         ImGui.SameLine();
         ImGui.Text($"大致清单时间：{duration}");
+
+        if (loading)
+        {
+            ImGui.SameLine();
+            ImGuiEx.LineCentered(() => ImGuiEx.TextUnderlined(GradientColor.Get(ImGuiColors.DalamudWhite, ImGuiColors.DalamudYellow, 200), "刷新清单数量"));
+        }
+
     }
 
     private void SortList()
@@ -1113,34 +1121,33 @@ internal class ListEditor : Window, IDisposable
 
         ImGuiEx.LineCentered(() => ImGuiEx.TextUnderlined($"{recipe.ItemResult.Value.Name}"));
 
-		ImGui.TextWrapped("调整数量");
+        ImGui.TextWrapped("调整数量");
         ImGuiEx.SetNextItemFullWidth(-30);
-        if (ImGui.InputInt("###AdjustQuantity", ref count, flags: ImGuiInputTextFlags.EnterReturnsTrue))
+        ImGui.InputInt("###AdjustQuantity", ref count);
+        if (ImGui.IsItemDeactivatedAfterEdit())
         {
             if (count >= 0)
             {
-                SelectedList.Recipes.First(x => x.ID == selectedListItem).Quantity = count;
-
-                if (TidyAfter)
+                Task.Run(() =>
                 {
-                    CraftingListHelpers.TidyUpList(SelectedList);
+                    loading = true;
+                    SelectedList.Recipes.First(x => x.ID == selectedListItem).Quantity = count;
 
-                    SelectedListMateralsNew.Clear();
-                    listMaterialsNew.Clear();
+                    if (SelectedList.TidyAfter)
+                    {
+                        CraftingListUI.AddAllSubcrafts(recipe, SelectedList, 1, count);
+                        RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
 
-                    CraftingListUI.AddAllSubcrafts(recipe, SelectedList, 1, count);
+                        CraftingListHelpers.TidyUpList(SelectedList);
 
-                    RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
-                    RefreshTable(null, true);
+                        SortList();
+                        var newIdx = RecipeSelector.Items.IndexOf(x => x.ID == selectedListItem);
+                        RecipeSelector.SetCurrent(newIdx);
+                    }
+
                     P.Config.Save();
-
-                    CraftingListHelpers.TidyUpList(SelectedList);
-                    SortList();
-                    var newIdx = RecipeSelector.Items.IndexOf(x => x.ID == selectedListItem);
-                    RecipeSelector.SetCurrent(newIdx);
-                }
-
-                P.Config.Save();
+                    loading = false;
+                });
             }
             NeedsToRefreshTable = true;
         }
@@ -1256,6 +1263,7 @@ internal class ListEditor : Window, IDisposable
         {
             if (config.DrawPotion(true))
             {
+                Svc.Log.Debug($"Updated pot for {selectedListItem}");
                 P.Config.RecipeConfigs[selectedListItem] = config;
                 P.Config.Save();
             }

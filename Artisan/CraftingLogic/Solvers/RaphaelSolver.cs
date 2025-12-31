@@ -217,7 +217,8 @@ namespace Artisan.CraftingLogic.Solvers
                                     if (autoSwitchOk(c.Recipe.RowId))
                                     {
                                         Svc.Log.Information($"将 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) 切换到 Raphael 求解器");
-                                        P.Config.RecipeConfigs[c.Recipe.RowId] = config;
+                                        P.Config.RecipeConfigs[c.Recipe.RowId].SolverType = config.SolverType;
+                                        P.Config.RecipeConfigs[c.Recipe.RowId].SolverFlavour = config.SolverFlavour;
                                     }
                                     else
                                         Svc.Log.Information($"跳过 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name})，该配方已分配了宏");

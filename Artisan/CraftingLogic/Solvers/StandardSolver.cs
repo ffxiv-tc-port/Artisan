@@ -8,7 +8,7 @@ namespace Artisan.CraftingLogic.Solvers
 {
     public class StandardSolverDefinition : ISolverDefinition
     {
-        public string MouseoverDescription { get; set; } = "这是标准配方解算器。";
+        public string MouseoverDescription { get; set; } = "这是标准配方求解器。";
 
         public IEnumerable<ISolverDefinition.Desc> Flavours(CraftState craft)
         {

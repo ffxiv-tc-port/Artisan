@@ -45,7 +45,7 @@ namespace Artisan.UI
         {
             try
             {
-                ImGui.TextWrapped("此选项卡将允许你添加Artisan可以使用的宏，使用指定的宏而不是内置解算器来制作。创建新宏后，从下面的列表中单击它以打开独立的宏编辑器窗口。");
+                ImGui.TextWrapped("此选项卡将允许你添加Artisan可以使用的宏，使用指定的宏而不是内置求解器来制作。创建新宏后，从下面的列表中单击它以打开独立的宏编辑器窗口。");
                 ImGui.Separator();
 
                 if (Svc.ClientState.IsLoggedIn && Crafting.CurState is not Crafting.State.IdleNormal and not Crafting.State.IdleBetween)

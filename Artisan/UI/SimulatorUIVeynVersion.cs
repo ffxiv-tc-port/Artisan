@@ -66,7 +66,7 @@ internal static class SimulatorUIVeynVersion
 
     private static void DrawRecipeInfo(Recipe r, CraftState craft)
     {
-        using var n = ImRaii.TreeNode($"配方：#{r.RowId} {Job.CRP.Add(r.CraftType.RowId)} '{r.ItemResult.Value.Name.ToDalamudString()}', 解算器：{_selectedSolver.Name}###recipe");
+        using var n = ImRaii.TreeNode($"配方：#{r.RowId} {Job.CRP.Add(r.CraftType.RowId)} '{r.ItemResult.Value.Name.ToDalamudString()}', 求解器：{_selectedSolver.Name}###recipe");
         if (!n)
             return;
 
@@ -182,7 +182,7 @@ internal static class SimulatorUIVeynVersion
             if (popup)
             {
                 var token = _cancelTokenSource.Token;
-                if (ImGui.MenuItem("解算器错误"))
+                if (ImGui.MenuItem("求解器错误"))
                 {
                     Task.Run(() => RestartSimulatorUntil(craft, Simulator.CraftStatus.InProgress), token);
                     ImGui.CloseCurrentPopup();

@@ -284,7 +284,7 @@ namespace Artisan.UI
                                             P.Config.Save();
                                         }
 
-                                        ImGuiComponents.HelpMarker("使用适当默认解算器的推荐，即常规配方使用标准配方解算器，专家配方使用专家配方解算器。");
+                                        ImGuiComponents.HelpMarker("使用适当默认求解器的推荐，即常规配方使用标准配方求解器，专家配方使用专家配方求解器。");
 
                                         if (ImGui.Selectable($"加工连携"))
                                         {
@@ -335,7 +335,7 @@ namespace Artisan.UI
                                     P.Config.Save();
                                 }
 
-                                ImGuiComponents.HelpMarker("使用适当默认解算器的推荐，即常规配方使用标准配方解算器，专家配方使用专家配方解算器。");
+                                ImGuiComponents.HelpMarker("使用适当默认求解器的推荐，即常规配方使用标准配方求解器，专家配方使用专家配方求解器。");
 
                                 if (ImGui.Selectable($"加工连携"))
                                 {

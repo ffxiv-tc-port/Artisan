@@ -38,7 +38,7 @@ namespace Artisan.UI
         {
             try
             {
-                ImGuiEx.TextWrapped($"本标签页可根据配方条件，快速为配方批量分配解算器与消耗品。");
+                ImGuiEx.TextWrapped($"本标签页可根据配方条件，快速为配方批量分配求解器与消耗品。");
                 ImGui.Separator();
                 ImGui.Spacing();
                 DrawCriteria();

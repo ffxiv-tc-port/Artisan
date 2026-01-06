@@ -63,10 +63,10 @@ public class ExpertSolverSettings
             bool changed = false;
         try
         {
-            ImGui.TextWrapped($"专家配方解算器并不是标准解算器的替代品。它仅用于专家配方。");
+            ImGui.TextWrapped($"专家配方求解器并不是标准求解器的替代品。它仅用于专家配方。");
             if (expertIcon != null)
             {
-                ImGui.TextWrapped($"专家配方解算器仅适用于专家配方。");
+                ImGui.TextWrapped($"专家配方求解器仅适用于专家配方。");
                 ImGui.SameLine();
                 ImGui.Image(expertIcon.Handle, expertIcon.Size, new Vector2(0, 0), new Vector2(1, 1), new Vector4(0.94f, 0.57f, 0f, 1f));
                 ImGui.SameLine();
@@ -112,7 +112,7 @@ public class ExpertSolverSettings
                 changed |= ImGui.Checkbox($"在 [{Skills.Innovation.NameOfAction()}] + {QualityString} 组合之前使用 [{Skills.GreatStrides.NameOfAction()}]", ref MidGSBeforeInno);
                 changed |= ImGui.Checkbox($"在开始 {QualityString} 阶段之前完成 {ProgressString}", ref MidFinishProgressBeforeQuality);
                 changed |= ImGui.Checkbox($"在 [{Condition.GoodOmen.ToLocalizedString()}] {ConditionString} 下使用 [{Skills.Observe.NameOfAction()}]，如果我们本来会在 [{Condition.Good.ToLocalizedString()}] {ConditionString} 上使用 [{Skills.TricksOfTrade.NameOfAction()}]", ref MidObserveGoodOmenForTricks);
-                changed |= ImGui.Checkbox($"如果专家解算器卡住，允许使用 [{Skills.RapidSynthesis.NameOfAction()}]。禁用可能会中断挂机制作，但对半挂机更安全", ref RapidSynthYoloAllowed);
+                changed |= ImGui.Checkbox($"如果专家求解器卡住，允许使用 [{Skills.RapidSynthesis.NameOfAction()}]。禁用可能会中断挂机制作，但对半挂机更安全", ref RapidSynthYoloAllowed);
             }
             ImGui.Unindent();
             changed |= ImGui.Checkbox("充分利用伊修加德重建配方，而不是仅仅达到最大品质断点。", ref MaxIshgardRecipes);
@@ -122,7 +122,7 @@ public class ExpertSolverSettings
             changed |= ImGui.Checkbox($"在宇宙探索中使用[{Skills.MaterialMiracle.NameOfAction()}]", ref UseMaterialMiracle);
             ImGui.PushItemWidth(250);
             changed |= ImGui.SliderInt($"在尝试 [{Skills.MaterialMiracle.NameOfAction()}] 前最少执行步数###MinimumStepsBeforeMiracle", ref MinimumStepsBeforeMiracle, 0, 20);
-            if (ImGuiEx.ButtonCtrl("重置专家解算器设置到默认状态"))
+            if (ImGuiEx.ButtonCtrl("重置专家求解器设置到默认状态"))
             {
                 P.Config.ExpertSolverConfig = new();
                 changed |= true;

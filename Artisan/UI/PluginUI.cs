@@ -318,7 +318,7 @@ namespace Artisan.UI
             });
             ImGui.Spacing();
 
-            ImGuiEx.TextWrapped($"Artisan具有\"自动制作模式\"该模式仅接受内置解算器给出的建议并且代替你自动操作。" +
+            ImGuiEx.TextWrapped($"Artisan具有\"自动制作模式\"该模式仅接受内置求解器给出的建议并且代替你自动操作。" +
                                 " 默认情况下，它会以游戏允许的间隔速度使用制作技能，这比使用游戏内的宏更快。" +
                                 " 使用它并没有绕过任何形式的游戏限制，但如果你打算制作速度慢一些，你可以设置延迟。" +
                                 " 启用此选项不影响Artisan默认使用的建议生成过程。");
@@ -364,14 +364,14 @@ namespace Artisan.UI
             ImGui.Spacing();
             ImGuiEx.LineCentered("###ArtisanSuggestions", () =>
             {
-                ImGuiEx.TextUnderlined("解算器/宏");
+                ImGuiEx.TextUnderlined("求解器/宏");
             });
             ImGui.Spacing();
 
-            ImGuiEx.TextWrapped($"默认情况下，Artisan会为你提供下一步制作技能的建议。然而，这个解算器并不完美，它并不能替代一套合适的生产装备。" +
+            ImGuiEx.TextWrapped($"默认情况下，Artisan会为你提供下一步制作技能的建议。然而，这个求解器并不完美，它并不能替代一套合适的生产装备。" +
                 $"除了启用Artisan之外，你无需执行任何操作。" +
                 $"\r\n\r\n" +
-                $"如果你正在尝试处理默认解算器无法完成的制作，Artisan允许你构建宏来替代默认解算器。" +
+                $"如果你正在尝试处理默认求解器无法完成的制作，Artisan允许你构建宏来替代默认求解器。" +
                 $"Artisan宏的好处是不受长度限制，可以在游戏允许的间隔范围内执行宏里的技能，并且还允许设置一些额外的条件在宏运行过程中作出调整。");
 
             ImGui.Spacing();
@@ -509,7 +509,7 @@ namespace Artisan.UI
                     P.Config.AutoMode = autoEnabled;
                     P.Config.Save();
                 }
-                ImGuiComponents.HelpMarker($"自动使用内置解算器建议的每个技能。");
+                ImGuiComponents.HelpMarker($"自动使用内置求解器建议的每个技能。");
                 if (autoEnabled)
                 {
                     if (ImGui.Checkbox($"重复宏延迟", ref P.Config.ReplicateMacroDelay))
@@ -646,7 +646,7 @@ namespace Artisan.UI
                 if (ImGui.Checkbox($"阻止Artisan在宏完成后继续。", ref P.Config.DisableMacroArtisanRecommendation))
                     P.Config.Save();
             }
-            if (ImGui.CollapsingHeader("解算器设置"))
+            if (ImGui.CollapsingHeader("求解器设置"))
             {
                 if (ImGui.Checkbox($"使用 {Skills.TricksOfTrade.NameOfAction()} - {LuminaSheets.AddonSheet[227].Text.ToString()}", ref useTricksGood))
                 {
@@ -675,7 +675,7 @@ namespace Artisan.UI
                 }
 
                 ImGui.Text($"收藏品收藏价值断点");
-                ImGuiComponents.HelpMarker("一旦收藏品达到以下断点，解算器将停止推进品质。");
+                ImGuiComponents.HelpMarker("一旦收藏品达到以下断点，求解器将停止推进品质。");
 
                 if (ImGui.RadioButton($"低档", P.Config.SolverCollectibleMode == 1))
                 {
@@ -728,7 +728,7 @@ namespace Artisan.UI
 
             }
             bool openExpert = false;
-            if (ImGui.CollapsingHeader("专家配方解算器设置"))
+            if (ImGui.CollapsingHeader("专家配方求解器设置"))
             {
                 openExpert = true;
                 if (P.Config.ExpertSolverConfig.expertIcon is not null)
@@ -756,7 +756,7 @@ namespace Artisan.UI
 
             using (ImRaii.Disabled())
             {
-                if (ImGui.CollapsingHeader("脚本解算器设置（当前已禁用）"))
+                if (ImGui.CollapsingHeader("脚本求解器设置（当前已禁用）"))
                 {
                     if (P.Config.ScriptSolverConfig.Draw())
                         P.Config.Save();

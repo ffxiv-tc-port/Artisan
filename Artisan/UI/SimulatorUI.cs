@@ -167,7 +167,7 @@ namespace Artisan.UI
 
         private static void DrawIntro()
         {
-            ImGuiEx.TextWrapped($"在这个模拟器中，你可以根据配方测试不同的解算器，并分析它们的性能。你可以设置你的HQ素材配比，设置消耗品，甚至使用哪个装备套装。模拟器可以配置为随机化条件或仅使用\"Normal\"/\"正常\"条件，因此实操效果可能会有所不同。");
+            ImGuiEx.TextWrapped($"在这个模拟器中，你可以根据配方测试不同的求解器，并分析它们的性能。你可以设置你的HQ素材配比，设置消耗品，甚至使用哪个装备套装。模拟器可以配置为随机化条件或仅使用\"Normal\"/\"正常\"条件，因此实操效果可能会有所不同。");
         }
 
         private static void DrawSolverMode()
@@ -552,7 +552,7 @@ namespace Artisan.UI
             if (_selectedSolver != null && (SimGS != null || CustomStatMode))
             {
                 ImGuiEx.SetNextItemFullWidth();
-                if (ImGui.Button($"运行模拟解算器"))
+                if (ImGui.Button($"运行模拟求解器"))
                 {
                     _simCurSolver = _selectedSolver?.Clone();
                     ResetSim();
@@ -709,7 +709,7 @@ namespace Artisan.UI
 
         private static void DrawSolverCombo()
         {
-            ImGui.Text($"选择解算器");
+            ImGui.Text($"选择求解器");
             ImGui.SameLine(120f);
             ImGuiEx.SetNextItemFullWidth();
             using var solverCombo = ImRaii.Combo("###SolverCombo", _selectedSolver == null ? "" : $"{_selectedSolver?.Name}");

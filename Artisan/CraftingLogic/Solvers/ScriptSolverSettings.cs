@@ -64,7 +64,7 @@ public class ScriptSolverSettings
     {
         try
         {
-            ImGui.TextWrapped($"这是一个非常进阶的功能，面向希望使用C#创建自己的动态解算器的用户。请访问GitHub源代码并查看Demoscripts文件夹以获取示例。对于如何学习C#来做到这一点，我们不会提供任何支持。");
+            ImGui.TextWrapped($"这是一个非常进阶的功能，面向希望使用C#创建自己的动态求解器的用户。请访问GitHub源代码并查看Demoscripts文件夹以获取示例。对于如何学习C#来做到这一点，我们不会提供任何支持。");
             ImGui.Separator();
             Script? toDel = null;
             foreach (var s in Scripts)

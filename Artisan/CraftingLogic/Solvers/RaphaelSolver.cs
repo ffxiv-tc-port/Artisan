@@ -59,7 +59,7 @@ namespace Artisan.CraftingLogic.Solvers
                 Svc.Log.Information("启动 Raphael 进程");
 
                 var manipulation = craft.UnlockedManipulation ? "--manipulation" : "";
-                var itemText = $"--recipe-id {craft.RecipeId}";
+                var itemText = $"--custom-recipe {craft.LevelTable.RowId} {craft.CraftProgress} {(craft.CraftCollectible ? craft.CraftQualityMin3 : craft.CraftQualityMax)} {craft.CraftDurability} {(craft.CraftExpert ? "1" : "0")}";
                 var extraArgsBuilder = new StringBuilder();
 
                 extraArgsBuilder.Append($"--initial {craft.InitialQuality} "); // must always have a space after
@@ -217,8 +217,10 @@ namespace Artisan.CraftingLogic.Solvers
                                     if (autoSwitchOk(c.Recipe.RowId))
                                     {
                                         Svc.Log.Information($"将 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) 切换到 Raphael 求解器");
-                                        P.Config.RecipeConfigs[c.Recipe.RowId].SolverType = config.SolverType;
-                                        P.Config.RecipeConfigs[c.Recipe.RowId].SolverFlavour = config.SolverFlavour;
+                                        var switchConfig = P.Config.RecipeConfigs.GetValueOrDefault(c.Recipe.RowId) ?? new();
+                                        switchConfig.SolverType = opt.Def.GetType().FullName!;
+                                        switchConfig.SolverFlavour = opt.Flavour;
+                                        P.Config.RecipeConfigs[c.Recipe.RowId] = switchConfig;
                                     }
                                     else
                                         Svc.Log.Information($"跳过 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name})，该配方已分配了宏");
@@ -229,8 +231,8 @@ namespace Artisan.CraftingLogic.Solvers
                     Svc.Log.Information("保存 Raphael 生成后的配置更改。");
                     P.Config.Save();
 
-                    Svc.Log.Information("清理任务。");
-                    Tasks.Remove(key, out var _);
+                    Svc.Log.Information("整理任务");
+                    Tasks.TryRemove(key, out var _);
                 }, cts.Token);
 
                 Tasks.TryAdd(key, new(cts, task));
@@ -249,7 +251,7 @@ namespace Artisan.CraftingLogic.Solvers
 
             var hasTempConfig = TempConfigs.TryGetValue(key, out var tempconfig);
             var hasDelins = Crafting.DelineationCount() > 0;
-            //config.EnsureReliability = hasTempConfig ? tempconfig.EnsureReliability : P.Config.RaphaelSolverConfig.AllowEnsureReliability;
+            config.EnsureReliability = hasTempConfig ? tempconfig.EnsureReliability : P.Config.RaphaelSolverConfig.AllowEnsureReliability;
             config.BackloadProgress = hasTempConfig ? tempconfig.BackloadProgress : P.Config.RaphaelSolverConfig.AllowBackloadProgress;
             config.HeartAndSoul = hasTempConfig ? tempconfig.HeartAndSoul : P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist && hasDelins;
             config.QuickInno = hasTempConfig ? tempconfig.QuickInno : P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist && hasDelins;
@@ -343,13 +345,13 @@ namespace Artisan.CraftingLogic.Solvers
                 if (!TempConfigs.ContainsKey(key))
                 {
                     TempConfigs.Add(key, new());
-                    //TempConfigs[key].EnsureReliability = P.Config.RaphaelSolverConfig.AllowEnsureReliability;
+                    TempConfigs[key].EnsureReliability = P.Config.RaphaelSolverConfig.AllowEnsureReliability;
                     TempConfigs[key].BackloadProgress = P.Config.RaphaelSolverConfig.AllowBackloadProgress;
                     TempConfigs[key].HeartAndSoul = P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist;
                     TempConfigs[key].QuickInno = P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist;
                 }
 
-                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael Recipe Solver");
+                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
                 var solverIsRaph = config.CurrentSolverType == opt?.Def.GetType().FullName!;
                 if (hasSolution)
                 {
@@ -424,8 +426,8 @@ namespace Artisan.CraftingLogic.Solvers
                 if (inProgress)
                     ImGui.BeginDisabled();
 
-                //if (P.Config.RaphaelSolverConfig.AllowEnsureReliability)
-                //    raphChanges |= ImGui.Checkbox($"确保可靠性##{key}Reliability", ref TempConfigs[key].EnsureReliability);
+                if (P.Config.RaphaelSolverConfig.AllowEnsureReliability)
+                    ImGui.Checkbox($"确保可靠性##{key}Reliability", ref TempConfigs[key].EnsureReliability);
                 if (P.Config.RaphaelSolverConfig.AllowBackloadProgress)
                     ImGui.Checkbox($"后置进度##{key}Progress", ref TempConfigs[key].BackloadProgress);
                 if (P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist)
@@ -474,6 +476,7 @@ namespace Artisan.CraftingLogic.Solvers
 
     public class RaphaelSolverSettings
     {
+        public bool AllowEnsureReliability = false;
         public bool AllowBackloadProgress = true;
         public bool ShowSpecialistSettings = false;
         public bool ExactCraftsmanship = false;
@@ -500,10 +503,10 @@ namespace Artisan.CraftingLogic.Solvers
                 }
                 ImGuiEx.TextWrapped("默认使用所有可用资源，但在低端机器上您可能需要使用更少的 CPU 以牺牲速度为代价。(0 = 全部)");
 
-                //changed |= ImGui.Checkbox("在宏生成中确保 100% 可靠性", ref AllowEnsureReliability);
-                //ImGui.PushTextWrapPos(0);
-                //ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "确保可靠性可能并不总是有效，且非常消耗 CPU 和内存，建议至少保留 16GB+ 可用内存。启用此选项后将不提供任何支持");
-                //ImGui.PopTextWrapPos();
+                changed |= ImGui.Checkbox("在宏生成中确保 100% 可靠性", ref AllowEnsureReliability);
+                ImGui.PushTextWrapPos(0);
+                ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "确保可靠性可能并不总是有效，且非常消耗 CPU 和内存，建议至少保留 16GB+ 可用内存。启用此选项后将不提供任何支持");
+                ImGui.PopTextWrapPos();
                 changed |= ImGui.Checkbox("在宏生成中允许后置进度", ref AllowBackloadProgress);
                 changed |= ImGui.Checkbox("在可用时显示专家选项", ref ShowSpecialistSettings);
                 changed |= ImGui.Checkbox($"如果尚未创建有效解决方案，则自动生成解决方案。", ref AutoGenerate);

@@ -6,6 +6,7 @@ using Artisan.RawInformation.Character;
 using Artisan.UI;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Colors;
+using Dalamud.Interface.Style;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
@@ -246,10 +247,15 @@ public class RecipeConfig
     public bool DrawSolver(CraftState craft, bool hasButton = false, bool liveStats = true)
     {
         bool changed = false;
-        ImGuiEx.TextV($"解算器：");
+        var solver = CraftingProcessor.GetSolverForRecipe(this, craft);
+        if (string.IsNullOrEmpty(solver.Name))
+        {
+            ImGuiEx.Text(ImGuiColors.DalamudRed, "无法选择默认求解器。请从下拉列表中选择。");
+        }
+        ImGuiEx.TextV($"求解器：");
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
-        var solver = CraftingProcessor.GetSolverForRecipe(this, craft);
+
         if (ImGui.BeginCombo("##solver", solver.Name))
         {
             foreach (var opt in CraftingProcessor.GetAvailableSolversForRecipe(craft, true))
@@ -276,10 +282,10 @@ public class RecipeConfig
 
         if (!Crafting.EnoughDelinsForCraft(this, craft, out var req))
         {
-            ImGuiEx.TextCentered(ImGuiColors.DalamudRed, $"You do not have enough {Svc.Data.GetExcelSheet<Item>().GetRow(28724).Name} for this solver ({req} required).");
+            ImGuiEx.TextCentered(ImGuiColors.DalamudRed, $"你没有足够的{Svc.Data.GetExcelSheet<Item>().GetRow(28724).Name}用于此求解器 ({req} 所需)。");
             if (this.CurrentSolverType.Contains("Raphael"))
             {
-                ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, $"An alternative solution will be used/generated when you start crafting.");
+                ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, $"当你开始制作时，将使用/生成替代解决方案。");
             }
         }
 
@@ -303,8 +309,8 @@ public class RecipeConfig
                 if (craft.MissionHasMaterialMiracle && solver.Name == "标准配方求解器" && P.Config.UseMaterialMiracle)
                     ImGuiEx.TextWrapped($"这将使用“奇迹之材”，与模拟器不兼容。");
                 else
-                    if (solver.Name == "Raphael Recipe Solver" && !RaphaelCache.HasSolution(craft, out _))
-                        ImGuiEx.TextWrapped($"Unable to generate a simulator without a Raphael solution generated.");
+                    if (solver.Name == "Raphael 配方求解器" && !RaphaelCache.HasSolution(craft, out _))
+                        ImGuiEx.TextWrapped($"无法在没有生成 Raphael 解决方案的情况下生成模拟器。");
                     else
                         ImGuiEx.TextWrapped(hintColor, solverHint);
             }

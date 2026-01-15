@@ -258,7 +258,7 @@ public class RecipeConfig
 
         if (ImGui.BeginCombo("##solver", solver.Name))
         {
-            foreach (var opt in CraftingProcessor.GetAvailableSolversForRecipe(craft, true))
+            foreach (var opt in CraftingProcessor.GetAvailableSolversForRecipe(craft, true).OrderByDescending(x => x.Priority))
             {
                 if (opt == default) continue;
                 if (opt.UnsupportedReason.Length > 0)
@@ -267,9 +267,10 @@ public class RecipeConfig
                 }
                 else
                 {
-                    bool selected = opt.Def == solver.Def && opt.Flavour == solver.Flavour;
+                    bool selected = opt.Name == solver.Name;
                     if (ImGui.Selectable(opt.Name, selected))
                     {
+                        IPC.IPC.SetTempSolverBackToNormal(craft.RecipeId);
                         SolverType = opt.Def.GetType().FullName!;
                         SolverFlavour = opt.Flavour;
                         changed = true;

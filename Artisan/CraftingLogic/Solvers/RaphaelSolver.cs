@@ -66,7 +66,7 @@ namespace Artisan.CraftingLogic.Solvers
 
                 if (config.EnsureReliability)
                 {
-                    Svc.Log.Error("已启用确保可靠性，这可能需要较长时间。启用后不提供任何支持。");
+                    Svc.Log.Warning("已启用确保可靠性，这可能需要较长时间。启用后不提供任何支持。");
                     extraArgsBuilder.Append($"--adversarial "); // must always have a space after
                 }
 

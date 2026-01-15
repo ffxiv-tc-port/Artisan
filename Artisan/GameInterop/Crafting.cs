@@ -404,13 +404,7 @@ public static unsafe class Crafting
             {
                 CurCraft.CraftQualityMin1 = (int)synthWindow->AtkValues[22].UInt * 10;
                 CurCraft.CraftQualityMin2 = (int)synthWindow->AtkValues[23].UInt * 10;
-                CurCraft.CraftQualityMin3 = (int)synthWindow->AtkValues[24].UInt * 10;
-
-                if (CurCraft.CraftQualityMin3 == 0)
-                {
-                    CurCraft.CraftQualityMin3 = CurCraft.CraftQualityMin2;
-                    CurCraft.CraftQualityMin2 = CurCraft.CraftQualityMin1;
-                }
+                CurCraft.CraftQualityMin3 = CurCraft.CraftQualityMax;
             }
             CraftStarted?.Invoke(CurRecipe.Value, CurCraft, CurStep, IsTrial);
             return State.InProgress;
@@ -581,7 +575,7 @@ public static unsafe class Crafting
         numReq = 0;
         if (config.CurrentSolverType.Contains("Macro"))
         {
-            var macro = P.Config.MacroSolverConfig.FindMacro(config.SolverFlavour);
+            var macro = P.Config.MacroSolverConfig.FindMacro(config.CurrentSolverFlavour);
             numReq = macro.Steps.Count(x => x.Action is Skills.CarefulObservation or Skills.HeartAndSoul or Skills.QuickInnovation);
             if (numReq > Crafting.DelineationCount())
                 enoughDelins = false;

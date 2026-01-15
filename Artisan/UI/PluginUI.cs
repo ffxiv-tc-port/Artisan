@@ -636,6 +636,7 @@ namespace Artisan.UI
                         if (Svc.Data.GetExcelSheet<Recipe>().GetRow(c.Key).Number == 0)
                             P.Config.RecipeConfigs.Remove(c.Key);
                     }
+                    P.Config.Save();
                 }
             }
             if (ImGui.CollapsingHeader("宏设置"))

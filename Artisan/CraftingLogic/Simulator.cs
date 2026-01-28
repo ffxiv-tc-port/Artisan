@@ -64,6 +64,7 @@ public static class Simulator
             TrainedPerfectionAvailable = craft.StatLevel >= MinLevel(Skills.TrainedPerfection),
             Condition = Condition.Normal,
             MaterialMiracleCharges = (uint)(craft.MissionHasMaterialMiracle ? 1 : 0),
+            SteadyHandCharges = (uint)(craft.MissionHasSteadyHand ? 1 : 0),
         };
 
     public static CraftStatus Status(CraftState craft, StepState step)
@@ -219,6 +220,8 @@ public static class Simulator
         next.MaterialMiracleCharges = action == Skills.MaterialMiracle ? step.MaterialMiracleCharges - 1 : step.MaterialMiracleCharges;
         next.MaterialMiracleActive = step.MaterialMiracleActive; //This is a timed buff, can't really use this in the simulator, just copy the real result
         next.ObserveCounter = action == Skills.Observe ? step.ObserveCounter + 1 : 0;
+        next.SteadyHandCharges = action == Skills.SteadyHand ? step.SteadyHandCharges - 1 : step.SteadyHandCharges;
+        next.SteadyHandLeft = action == Skills.SteadyHand ? 3 : Math.Max(0, step.SteadyHandLeft - 1);
 
         if (step.FinalAppraisalLeft > 0 && next.Progress >= craft.CraftProgress)
             next.Progress = craft.CraftProgress - 1;
@@ -294,6 +297,7 @@ public static class Simulator
         Skills.DaringTouch => step.ExpedienceLeft > 0,
         Skills.QuickInnovation => step.QuickInnoLeft > 0 && step.InnovationLeft == 0,
         Skills.MaterialMiracle => step.MaterialMiracleCharges > 0 && !step.MaterialMiracleActive,
+        Skills.SteadyHand => step.SteadyHandCharges > 0,
         _ => true
     } && craft.StatLevel >= MinLevel(action) && step.RemainingCP >= GetCPCost(step, action);
 
@@ -315,7 +319,8 @@ public static class Simulator
                 Skills.TrainedPerfection => "你已使用过工匠的神技",
                 Skills.DaringTouch => "仓促制作未成功",
                 Skills.QuickInnovation => !craft.Specialist ? "你不是专家" : Crafting.DelineationCount() == 0 ? "你的能工巧匠图纸已用尽。" : step.QuickInnoLeft == 0 ? "本次制作已无法再次使用快速改革" : step.InnovationLeft > 0 ? "你已有改革状态" : "",
-                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "本次制作无法使用“奇迹之材”" : step.MaterialMiracleActive ? "你已激活“奇迹之材”" : step.MaterialMiracleCharges == 0 ? "你已没有剩余的“奇迹之材”次数" : ""
+                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "本次制作无法使用奇迹之材" : step.MaterialMiracleActive ? "你已激活奇迹之材" : step.MaterialMiracleCharges == 0 ? "你已没有剩余的奇迹之材次数" : "",
+                Skills.SteadyHand => !craft.MissionHasSteadyHand ? "此制作无法使用稳手" : step.SteadyHandCharges == 0 ? "你没有剩余的稳手使用次数" : "",
             };
 
             return true;
@@ -329,6 +334,9 @@ public static class Simulator
 
     public static double GetSuccessRate(StepState step, Skills action)
     {
+        if (step.SteadyHandLeft > 0)
+            return 1.0;
+
         var rate = action switch
         {
             Skills.RapidSynthesis => 0.5,
@@ -394,7 +402,7 @@ public static class Simulator
         };
         if (step.WasteNotLeft > 0)
             cost -= cost / 2; // round up
-        if (step.Condition == Condition.Sturdy)
+        if (step.Condition is Condition.Sturdy or Condition.Robust)
             cost -= cost / 2; // round up
         return cost;
     }
@@ -486,6 +494,7 @@ public static class Simulator
         Condition.Excellent => Condition.Poor,
         Condition.Poor => Condition.Normal,
         Condition.GoodOmen => Condition.Good,
+        Condition.Robust => Condition.Sturdy,
         _ => GetTransitionByRoll(craft, step, roll)
     };
 
@@ -514,6 +523,7 @@ public static class Simulator
             Condition.Malleable => ConditionFlags.Malleable,
             Condition.Primed => ConditionFlags.Primed,
             Condition.GoodOmen => ConditionFlags.GoodOmen,
+            Condition.Robust => ConditionFlags.Robust,
             Condition.Unknown => throw new NotImplementedException(),
         };
     }

@@ -1,5 +1,4 @@
-﻿using Artisan.Autocraft;
-using Artisan.GameInterop;
+﻿using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.UI;
 using Dalamud.Bindings.ImGui;
@@ -94,7 +93,7 @@ namespace Artisan.CraftingLogic.Solvers
                 {
                     StartInfo = new ProcessStartInfo
                     {
-                        FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"),
+                        FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.bin"),
                         Arguments = $"solve {itemText} {manipulation} --level {craft.StatLevel} --stats {craft.StatCraftsmanship} {craft.StatControl} {craft.StatCP} {extraArgsBuilder} --output-variables action_ids", // Command to execute
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
@@ -331,7 +330,7 @@ namespace Artisan.CraftingLogic.Solvers
 
         internal static bool CLIExists()
         {
-            return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"));
+            return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.bin"));
         }
 
         public static void DrawRaphaelDropdown(CraftState craft, bool liveStats = true)
@@ -353,66 +352,10 @@ namespace Artisan.CraftingLogic.Solvers
 
                 var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
                 var solverIsRaph = config.CurrentSolverType == opt?.Def.GetType().FullName!;
-                if (hasSolution)
+                if (!hasSolution)
                 {
-                    var curStats = CharacterStats.GetCurrentStats();
-
-                    if (!solverIsRaph)
-                    {
-                        if (liveStats)
-                        {
-                            ImGuiEx.TextCentered($"已生成 Raphael 解决方案。(点击切换)");
-                            if (ImGui.IsItemClicked())
-                            {
-                                config.SolverType = opt?.Def.GetType().FullName!;
-                                config.SolverFlavour = (int)(opt?.Flavour);
-                            }
-                        }
-                        else
-                        {
-                            ImGuiEx.TextCentered($"已生成 Raphael 解决方案。");
-                        }
-                    }
-                    else
-                    {
-                        ImGuiEx.TextCentered($"解决方案密钥: {key}");
-                        var playerIsJob = Player.ClassJob.RowId == craft.Recipe.CraftType.RowId + 8;
-                        var parts = KeyParts(key);
-                        if (!playerIsJob)
-                            ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"当前不是对应职业。");
-                        else
-                        {
-                            if (curStats.Craftsmanship == craft.StatCraftsmanship)
-                                ImGuiEx.TextCentered(ImGuiColors.HealerGreen, $"作业精度满足解决方案需求: {parts.Crafts}。");
-                            else
-                            {
-                                ImGuiEx.TextCentered(ImGuiColors.DPSRed, $"解决方案({craft.StatCraftsmanship})与当前作业精度({curStats.Craftsmanship})存在差异。\n在解决此问题前不会使用Raphael。");
-                                var foodIsCrafts = ConsumableChecker.GetItemConsumableProperties(LuminaSheets.ItemSheet[config.RequiredFood], false)?.Params.Any(x => x.BaseParam.RowId is 70);
-                                if (foodIsCrafts == true)
-                                    ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(设置的食物是作业精度食物，此问题在增益生效后可能会解决)");
-
-                                var potIsCrafts = ConsumableChecker.GetItemConsumableProperties(LuminaSheets.ItemSheet[config.RequiredPotion], false)?.Params.Any(x => x.BaseParam.RowId is 70);
-                                if (potIsCrafts == true)
-                                    ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(设置的药水是作业精度药水，此问题在增益生效后可能会解决)");
-
-                                if ((foodIsCrafts == null || foodIsCrafts == false) && (potIsCrafts == null || potIsCrafts == false))
-                                    ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(您当前有提供作业精度的进食/药剂增益\n但未设置为食物/药水，移除这些增益可能解决此问题)");
-
-                                var diffPos = Math.Abs(craft.StatCraftsmanship - curStats.Craftsmanship);
-                                var diffAct = (craft.StatCraftsmanship - curStats.Craftsmanship);
-                                if (diffPos % 5 == 0)
-                                    if (diffAct > 0)
-                                        ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(此解决方案可能是在有部队作业精度增益时生成的，而您现在没有)");
-                                    else
-                                        ImGuiEx.TextCentered(ImGuiColors.DalamudOrange, $"(您可能有部队作业精度增益，但在生成解决方案时该增益未激活)");
-                            }
-                        }
-
-                    }
-                }
-                else
-                {
-                    ImGuiEx.TextCentered(ImGuiColors.DalamudRed, "未生成 Raphael 解决方案。");
+                    if (solverIsRaph)
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudRed, "未生成 Raphael 解决方案。");
                     if (P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any() && (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts)))
                     {
                         Build(craft, TempConfigs[key]);

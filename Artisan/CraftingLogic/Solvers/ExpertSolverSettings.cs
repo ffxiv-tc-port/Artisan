@@ -29,6 +29,23 @@ public class ExpertSolverSettings
     public bool MidBaitPliantWithObserveAfterIQ = true; // if true, when very low on durability and without manip active after iq has 10 stacks, we use observe rather than normal manip or inno+finnesse
     public bool MidPrimedManipPreQuality = true; // if true, allow using primed manipulation during pre-quality phase
     public bool MidPrimedManipAfterIQ = true; // if true, allow using primed manipulation during after iq has 10 stacks
+    public enum MidUseTPSetting  // where to use trained perfection
+    {
+        MidUseTPGroundwork,        // use TP on groundwork for high-prio progress
+        MidUseTPPrepIQ,            // use TP on preparatory touch to build IQ stacks
+        MidUseTPEitherPreQuality,  // use TP on either of the options above, depending on which status comes up first (default groundwork)
+        MidUseTPPrepQuality        // use TP on prep touch after 10 IQ, with GS+Inno
+    }
+    public string GetMidUseTPSettingName(MidUseTPSetting value)
+        => value switch
+        {
+            MidUseTPSetting.MidUseTPGroundwork => $"(Early) {Skills.Groundwork.NameOfAction()}",
+            MidUseTPSetting.MidUseTPPrepIQ => $"(Early) {Skills.PreparatoryTouch.NameOfAction()} (build {Buffs.InnerQuiet.NameOfBuff()})",
+            MidUseTPSetting.MidUseTPEitherPreQuality => $"(Early) Either action based on {ConditionString.ToLower()}",
+            MidUseTPSetting.MidUseTPPrepQuality or _ => $"(Late) {Skills.PreparatoryTouch.NameOfAction()} at max {Buffs.InnerQuiet.NameOfBuff()} (focus {QualityString.ToLower()})",
+        };
+    public MidUseTPSetting MidUseTP = MidUseTPSetting.MidUseTPGroundwork;
+    public int MidMaxBaitStepsForTP = 0; // how many observes should be used to bait favorable conditions for trained perfection; 0 to disable
     public enum MidKeepHighDuraSetting  // what to do in pre-quality when dura is starting to run low
     {
         MidKeepHighDuraUnbuffed,        // fish for procs with observe to conserve dura, as long as veneration isn't up
@@ -139,10 +156,28 @@ ImGui.Dummy(new Vector2(0, 5f));
                 ImGui.Dummy(new Vector2(0, 5f));
                 ImGui.TextWrapped($"常规设置");
                 ImGui.Indent();
-                changed |= ImGui.Checkbox($"{DurabilityString} 较低时，使用 [{Skills.Observe.NameOfAction()}] 以尝试触发有利于 [{Skills.Manipulation.NameOfAction()}] 的状态", ref MidBaitPliantWithObservePreQuality);
-                ImGuiComponents.HelpMarker($"尝试触发 [{Condition.Pliant.ToLocalizedString()}] (如果启用了相关选项，也包括 [{Condition.Primed.ToLocalizedString()}] )。如果禁用，将不计状态立即使用 [{Skills.Manipulation.NameOfAction()}]。");
-                changed |= ImGui.Checkbox($"在 [{Condition.Primed.ToLocalizedString()}] 状态下使用 [{Skills.Manipulation.NameOfAction()}]", ref MidPrimedManipPreQuality);
-                ImGuiComponents.HelpMarker($"如果禁用，在此阶段 [{Condition.Primed.ToLocalizedString()}] 将被视为 [{Condition.Normal.ToLocalizedString()}]。");
+                ImGui.TextWrapped($"使用 {Skills.TrainedPerfection.NameOfAction()} 的条件：");
+                ImGuiComponents.HelpMarker($"“（延后）”选项会尝试在存在 {Buffs.Innovation.NameOfBuff()} 与 {Buffs.GreatStrides.NameOfBuff()} 时施放 {Skills.PreparatoryTouch.NameOfAction()}。选择“任一技能”搭配下方 [{Skills.Observe.NameOfAction()}] 触发设置时最有效，否则默认在普通{ConditionString}下使用 {Skills.Groundwork.NameOfAction()}。");
+                ImGui.PushItemWidth(400);
+                if (ImGui.BeginCombo("##midUseTPSetting", GetMidUseTPSettingName(MidUseTP)))
+                {
+                    foreach (MidUseTPSetting x in Enum.GetValues<MidUseTPSetting>())
+                    {
+                        if (ImGui.Selectable(GetMidUseTPSettingName(x)))
+                        {
+                            MidUseTP = x;
+                            changed = true;
+                        }
+                    }
+                    ImGui.EndCombo();
+                }
+                ImGui.PushItemWidth(150);
+                changed |= ImGui.SliderInt($"{Skills.Observe.NameOfAction()} 触发 {Skills.TrainedPerfection.NameOfAction()} 时适用于 {ConditionString} 的最大次数（0 禁用）###MidMaxBaitStepsForTP", ref MidMaxBaitStepsForTP, 0, 5);
+                ImGuiComponents.HelpMarker($"如下操作：\n● 若正在为 {Skills.Groundwork.NameOfAction()} 鱼出[{Condition.Malleable.ToLocalizedString()}]，或\n● 为 {Skills.PreparatoryTouch.NameOfAction()} 鱼出[{Condition.Good.ToLocalizedString()}] 或 [{Condition.Pliant.ToLocalizedString()}]。");
+                changed |= ImGui.Checkbox($"当 {DurabilityString} 危急时，使用 [{Skills.Observe.NameOfAction()}] 尝试刷出有利于 [{Skills.Manipulation.NameOfAction()}] 的状态", ref MidBaitPliantWithObservePreQuality);
+                ImGuiComponents.HelpMarker($"尝试刷出 [{Condition.Pliant.ToLocalizedString()}]（若启用相关选项则也包括 [{Condition.Primed.ToLocalizedString()}]）。若禁用，则无视状态直接使用 {Skills.Manipulation.NameOfAction()}。");
+                changed |= ImGui.Checkbox($"在 [{Condition.Primed.ToLocalizedString()}] 状态下使用 {Skills.Manipulation.NameOfAction()}", ref MidPrimedManipPreQuality);
+                ImGuiComponents.HelpMarker($"若禁用，在此阶段 [{Condition.Primed.ToLocalizedString()}] 会被视为普通 [{Condition.Normal.ToLocalizedString()}]。");
                 ImGui.Unindent();
 
                 // Pre-quality progress settings
@@ -194,15 +229,15 @@ ImGui.Dummy(new Vector2(0, 5f));
                 
                 ImGui.TextWrapped($"使用 [{Skills.HeartAndSoul.NameOfAction()}] 强制触发 [{Skills.PreciseTouch.NameOfAction()}]：");
                 ImGui.Indent();
-                changed |= ImGui.Checkbox($"当处于 [{Condition.Sturdy.ToLocalizedString()}] 时", ref MidAllowSturdyPreсise);
+                changed |= ImGui.Checkbox($"当处于 ● {Condition.Sturdy.ToLocalizedString()}/{Condition.Robust.ToLocalizedString()} 时", ref MidAllowSturdyPreсise);
                 ImGui.PushItemWidth(250);
                 changed |= ImGui.SliderInt($"当达到此层数时 (10为禁用)###MidMinIQForHSPrecise", ref MidMinIQForHSPrecise, 0, 10);
                 ImGui.Unindent();
                 
                 ImGui.TextWrapped($"使用 [{Skills.HastyTouch.NameOfAction()}] 或 [{Skills.DaringTouch.NameOfAction()}]：");
                 ImGui.Indent();
-                changed |= ImGui.Checkbox($"当处于 [{Condition.Centered.ToLocalizedString()}] 时 (85%成功率, 10 {DurabilityString})", ref MidAllowCenteredHasty);
-                changed |= ImGui.Checkbox($"当处于 [{Condition.Sturdy.ToLocalizedString()}] 时 (60%成功率, 5 {DurabilityString})", ref MidAllowSturdyHasty);
+                changed |= ImGui.Checkbox($"当处于 ● {Condition.Centered.ToLocalizedString()} 时 (85%成功率, 10 {DurabilityString.ToLower()})", ref MidAllowCenteredHasty);
+                changed |= ImGui.Checkbox($"当处于 ● {Condition.Sturdy.ToLocalizedString()}/{Condition.Robust.ToLocalizedString()} 时 (60%成功率, 5 {DurabilityString.ToLower()})", ref MidAllowSturdyHasty);
                 ImGui.Unindent();
                 ImGui.Unindent();
                 ImGui.Dummy(new Vector2(0, 5f));
@@ -237,8 +272,8 @@ ImGui.Dummy(new Vector2(0, 5f));
                 ImGui.Indent();
                 ImGui.TextWrapped($"使用 [{Skills.PreparatoryTouch.NameOfAction()}]：");
                 ImGui.Indent();
-                changed |= ImGui.Checkbox($"在 [{Condition.Good.ToLocalizedString()}] + [{Buffs.Innovation.NameOfBuff()}] + [{Buffs.GreatStrides.NameOfBuff()}] 状态下", ref MidAllowGoodPrep);
-                changed |= ImGui.Checkbox($"在 [{Condition.Sturdy.ToLocalizedString()}] + [{Buffs.Innovation.NameOfBuff()}] 状态下", ref MidAllowSturdyPrep);
+                changed |= ImGui.Checkbox($"处于 ● {Condition.Good.ToLocalizedString()} + {Buffs.Innovation.NameOfBuff()} + {Buffs.GreatStrides.NameOfBuff()} ", ref MidAllowGoodPrep);
+                changed |= ImGui.Checkbox($"处于 ● {Condition.Sturdy.ToLocalizedString()}/{Condition.Robust.ToLocalizedString()} + {Buffs.Innovation.NameOfBuff()}", ref MidAllowSturdyPrep);
                 ImGui.Unindent();
                 changed |= ImGui.Checkbox($"在非终结品质连招前使用 [{Skills.GreatStrides.NameOfAction()}]", ref MidGSBeforeInno);
                 ImGuiComponents.HelpMarker($"例如：[{Buffs.Innovation.NameOfBuff()}] → [{Skills.Observe.NameOfAction()}] → [{Skills.AdvancedTouch.NameOfAction()}]。开启此项消耗更多 CP 但节省耐久。");

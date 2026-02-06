@@ -40,7 +40,7 @@ public static unsafe class Crafting
         InvalidState, // we're in a state we probably shouldn't be, such as reloading the plugin mid-craft
     }
 
-    public static State CurState { get; private set; } = State.InvalidState;
+    public static State CurState { get; set; } = State.InvalidState;
     public static event Action<State>? StateChanged;
 
     public static Recipe? CurRecipe { get; private set; }
@@ -122,6 +122,7 @@ public static unsafe class Crafting
             ConditionFlags = (ConditionFlags)lt.ConditionsFlag,
             MissionHasMaterialMiracle = act is (uint)Skills.MaterialMiracle,
             MissionHasSteadyHand = act is (uint)Skills.SteadyHand,
+            CurrentSteadyHandCharges = act is (uint)Skills.SteadyHand ? 2 : 0,
             LevelTable = lt,
         };
 
@@ -374,6 +375,10 @@ public static unsafe class Crafting
                 if (CurCraft.Specialist && !EnoughDelinsForCraft(rc, CurCraft, out _))
                     CurCraft.Specialist = false;
 
+                Svc.Log.Debug("Updating Steady Hand Charges");
+                if (CurCraft.MissionHasSteadyHand)
+                    CurCraft.CurrentSteadyHandCharges = SteadyHandCharges();
+
                 if (rc.CurrentSolverType.Contains("Raphael") && !RaphaelCache.HasSolution(CurCraft, out _))
                 {
                     if (RaphaelCache.CLIExists())
@@ -617,7 +622,7 @@ public static unsafe class Crafting
         }
     }
 
-    public unsafe static uint SteadyHandCharges()
+    public unsafe static int SteadyHandCharges()
     {
         try
         {

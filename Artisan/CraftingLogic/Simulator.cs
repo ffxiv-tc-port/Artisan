@@ -35,6 +35,8 @@ public static class Simulator
         SucceededSomeQuality,
         [Description("已完成，不需要品质")]
         SucceededNoQualityReq,
+        [Description($"Craft has completed, quality required met")]
+        SucceededMetQualityReq,
 
         Count
     }
@@ -64,7 +66,7 @@ public static class Simulator
             TrainedPerfectionAvailable = craft.StatLevel >= MinLevel(Skills.TrainedPerfection),
             Condition = Condition.Normal,
             MaterialMiracleCharges = (uint)(craft.MissionHasMaterialMiracle ? 1 : 0),
-            SteadyHandCharges = (uint)(craft.MissionHasSteadyHand ? 1 : 0),
+            SteadyHandCharges = craft.MissionHasSteadyHand ? 2 : 0,
         };
 
     public static CraftStatus Status(CraftState craft, StepState step)
@@ -103,8 +105,13 @@ public static class Simulator
         }
         else
         {
-            if (craft.CraftRequiredQuality > 0 && step.Quality < craft.CraftRequiredQuality)
+            if (craft.CraftRequiredQuality > 0)
+            {
+                if (step.Quality < craft.CraftRequiredQuality)
                 return CraftStatus.FailedMinQuality;
+
+                return CraftStatus.SucceededMetQualityReq;
+            }
 
             return CraftStatus.SucceededNoQualityReq;
         }
@@ -125,13 +132,14 @@ public static class Simulator
         {
             CraftStatus.InProgress => "制作未完成（求解器在完成之前未返回任何步骤）。",
             CraftStatus.FailedDurability => $"因耐久度不足导致制作失败。(进展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品质：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
-            CraftStatus.FailedMinQuality => $"制作完成并达到满品质，耗时（进展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品质：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
+            CraftStatus.FailedMinQuality => $"制作完成但未达到最低品质（进展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品质：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）。",
             CraftStatus.SucceededQ1 => $"制作完成并达到第一个品质门槛，耗时 {time.TotalSeconds:f0} 秒。",
             CraftStatus.SucceededQ2 => $"制作完成并达到第二个品质门槛，耗时 {time.TotalSeconds:f0} 秒。",
             CraftStatus.SucceededQ3 => $"制作完成并达到第三个品质门槛，耗时 {time.TotalSeconds:f0} 秒！",
             CraftStatus.SucceededMaxQuality => $"制作完成并达到满品质，耗时 {time.TotalSeconds:f0} 秒！",
             CraftStatus.SucceededSomeQuality => $"制作完成但未达到最大品质（{hq}%），耗时 {time.TotalSeconds:f0} 秒。",
             CraftStatus.SucceededNoQualityReq => $"制作完成，无需品质，耗时 {time.TotalSeconds:f0} 秒！",
+            CraftStatus.SucceededMetQualityReq => $"制作完成并达到最低品质要求，耗时 {time.TotalSeconds:f0} 秒！",
             CraftStatus.Count => "你不应该看到这个，请报告问题。",
             _ => "你不应该看到这个，请报告问题。",
         };
@@ -148,6 +156,7 @@ public static class Simulator
             CraftStatus.SucceededMaxQuality => ImGuiColors.ParsedGreen,
             CraftStatus.SucceededSomeQuality => new Vector4(1 - (hq / 100f), 0 + (hq / 100f), 1 - (hq / 100f), 255),
             CraftStatus.SucceededNoQualityReq => ImGuiColors.ParsedGreen,
+            CraftStatus.SucceededMetQualityReq => ImGuiColors.ParsedGreen,
             CraftStatus.Count => ImGuiColors.DalamudWhite,
             _ => ImGuiColors.DalamudWhite,
         };

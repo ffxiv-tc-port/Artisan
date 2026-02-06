@@ -97,11 +97,11 @@ namespace Artisan.UI
                     {
                         if (raphael_cache)
                         {
-                            var copy = P.Config.RaphaelSolverCacheV4.Where(kv => kv.Value == SelectedMacro);
+                            var copy = P.Config.RaphaelSolverCacheV5.Where(kv => kv.Value == SelectedMacro);
                             //really should be just one but is it for sure??
                             foreach (var kv in copy)
                             {
-                                P.Config.RaphaelSolverCacheV4.TryRemove(kv);
+                                P.Config.RaphaelSolverCacheV5.TryRemove(kv);
                             }
                         }
                         else
@@ -263,6 +263,8 @@ namespace Artisan.UI
                             if (ImGui.Checkbox($"长持续", ref step.ExcludePrimed))
                                 P.Config.Save();
                             if (ImGui.Checkbox($"高品质", ref step.ExcludeGoodOmen))
+                                P.Config.Save();
+                            if (ImGui.Checkbox($"Robust", ref step.ExcludeRobust))
                                 P.Config.Save();
 
                             ImGui.Columns(1);

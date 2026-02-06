@@ -39,9 +39,9 @@ namespace Artisan.UI
                     if (ImGui.BeginChild("##selector", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 32f.Scale()), true))
                     {
                         ImGuiEx.TextUnderlined($"等级/进度/品质/耐久度-作业精度/加工精度/制作力-类型/初始品质");
-                        foreach (var key in P.Config.RaphaelSolverCacheV4.Keys)
+                        foreach (var key in P.Config.RaphaelSolverCacheV5.Keys)
                         {
-                            var m = P.Config.RaphaelSolverCacheV4[key];
+                            var m = P.Config.RaphaelSolverCacheV5[key];
                             if (!m.Name.Contains(_search, System.StringComparison.CurrentCultureIgnoreCase)) continue;
                             var selected = ImGui.Selectable($"{m.Name}###{m.ID}");
 
@@ -61,9 +61,9 @@ namespace Artisan.UI
                     if (ImGui.BeginChild("##selector", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 32f.Scale()), true))
                     {
                         ImGuiEx.TextUnderlined($"等级/进度/品质/耐久度-作业精度/加工精度/制作力-类型");
-                        foreach (var key in P.Config.RaphaelSolverCacheV3.Keys)
+                        foreach (var key in P.Config.RaphaelSolverCacheV4.Keys)
                         {
-                            var m = P.Config.RaphaelSolverCacheV3[key];
+                            var m = P.Config.RaphaelSolverCacheV4[key];
                             if (!m.Name.Contains(_search, System.StringComparison.CurrentCultureIgnoreCase)) continue;
                             var selected = ImGui.Selectable($"{m.Name}###{m.ID}");
 
@@ -81,9 +81,9 @@ namespace Artisan.UI
                 if (ImGui.Button("清除此 Raphael 缓存（按住 Ctrl）", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y)) && ImGui.GetIO().KeyCtrl)
                 {
                     if (_oldVersion)
-                        P.Config.RaphaelSolverCacheV3.Clear();
-                    else
                         P.Config.RaphaelSolverCacheV4.Clear();
+                    else
+                        P.Config.RaphaelSolverCacheV5.Clear();
                     P.Config.Save();
                 }
             }

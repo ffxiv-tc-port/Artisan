@@ -489,9 +489,9 @@ namespace Artisan.CraftingLogic.Solvers
                     ImGui.Unindent();
                 }
 
-                changed |= ImGui.SliderInt("Max Stellar Steady Hand usage", ref MaxStellarHand, 0, 2);
+                changed |= ImGui.SliderInt("宇宙稳手使用上限", ref MaxStellarHand, 0, 2);
 
-                ImGuiComponents.HelpMarker("This is only for missions that have Stellar Steady Hand, will limit how many are allowed per macro (Raphael may still use less in its solutions).");
+                ImGuiComponents.HelpMarker("仅对包含宇宙稳手的任务有效，将限制每个宏中可用的宇宙稳手次数（Raphael 在实际方案中可能会用更少）。");
 
                 changed |= ImGui.SliderInt("解决方案生成超时", ref TimeOutMins, 1, 15);
 

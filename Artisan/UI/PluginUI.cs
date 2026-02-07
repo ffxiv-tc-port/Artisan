@@ -913,10 +913,10 @@ namespace Artisan.UI
                     P.Config.Save();
                 }
 
-                if (ImGui.Checkbox("Adjust all sub-crafts after changing quantities", ref P.Config.DefaultAdjustQuantities))
+                if (ImGui.Checkbox("修改成品数量后自动调整子配方", ref P.Config.DefaultAdjustQuantities))
                     P.Config.Save();
 
-                if (ImGui.Checkbox($@"添加到列表后重置“添加次数”。", ref P.Config.ResetTimesToAdd))
+                if (ImGui.Checkbox($@"添加到清单后重置“添加次数”。", ref P.Config.ResetTimesToAdd))
                     P.Config.Save();
 
                 ImGui.PushItemWidth(100);

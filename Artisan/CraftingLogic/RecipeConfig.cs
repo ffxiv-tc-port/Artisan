@@ -55,12 +55,13 @@ public class RecipeConfig
     public bool RequiredPotionHQ => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : requiredPotionHQ;
 
 
-    public string FoodName => requiredFood == Default ? $"{P.Config.DefaultConsumables.FoodName} (默认)" : RequiredFood == Disabled ? "已禁用" : $"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
-    public string PotionName => requiredPotion == Default ? $"{P.Config.DefaultConsumables.PotionName} (默认)" : RequiredPotion == Disabled ? "已禁用" : $"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
-    public string ManualName => requiredManual == Default ? $"{P.Config.DefaultConsumables.ManualName} (默认)" : RequiredManual == Disabled ? "已禁用" : $"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
-    public string SquadronManualName => requiredSquadronManual == Default ? $"{P.Config.DefaultConsumables.SquadronManualName} (默认)" : RequiredSquadronManual == Disabled ? "已禁用" : $"{ConsumableChecker.SquadronManuals.FirstOrDefault(x => x.Id == RequiredSquadronManual).Name}";
+    public string FoodName => requiredFood == Default ? $"{P.Config.DefaultConsumables.FoodName} (默认)" : RequiredFood == Disabled ? "已禁用" : $"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name} (数量：{ConsumableChecker.NumberOfConsumable(RequiredFood, RequiredFoodHQ)})";
+    public string PotionName => requiredPotion == Default ? $"{P.Config.DefaultConsumables.PotionName} (默认)" : RequiredPotion == Disabled ? "已禁用" : $"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name} (数量：{ConsumableChecker.NumberOfConsumable(RequiredPotion, RequiredPotionHQ)})";
+    public string ManualName => requiredManual == Default ? $"{P.Config.DefaultConsumables.ManualName} (默认)" : RequiredManual == Disabled ? "已禁用" : $"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name} (数量：{ConsumableChecker.NumberOfConsumable(RequiredManual, false)})";
+    public string SquadronManualName => requiredSquadronManual == Default ? $"{P.Config.DefaultConsumables.SquadronManualName} (默认)" : RequiredSquadronManual == Disabled ? "已禁用" : $"{ConsumableChecker.SquadronManuals.FirstOrDefault(x => x.Id == RequiredSquadronManual).Name} (数量：{ConsumableChecker.NumberOfConsumable(RequiredManual, false)})";
 
-
+    [NonSerialized]
+    private float _largestName;
 
     public bool Draw(uint recipeId)
     {
@@ -73,6 +74,7 @@ public class RecipeConfig
         if (craft.InitialQuality == 0)
             craft.InitialQuality = Simulator.GetStartingQuality(recipe, false, craft.StatLevel);
         bool changed = false;
+        _largestName = Math.Max(Math.Max(Math.Max(ImGui.CalcTextSize(FoodName).X.Scale(), ImGui.CalcTextSize(PotionName).X.Scale()), ImGui.CalcTextSize(ManualName).X.Scale()), ImGui.CalcTextSize(SquadronManualName).X.Scale()) + 32f.Scale();
         changed |= DrawFood();
         changed |= DrawPotion();
         changed |= DrawManual();
@@ -88,11 +90,12 @@ public class RecipeConfig
         ImGuiEx.TextV("食物使用：");
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
+        else ImGui.PushItemWidth(_largestName);
         if (ImGui.BeginCombo("##foodBuff", FoodName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.FoodName})"))
+                if (ImGui.Selectable($"{P.Config.DefaultConsumables.FoodName} (默认)"))
                 {
                     requiredFood = Default;
                     requiredFoodHQ = false;
@@ -107,7 +110,7 @@ public class RecipeConfig
             }
             foreach (var x in ConsumableChecker.GetFood(true))
             {
-                if (ImGui.Selectable($"{x.Name}"))
+                if (ImGui.Selectable($"{x.Name} (Qty: {ConsumableChecker.NumberOfConsumable(x.Id, false)})"))
                 {
                     requiredFood = x.Id;
                     requiredFoodHQ = false;
@@ -116,7 +119,7 @@ public class RecipeConfig
             }
             foreach (var x in ConsumableChecker.GetFood(true, true))
             {
-                if (ImGui.Selectable($" {x.Name}"))
+                if (ImGui.Selectable($" {x.Name} (Qty: {ConsumableChecker.NumberOfConsumable(x.Id, true)})"))
                 {
                     requiredFood = x.Id;
                     requiredFoodHQ = true;
@@ -134,11 +137,12 @@ public class RecipeConfig
         ImGuiEx.TextV("药水使用：");
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
+        else ImGui.PushItemWidth(_largestName);
         if (ImGui.BeginCombo("##potBuff", PotionName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.PotionName})"))
+                if (ImGui.Selectable($"{P.Config.DefaultConsumables.PotionName} (默认)"))
                 {
                     requiredPotion = Default;
                     requiredPotionHQ = false;
@@ -153,7 +157,7 @@ public class RecipeConfig
             }
             foreach (var x in ConsumableChecker.GetPots(true))
             {
-                if (ImGui.Selectable($"{x.Name}"))
+                if (ImGui.Selectable($"{x.Name} (Qty: {ConsumableChecker.NumberOfConsumable(x.Id, false)})"))
                 {
                     requiredPotion = x.Id;
                     requiredPotionHQ = false;
@@ -162,7 +166,7 @@ public class RecipeConfig
             }
             foreach (var x in ConsumableChecker.GetPots(true, true))
             {
-                if (ImGui.Selectable($" {x.Name}"))
+                if (ImGui.Selectable($" {x.Name} (Qty: {ConsumableChecker.NumberOfConsumable(x.Id, true)})"))
                 {
                     requiredPotion = x.Id;
                     requiredPotionHQ = true;
@@ -180,11 +184,12 @@ public class RecipeConfig
         ImGuiEx.TextV("指南使用：");
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
+        else ImGui.PushItemWidth(_largestName);
         if (ImGui.BeginCombo("##manualBuff", ManualName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.ManualName})"))
+                if (ImGui.Selectable($"{P.Config.DefaultConsumables.ManualName} (默认)"))
                 {
                     requiredManual = Default;
                     changed = true;
@@ -197,7 +202,7 @@ public class RecipeConfig
             }
             foreach (var x in ConsumableChecker.GetManuals(true))
             {
-                if (ImGui.Selectable($"{x.Name}"))
+                if (ImGui.Selectable($"{x.Name} (Qty: {ConsumableChecker.NumberOfConsumable(x.Id, false)})"))
                 {
                     requiredManual = x.Id;
                     changed = true;
@@ -216,11 +221,12 @@ public class RecipeConfig
         ImGuiEx.TextV("军用指南：");
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
+        else ImGui.PushItemWidth(_largestName);
         if (ImGui.BeginCombo("##squadronManualBuff", SquadronManualName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.SquadronManualName})"))
+                if (ImGui.Selectable($"{P.Config.DefaultConsumables.SquadronManualName} (默认)"))
                 {
                     requiredSquadronManual = Default;
                     changed = true;
@@ -233,7 +239,7 @@ public class RecipeConfig
             }
             foreach (var x in ConsumableChecker.GetSquadronManuals(true))
             {
-                if (ImGui.Selectable($"{x.Name}"))
+                if (ImGui.Selectable($"{x.Name} (Qty: {ConsumableChecker.NumberOfConsumable(x.Id, false)})"))
                 {
                     requiredSquadronManual = x.Id;
                     changed = true;

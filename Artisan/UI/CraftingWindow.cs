@@ -15,6 +15,7 @@ using ECommons.ImGuiMethods;
 using ECommons.Logging;
 using Dalamud.Bindings.ImGui;
 using System;
+using ECommons;
 
 namespace Artisan.UI
 {
@@ -87,6 +88,21 @@ namespace Artisan.UI
                 if (RaphaelCache.InProgressAny())
                 {
                     ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "Raphael正在生成。请稍候...");
+                    if (ImGui.Button("紧急取消按钮"))
+                    {
+                        foreach (var t in RaphaelCache.Tasks)
+                        {
+                            try
+                            {
+                                t.Value.Item1.Cancel();
+                            }
+                            catch (Exception e)
+                            {
+                                e.Log("Emergency button pushed but couldn't cancel?");
+                            }
+                        }
+                        RaphaelCache.Tasks.Clear();
+                    }
                     return;
                 }
 

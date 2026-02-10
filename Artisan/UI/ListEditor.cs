@@ -92,7 +92,7 @@ internal class ListEditor : Window, IDisposable
     private bool hqSim = false;
 
     private int addMoreCount = 0;
-    private bool loading;
+    public bool loading;
 
     public ListEditor(int listId)
         : base($"清单编辑器###{listId}")
@@ -123,7 +123,6 @@ internal class ListEditor : Window, IDisposable
             Svc.Log.Debug($"表格列表为空，正在中止。");
             return;
         }
-
         Table = new IngredientTable(list);
     }
 
@@ -131,7 +130,7 @@ internal class ListEditor : Window, IDisposable
     {
         token = source.Token;
         Table = null;
-        P.UniversalsisClient.PlayerWorld = Svc.Objects.LocalPlayer?.CurrentWorld.RowId;
+        P.UniversalsisClient.PlayerWorld = Svc.ClientState.IsLoggedIn ? Svc.Objects.LocalPlayer?.CurrentWorld.RowId : 0;
         if (RegenerateTask == null || RegenerateTask.IsCompleted)
         {
             Svc.Log.Debug($"Starting regeneration");
@@ -495,74 +494,13 @@ internal class ListEditor : Window, IDisposable
 
             if (ImGui.Button("添加到清单", new Vector2(ImGui.GetContentRegionAvail().X / 2, 30)))
             {
-                SelectedListMateralsNew.Clear();
-                listMaterialsNew.Clear();
-
-                if (SelectedList.Recipes.Any(x => x.ID == SelectedRecipe.Value.RowId))
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).Quantity += checked(timesToAdd);
-                }
-                else
-                {
-                    SelectedList.Recipes.Add(new ListItem() { ID = SelectedRecipe.Value.RowId, Quantity = checked(timesToAdd) });
-                }
-
-                if (SelectedList.TidyAfter)
-                    CraftingListHelpers.TidyUpList(SelectedList);
-
-                if (SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions is null)
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions = new ListItemOptions { NQOnly = SelectedList.AddAsQuickSynth };
-                }
-                else
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions.NQOnly = SelectedList.AddAsQuickSynth;
-                }
-
-                RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
-
-                NeedsToRefreshTable = true;
-
-                P.Config.Save();
-                if (P.Config.ResetTimesToAdd)
-                    timesToAdd = 1;
+                AddToList(SelectedRecipe.Value, false, true);
             }
 
             ImGui.SameLine();
             if (ImGui.Button("添加到清单（连同所有的子配方）", new Vector2(ImGui.GetContentRegionAvail().X, 30)))
             {
-                SelectedListMateralsNew.Clear();
-                listMaterialsNew.Clear();
-
-                CraftingListUI.AddAllSubcrafts(SelectedRecipe.Value, SelectedList, 1, timesToAdd);
-
-                Svc.Log.Debug($"添加：{SelectedRecipe.Value.ItemResult.Value.Name.ToDalamudString().ToString()} {timesToAdd} 次");
-                if (SelectedList.Recipes.Any(x => x.ID == SelectedRecipe.Value.RowId))
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).Quantity += timesToAdd;
-                }
-                else
-                {
-                    SelectedList.Recipes.Add(new ListItem() { ID = SelectedRecipe.Value.RowId, Quantity = timesToAdd });
-                }
-
-                if (SelectedList.TidyAfter)
-                    CraftingListHelpers.TidyUpList(SelectedList);
-
-                if (SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions is null)
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions = new ListItemOptions { NQOnly = SelectedList.AddAsQuickSynth };
-                }
-                else
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions.NQOnly = SelectedList.AddAsQuickSynth;
-                }
-
-                RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
-                RefreshTable(null, true);
-                P.Config.Save();
-                if (P.Config.ResetTimesToAdd)
-                    timesToAdd = 1;
+                AddToList(SelectedRecipe.Value, true, true);
             }
 
             if (timesToAdd < 1)
@@ -604,6 +542,48 @@ internal class ListEditor : Window, IDisposable
             ImGuiEx.LineCentered(() => ImGuiEx.TextUnderlined(GradientColor.Get(ImGuiColors.DalamudWhite, ImGuiColors.DalamudYellow, 200), "刷新清单数量"));
         }
 
+    }
+
+    private void AddToList(Recipe r, bool withSubcrafts, bool regenerate = false)
+    {
+        SelectedListMateralsNew.Clear();
+        listMaterialsNew.Clear();
+
+        if (withSubcrafts)
+            CraftingListUI.AddAllSubcrafts(r, SelectedList, 1, timesToAdd);
+
+        Svc.Log.Debug($"添加：{r.ItemResult.Value.Name.ToDalamudString().ToString()} {timesToAdd} 次");
+        if (SelectedList.Recipes.Any(x => x.ID == r.RowId))
+        {
+            SelectedList.Recipes.First(x => x.ID == r.RowId).Quantity += timesToAdd;
+        }
+        else
+        {
+            SelectedList.Recipes.Add(new ListItem() { ID = r.RowId, Quantity = timesToAdd });
+        }
+
+        if (SelectedList.TidyAfter && regenerate)
+            CraftingListHelpers.TidyUpList(SelectedList);
+
+        if (SelectedList.Recipes.First(x => x.ID == r.RowId).ListItemOptions is null)
+        {
+            SelectedList.Recipes.First(x => x.ID == r.RowId).ListItemOptions = new ListItemOptions { NQOnly = SelectedList.AddAsQuickSynth };
+        }
+        else
+        {
+            SelectedList.Recipes.First(x => x.ID == r.RowId).ListItemOptions.NQOnly = SelectedList.AddAsQuickSynth;
+        }
+
+        RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+
+        if (regenerate)
+        {
+            RefreshTable(null, true);
+
+            P.Config.Save();
+            if (P.Config.ResetTimesToAdd)
+                timesToAdd = 1;
+        }
     }
 
     private void SortList()
@@ -678,57 +658,90 @@ internal class ListEditor : Window, IDisposable
             SelectedRecipe = null;
         }
 
-        if (P.Config.ShowOnlyCraftable && RetainerInfo.CacheBuilt)
+        IEnumerable<Recipe> recipes = P.Config.ShowOnlyCraftable && RetainerInfo.CacheBuilt
+    ? CraftingListUI.CraftableItems
+        .Where(x => x.Value)
+        .Select(x => x.Key)
+    : LuminaSheets.RecipeSheet.Values;
+
+        recipes = recipes.Where(x => IsValidRecipe(x));
+
+        if (Search.Length > 0 && ImGui.Selectable("Add all visible"))
         {
-            foreach (var recipe in CraftingListUI.CraftableItems.Where(x => x.Value).Select(x => x.Key).Where(x => Regex.Match(x.ItemResult.Value.Name.GetText(true), Search, RegexOptions.CultureInvariant | RegexOptions.IgnoreCase).Success))
+            Task.Run(() =>
             {
-                if (recipe.Number == 0) continue;
-                ImGui.PushID((int)recipe.RowId);
-                if (!RecipeLabels.ContainsKey(recipe.RowId))
+                foreach (var r in recipes)
                 {
-                    RecipeLabels[recipe.RowId] = $"{recipe.ItemResult.Value.Name.ToDalamudString()} ({LuminaSheets.ClassJobSheet[recipe.CraftType.RowId + 8].Name} {recipe.RecipeLevelTable.Value.ClassJobLevel})";
+                    AddToList(r, false);
                 }
-                var selected = ImGui.Selectable(RecipeLabels[recipe.RowId], recipe.RowId == SelectedRecipe?.RowId);
+            }).ContinueWith(_ => { RefreshTable(null, true); P.Config.Save(); });
+        }
 
-                if (selected)
+        if (Search.Length > 0 && ImGui.Selectable("Add all visible (with sub-crafts)"))
+        {
+            Task.Run(() =>
+            {
+                foreach (var r in recipes)
                 {
-                    subtableList.Clear();
-                    SelectedRecipeRawIngredients.Clear();
-                    SelectedRecipe = recipe;
+                    AddToList(r, true);
                 }
+            }).ContinueWith(_ => { RefreshTable(null, true); P.Config.Save(); });
+        }
 
-                ImGui.PopID();
+        ImGui.Separator();
+
+        foreach (var recipe in recipes)
+        {
+            try
+            {
+                DrawRecipe(recipe);
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Error(ex, "DrawRecipeList");
             }
         }
-        else if (!P.Config.ShowOnlyCraftable)
+
+        bool IsValidRecipe(Recipe recipe)
         {
-            foreach (var recipe in LuminaSheets.RecipeSheet.Values)
+            if (recipe.Number == 0) return false;
+            if (recipe.ItemResult.RowId == 0) return false;
+
+            if (!string.IsNullOrEmpty(Search))
             {
-                try
-                {
-                    if (recipe.ItemResult.RowId == 0) continue;
-                    if (recipe.Number == 0) continue;
-                    if (!string.IsNullOrEmpty(Search) && !Regex.Match(recipe.ItemResult.Value.Name.GetText(true), Search, RegexOptions.CultureInvariant | RegexOptions.IgnoreCase).Success) continue;
-                    if (!RecipeLabels.ContainsKey(recipe.RowId))
-                    {
-                        RecipeLabels[recipe.RowId] = $"{recipe.ItemResult.Value.Name.ToDalamudString()} ({LuminaSheets.ClassJobSheet[recipe.CraftType.RowId + 8].Name} {recipe.RecipeLevelTable.Value.ClassJobLevel})";
-                    }
-                    var selected = ImGui.Selectable(RecipeLabels[recipe.RowId], recipe.RowId == SelectedRecipe?.RowId);
-
-                    if (selected)
-                    {
-                        subtableList.Clear();
-                        SelectedRecipeRawIngredients.Clear();
-                        SelectedRecipe = recipe;
-                    }
-
-                }
-                catch (Exception ex)
-                {
-                    Svc.Log.Error(ex, "DrawRecipeList");
-                }
+                return Regex.IsMatch(
+                    recipe.ItemResult.Value.Name.GetText(true),
+                    Search,
+                    RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
             }
+
+            return true;
         }
+
+        void DrawRecipe(Recipe recipe)
+        {
+            ImGui.PushID((int)recipe.RowId);
+
+            if (!RecipeLabels.TryGetValue(recipe.RowId, out var label))
+            {
+                label =
+                    $"{recipe.ItemResult.Value.Name.ToDalamudString()} " +
+                    $"({LuminaSheets.ClassJobSheet[recipe.CraftType.RowId + 8].Abbreviation} " +
+                    $"{recipe.RecipeLevelTable.Value.ClassJobLevel})";
+
+                RecipeLabels[recipe.RowId] = label;
+            }
+
+            if (ImGui.Selectable(label, recipe.RowId == SelectedRecipe?.RowId))
+            {
+                subtableList.Clear();
+                SelectedRecipeRawIngredients.Clear();
+                SelectedRecipe = recipe;
+            }
+
+            ImGui.PopID();
+        }
+
     }
 
 

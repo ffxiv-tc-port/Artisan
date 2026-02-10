@@ -219,7 +219,7 @@ public unsafe class Artisan : IDalamudPlugin
         }
 
         var raphFinishedTasks = RaphaelCache.Tasks
-            .Where(x => x.Value.Item2.IsCompleted || x.Value.Item2.IsFaulted || x.Value.Item2.IsCanceled)
+            .Where(x => x.Value.Task.IsCompleted || x.Value.Task.IsFaulted || x.Value.Task.IsCanceled)
             .ToList();
 
         foreach (var key in raphFinishedTasks)

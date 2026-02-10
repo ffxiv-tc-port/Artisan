@@ -594,7 +594,7 @@ namespace Artisan.UI
                         if (ImGui.Button("Cancel Raphael Generation"))
                         {
                             RaphaelCache.Tasks.TryRemove(key, out var task);
-                            task.Item1.Cancel();
+                            task.Cancellation.Cancel();
                         }
                     }
                     ResetSim();

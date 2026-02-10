@@ -390,7 +390,7 @@ public static unsafe class Crafting
                         Svc.Log.Debug("Raphael set as config but has no solution, generating now...");
                         var raphConfig = RaphaelCache.GetConfigFromTempOrDefault(CurCraft);
 
-                        RaphaelCache.Build(CurCraft, raphConfig);
+                        RaphaelCache.Build(CurCraft, raphConfig, true);
                         return State.WaitStart; // wait for solution to be ready
                     }
                     else

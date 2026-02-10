@@ -94,7 +94,7 @@ namespace Artisan.UI
                         {
                             try
                             {
-                                t.Value.Item1.Cancel();
+                                t.Value.Cancellation.Cancel();
                             }
                             catch (Exception e)
                             {

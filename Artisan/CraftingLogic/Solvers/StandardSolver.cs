@@ -16,13 +16,11 @@ namespace Artisan.CraftingLogic.Solvers
                 yield return new(this, 0, 2, "标准配方求解器");
         }
 
-        public Solver Create(CraftState craft, int flavour) => new StandardSolver(flavour != 0);
+        public Solver Create(CraftState craft, int flavour) => new StandardSolver();
     }
 
     public class StandardSolver : Solver
     {
-        private bool _expert;
-
         // for normal crafts, we don't ever want to use manip/wn more than once
         private bool _manipulationUsed;
         private bool _wasteNotUsed;
@@ -33,9 +31,8 @@ namespace Artisan.CraftingLogic.Solvers
 
         private Solver? _fallback; //For Material Miracle
 
-        public StandardSolver(bool expert)
+        public StandardSolver()
         {
-            _expert = expert;
             _fallback = new ExpertSolver();
         }
 

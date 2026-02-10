@@ -100,7 +100,6 @@ namespace Artisan.Autocraft
                         Endurance.ToggleEndurance(false);
                         if (P.Config.PlaySoundFinishEndurance)
                             SoundPlayer.PlaySound();
-                        DuoLog.Information("制作X次已完成。");
 
                     }
                 }

@@ -301,7 +301,6 @@ namespace Artisan.Autocraft
                 {
                     ToggleEndurance(false);
                     P.Config.CraftingX = false;
-                    DuoLog.Information("制作X次已完成。");
                     if (P.Config.PlaySoundFinishEndurance)
                         SoundPlayer.PlaySound();
 

@@ -691,26 +691,26 @@ namespace Artisan.UI.Tables
                 return;
 
             DrawGatherItem(item);
-            DrawSearchItem(item);
-            DrawItemVendorLookup(item);
-            DrawMonsterLootLookup(item);
-            DrawMarketBoardLookup(item);
+            DrawSearchItem(item.Data.RowId, item.Data.Name.ToString());
+            DrawItemVendorLookup(item.Data.RowId, item.Data.Name.ToString());
+            DrawMonsterLootLookup(item.Data.RowId, item.Data.Name.ToString());
+            DrawMarketBoardLookup(item.Data.RowId, item.Data.Name.ToDalamudString().ToString());
             DrawFilterOnCrafts(item);
             DrawRestockFromRetainer(item);
             //DrawCraftThisItem(item);
         }
 
-        private void DrawMarketBoardLookup(Ingredient item)
+        internal static void DrawMarketBoardLookup(uint itemId, string itemName)
         {
 
-            if (item.Data.RowId == 0)
+            if (itemId == 0)
                 return;
 
             if (Marketboard)
             {
                 if (ImGui.Selectable("Market Board Lookup"))
                 {
-                    Chat.Instance.SendMessage($"/pmb {item.Data.Name.ToDalamudString()}");
+                    Chat.Instance.SendMessage($"/pmb {itemName}");
                 }
             }
         }
@@ -786,9 +786,9 @@ namespace Artisan.UI.Tables
             }
         }
 
-        private static void DrawMonsterLootLookup(Ingredient item)
+        internal static void DrawMonsterLootLookup(uint itemId, string itemName)
         {
-            if (item.Data.RowId == 0)
+            if (itemId == 0)
                 return;
 
             if (MonsterLookup)
@@ -798,7 +798,7 @@ namespace Artisan.UI.Tables
 
                 try
                 {
-                    Chat.Instance.SendMessage($"/mloot {item.Data.Name.ToString()}");
+                    Chat.Instance.SendMessage($"/mloot {itemName}");
                 }
                 catch (Exception e)
                 {
@@ -811,21 +811,21 @@ namespace Artisan.UI.Tables
             }
         }
 
-        private static void DrawItemVendorLookup(Ingredient item)
+        internal static void DrawItemVendorLookup(uint itemId, string itemName)
         {
-            if (item.Data.RowId == 0)
+            if (itemId == 0)
                 return;
 
             if (ItemVendor)
             {
-                if (ItemVendorLocation.ItemHasVendor(item.Data.RowId))
+                if (ItemVendorLocation.ItemHasVendor(itemId))
                 {
                     if (!ImGui.Selectable("Item Vendor Lookup"))
                         return;
 
                     try
                     {
-                        ItemVendorLocation.OpenContextMenu(item.Data.RowId);
+                        ItemVendorLocation.OpenContextMenu(itemId);
                     }
                     catch (Exception e)
                     {
@@ -839,9 +839,9 @@ namespace Artisan.UI.Tables
             }
         }
 
-        private static void DrawSearchItem(Ingredient item)
+        internal static void DrawSearchItem(uint itemId, string itemName)
         {
-            if (item.Data.RowId == 0)
+            if (itemId == 0)
                 return;
 
             if (!ImGui.Selectable("Search for Item"))
@@ -849,7 +849,7 @@ namespace Artisan.UI.Tables
 
             try
             {
-                SearchItem(item.Data.RowId);
+                SearchItem(itemId);
             }
             catch (Exception e)
             {

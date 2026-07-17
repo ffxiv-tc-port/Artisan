@@ -41,6 +41,11 @@ namespace Artisan.RawInformation
 
         public static Dictionary<uint, SpecialShop>? SpecialShopSheet;
 
+        // Item.PriceMid is populated even for items only obtainable via SpecialShop
+        // (tribal/GC scrip, item-for-item trades) that no NPC actually sells for gil.
+        // Cross-reference GilShopItem to confirm an item is really purchasable with gil.
+        public static HashSet<uint>? GilShopItemIds;
+
         public static Dictionary<uint, LogMessage>? LogMessageSheet;
 
         public static Dictionary<uint, ItemFood>? ItemFoodSheet;
@@ -109,6 +114,11 @@ namespace Artisan.RawInformation
 
             SpecialShopSheet = Svc.Data?.GetExcelSheet<SpecialShop>()?
                        .ToDictionary(i => i.RowId, i => i);
+
+            GilShopItemIds = Svc.Data?.GetSubrowExcelSheet<GilShopItem>()?
+                       .SelectMany(row => row)
+                       .Select(i => i.Item.RowId)
+                       .ToHashSet();
 
             LogMessageSheet = Svc.Data?.GetExcelSheet<LogMessage>()?
                        .ToDictionary(i => i.RowId, i => i);

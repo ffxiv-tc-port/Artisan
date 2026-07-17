@@ -261,9 +261,13 @@ public static unsafe class Crafting
         if (Svc.Condition[ConditionFlag.NormalConditions])
             return State.IdleNormal;
 
+        if (CurCraft != null && CurRecipe != null && CurStep != null)
+        {
+            CraftFinished?.Invoke(CurRecipe.Value, CurCraft, CurStep, true);
+        }
+
         if (CurCraft != null)
         {
-            CraftFinished?.Invoke(CurRecipe!.Value, CurCraft, CurStep!, true);
             _predictedNextStep = null;
             _predictionDeadline = default;
             CurRecipe = null;

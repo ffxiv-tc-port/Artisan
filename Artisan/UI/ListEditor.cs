@@ -329,6 +329,24 @@ internal class ListEditor : Window, IDisposable
     }
 
 
+    private bool _sortFinishedProductsByPrice = false;
+
+    // Sort key for the price column: groups rows by their cheapest market world (server), ranking
+    // worlds that recur more often across the list first, then by cost, then by listed quantity.
+    // Rows with no cached market listing yet sort last (HasPrice = false).
+    private readonly record struct FinishedProductPriceSortKey(bool HasPrice, string World, double Cost, double Qty);
+
+    private FinishedProductPriceSortKey GetFinishedProductPriceSortKey(ListItem rec)
+    {
+        var itemId = LuminaSheets.RecipeSheet[rec.ID].ItemResult.RowId;
+        if (!FinishedProductPrices.TryGetValue(itemId, out var lookup) || lookup.Data == null)
+            return default;
+
+        var required = rec.Quantity * LuminaSheets.RecipeSheet[rec.ID].AmountResult;
+        var cheapest = MarketboardPricing.GetCheapestWorldCost(lookup.Data, required);
+        return new FinishedProductPriceSortKey(true, cheapest.World, cheapest.Cost, cheapest.Qty);
+    }
+
     private void DrawFinishedProductStock()
     {
         bool showPrice = P.Config.UseUniversalis && P.Config.UniversalisOnDemand;
@@ -339,7 +357,12 @@ internal class ListEditor : Window, IDisposable
             {
                 foreach (var rec in SelectedList.Recipes.Distinct())
                 {
-                    var itemId = LuminaSheets.RecipeSheet[rec.ID].ItemResult.RowId;
+                    var recipeForFetch = LuminaSheets.RecipeSheet[rec.ID];
+                    var itemId = recipeForFetch.ItemResult.RowId;
+                    var required = rec.Quantity * recipeForFetch.AmountResult;
+                    if (CraftingListUI.NumberOfIngredient(itemId) >= required)
+                        continue; // already have enough in inventory, no need to price it
+
                     if (!FinishedProductPrices.TryGetValue(itemId, out var lookup))
                         FinishedProductPrices[itemId] = lookup = new MarketboardLookup();
 
@@ -349,6 +372,8 @@ internal class ListEditor : Window, IDisposable
             }
         }
 
+        var recipesToShow = SelectedList.Recipes.Distinct().ToList();
+
         int columns = 3 + (RetainerInfo.ATools ? 1 : 0) + (showPrice ? 1 : 0);
         if (ImGui.BeginTable($"###FinishedProductStockContainer{SelectedList.ID}", columns, ImGuiTableFlags.Borders))
         {
@@ -357,18 +382,65 @@ internal class ListEditor : Window, IDisposable
             ImGui.TableSetupColumn($"包裹库存", ImGuiTableColumnFlags.WidthFixed);
             if (RetainerInfo.ATools) ImGui.TableSetupColumn($"雇员", ImGuiTableColumnFlags.WidthFixed);
             if (showPrice) ImGui.TableSetupColumn($"价格", ImGuiTableColumnFlags.WidthFixed);
-            ImGui.TableHeadersRow();
 
-            foreach (var rec in SelectedList.Recipes.Distinct())
+            ImGui.TableNextRow(ImGuiTableRowFlags.Headers);
+            ImGui.TableNextColumn(); ImGui.TableHeader("物品");
+            ImGui.TableNextColumn(); ImGui.TableHeader("所需总数");
+            ImGui.TableNextColumn(); ImGui.TableHeader("包裹库存");
+            if (RetainerInfo.ATools) { ImGui.TableNextColumn(); ImGui.TableHeader("雇员"); }
+            if (showPrice)
+            {
+                ImGui.TableNextColumn();
+                if (ImGui.Selectable(_sortFinishedProductsByPrice ? "价格 (已排序)" : "价格"))
+                    _sortFinishedProductsByPrice = !_sortFinishedProductsByPrice;
+                ImGuiEx.Tooltip("点击依价格排序：相同服务器优先聚集在一起，服务器出现次数越多排越前；同服务器按价格由高到低；价格相同按数量由多到少。");
+            }
+
+            if (showPrice && _sortFinishedProductsByPrice)
+            {
+                var sortKeys = recipesToShow.ToDictionary(rec => rec, GetFinishedProductPriceSortKey);
+                var worldFrequency = sortKeys.Values
+                    .Where(k => k.HasPrice)
+                    .GroupBy(k => k.World)
+                    .ToDictionary(g => g.Key, g => g.Count());
+
+                recipesToShow = recipesToShow
+                    .OrderByDescending(rec => sortKeys[rec].HasPrice)
+                    .ThenByDescending(rec => sortKeys[rec].HasPrice ? worldFrequency[sortKeys[rec].World] : 0)
+                    .ThenByDescending(rec => sortKeys[rec].Cost)
+                    .ThenByDescending(rec => sortKeys[rec].Qty)
+                    .ToList();
+            }
+
+            foreach (var rec in recipesToShow)
             {
                 var recipe = LuminaSheets.RecipeSheet[rec.ID];
                 var itemId = recipe.ItemResult.RowId;
                 var required = rec.Quantity * recipe.AmountResult;
                 var invCount = CraftingListUI.NumberOfIngredient(itemId);
 
+                var itemName = recipe.ItemResult.Value.Name.ToDalamudString().ToString();
+
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
-                ImGui.Text($"{recipe.ItemResult.Value.Name.ToDalamudString()}");
+                if (ImGui.Selectable(itemName))
+                {
+                    ImGui.SetClipboardText(itemName);
+                    Notify.Success("名称已复制到剪贴板");
+                }
+                if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                    ImGui.OpenPopup($"FinishedProductContextMenu{itemId}");
+
+                using (var popup = ImRaii.Popup($"FinishedProductContextMenu{itemId}"))
+                {
+                    if (popup)
+                    {
+                        IngredientTable.DrawSearchItem(itemId, itemName);
+                        IngredientTable.DrawItemVendorLookup(itemId, itemName);
+                        IngredientTable.DrawMonsterLootLookup(itemId, itemName);
+                        IngredientTable.DrawMarketBoardLookup(itemId, itemName);
+                    }
+                }
                 ImGui.TableNextColumn();
                 ImGui.Text($"{required}");
                 ImGui.TableNextColumn();
@@ -400,6 +472,13 @@ internal class ListEditor : Window, IDisposable
                 if (showPrice)
                 {
                     ImGui.TableNextColumn();
+
+                    if (hasEnoughInInv)
+                    {
+                        ImGui.TextDisabled("库存充足");
+                        continue;
+                    }
+
                     if (!FinishedProductPrices.TryGetValue(itemId, out var lookup))
                         FinishedProductPrices[itemId] = lookup = new MarketboardLookup();
 
@@ -449,8 +528,10 @@ internal class ListEditor : Window, IDisposable
 
     // Sums the cheapest way to buy every ingredient needed for `craftQuantity` crafts of this
     // recipe (NPC vendor price if the ingredient has one and it's cheaper, otherwise the
-    // cheapest Universalis listing). Returns false if any ingredient's price isn't known yet,
-    // since an incomplete sum would understate the real material cost.
+    // cheapest Universalis listing). Ingredients already sitting in the player's inventory are
+    // deducted from the needed quantity first, since that portion doesn't need to be bought.
+    // Returns false if any ingredient's price isn't known yet, since an incomplete sum would
+    // understate the real material cost.
     private bool TryGetMaterialCost(Recipe recipe, int craftQuantity, out double cost)
     {
         cost = 0;
@@ -458,8 +539,10 @@ internal class ListEditor : Window, IDisposable
 
         foreach (var ing in recipe.Ingredients().Where(x => x.Amount > 0 && x.Item.RowId != 0))
         {
-            var neededQty = ing.Amount * craftQuantity;
             var matchingIngredient = Table.ListItems.FirstOrDefault(x => x.Data.RowId == ing.Item.RowId);
+            var neededQty = ing.Amount * craftQuantity - (matchingIngredient?.Inventory ?? 0);
+            if (neededQty <= 0) continue;
+
             var hasMarketPrice = matchingIngredient?.MarketboardData != null && matchingIngredient.MarketboardData.AllListings.Count > 0;
             var marketCost = hasMarketPrice ? MarketboardPricing.GetCheapestWorldCost(matchingIngredient!.MarketboardData!, neededQty).Cost : (double?)null;
 
@@ -1639,13 +1722,30 @@ internal class RecipeSelector : ItemSelector<ListItem>
         using (var col = ImRaii.PushColor(ImGuiCol.Text, itemCount == 0 || ItemId.ListItemOptions.Skipping ? ImGuiColors.DalamudRed : ImGuiColors.DalamudWhite))
         {
             var res = ImGui.Selectable(label, idx == CurrentIdx);
-            ImGuiEx.Tooltip($"Right click to {(ItemId.ListItemOptions.Skipping ? "enable" : "skip")} this recipe.");
+            ImGuiEx.Tooltip("Right click for options.");
             if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                ImGui.OpenPopup($"RecipeSelectorContextMenu{idx}");
+
+            using (var popup = ImRaii.Popup($"RecipeSelectorContextMenu{idx}"))
             {
-                ItemId.ListItemOptions.Skipping = !ItemId.ListItemOptions.Skipping;
-                changes = true;
-                P.Config.Save();
+                if (popup)
+                {
+                    if (ImGui.Selectable(ItemId.ListItemOptions.Skipping ? "Enable this recipe" : "Skip this recipe"))
+                    {
+                        ItemId.ListItemOptions.Skipping = !ItemId.ListItemOptions.Skipping;
+                        changes = true;
+                        P.Config.Save();
+                    }
+
+                    var resultId = LuminaSheets.RecipeSheet[ItemId.ID].ItemResult.RowId;
+                    var resultName = LuminaSheets.RecipeSheet[ItemId.ID].ItemResult.Value.Name.ToDalamudString().ToString();
+                    IngredientTable.DrawSearchItem(resultId, resultName);
+                    IngredientTable.DrawItemVendorLookup(resultId, resultName);
+                    IngredientTable.DrawMonsterLootLookup(resultId, resultName);
+                    IngredientTable.DrawMarketBoardLookup(resultId, resultName);
+                }
             }
+
             return res;
         }
     }

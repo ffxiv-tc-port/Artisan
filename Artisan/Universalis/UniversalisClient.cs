@@ -256,12 +256,15 @@ namespace Artisan.Universalis
             return new(currentWorld, currentWorldQty, currentWorldCost);
         }
 
-        // NPC shop price is only meaningful for items an NPC actually sells - a common
-        // material's PriceLow can be a nonzero "junk sell" value with no shop selling it.
+        // NPC shop price is only meaningful for items an NPC actually sells for gil - PriceMid
+        // is populated even for items only obtainable via a SpecialShop trade (tribal/GC scrip,
+        // item-for-item exchange), so cross-check GilShopItem to confirm a real gil shop sells it.
         public static bool TryGetNpcPrice(Lumina.Excel.Sheets.Item item, out uint unitPrice)
         {
-            unitPrice = item.PriceLow;
-            return unitPrice > 0 && IPC.ItemVendorLocation.ItemHasVendor(item.RowId);
+            unitPrice = item.PriceMid;
+            return unitPrice > 0
+                && (RawInformation.LuminaSheets.GilShopItemIds?.Contains(item.RowId) ?? false)
+                && IPC.ItemVendorLocation.ItemHasVendor(item.RowId);
         }
     }
 }

@@ -453,6 +453,28 @@ namespace Artisan.IPC
                 GetRetainerItemCount(material.Key);
             }
 
+            if (P.Config.RestockFinishedProductsFromRetainers)
+            {
+                foreach (var entry in list.Recipes)
+                {
+                    var recipe = LuminaSheets.RecipeSheet[entry.ID];
+                    var target = entry.Quantity * recipe.AmountResult;
+                    var invCount = CraftingListUI.NumberOfIngredient(recipe.ItemResult.RowId);
+                    if (invCount < target)
+                    {
+                        var diffcheck = target - invCount;
+                        Svc.Log.Debug($"{recipe.ItemResult.RowId} {diffcheck}");
+                        if (requiredItems.ContainsKey((int)recipe.ItemResult.RowId))
+                            requiredItems[(int)recipe.ItemResult.RowId] += diffcheck;
+                        else
+                            requiredItems.Add((int)recipe.ItemResult.RowId, diffcheck);
+                    }
+
+                    //Refresh retainer cache if empty
+                    GetRetainerItemCount(recipe.ItemResult.RowId);
+                }
+            }
+
             if (RetainerData.SelectMany(x => x.Value).Any(x => requiredItems.Any(y => y.Key == x.Value.ItemId)))
             {
                 Svc.Log.Debug($"Processing Retainer Data");

@@ -1,4 +1,6 @@
-﻿using Artisan.CraftingLists;
+﻿using Artisan;
+using Artisan.CraftingLists;
+using Artisan.IPC;
 using Artisan.RawInformation;
 using ECommons.DalamudServices;
 using Lumina.Excel.Sheets;
@@ -19,15 +21,16 @@ internal static class CraftingListHelpers
 
             if (selectedList != null)
             {
+                var effectiveQuantity = GetEffectiveCraftQuantity(recipe.Value, selectedList);
                 foreach (var ing in recipe.Value.Ingredients().Where(x => x.Amount > 0 && x.Item.RowId != 0))
                 {
                     if (ingredientList.ContainsKey(ing.Item.RowId))
                     {
-                        ingredientList[ing.Item.RowId] += ing.Amount * selectedList.Recipes.First(x => x.ID == recipe.Value.RowId).Quantity;
+                        ingredientList[ing.Item.RowId] += ing.Amount * effectiveQuantity;
                     }
                     else
                     {
-                        ingredientList.TryAdd(ing.Item.RowId, ing.Amount * selectedList.Recipes.First(x => x.ID == recipe.Value.RowId).Quantity);
+                        ingredientList.TryAdd(ing.Item.RowId, ing.Amount * effectiveQuantity);
                     }
 
                     var name = LuminaSheets.ItemSheet[ing.Item.RowId].Name.ToString();
@@ -67,6 +70,20 @@ internal static class CraftingListHelpers
         {
             Svc.Log.Error(ex, "ERROR");
         }
+    }
+
+    public static int GetEffectiveCraftQuantity(Recipe recipe, NewCraftingList selectedList)
+    {
+        var quantity = selectedList.Recipes.First(x => x.ID == recipe.RowId).Quantity;
+
+        if (P.Config.SubtractOwnedFinishedProductFromIngredientTable)
+        {
+            var owned = CraftingListUI.NumberOfIngredient(recipe.ItemResult.RowId) + RetainerInfo.GetRetainerItemCount(recipe.ItemResult.RowId);
+            var ownedCrafts = (int)Math.Floor((double)owned / recipe.AmountResult);
+            quantity = Math.Max(0, quantity - ownedCrafts);
+        }
+
+        return quantity;
     }
 
     public static Recipe? GetIngredientRecipe(uint ingredient)

@@ -861,6 +861,9 @@ namespace Artisan.UI
                 if (ImGui.Checkbox($@"添加到列表后重置“添加次数”。", ref P.Config.ResetTimesToAdd))
                     P.Config.Save();
 
+                if (ImGui.Checkbox("从雇员补货时，一并补充已制作完成的成品", ref P.Config.RestockFinishedProductsFromRetainers))
+                    P.Config.Save();
+
                 ImGui.PushItemWidth(100);
                 if (ImGui.InputInt("通过菜单添加的次数", ref P.Config.ContextMenuLoops))
                 {
@@ -886,6 +889,9 @@ namespace Artisan.UI
                 if (ImGui.CollapsingHeader("素材表设置"))
                 {
                     ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, $"如果你已经查看了清单的素材表，则“所有列设置”不会起作用。");
+
+                    if (ImGui.Checkbox($"计算素材需求时，扣除已有成品的数量（而非直接使用制作数量计算）", ref P.Config.SubtractOwnedFinishedProductFromIngredientTable))
+                        P.Config.Save();
 
                     if (ImGui.Checkbox($@"默认隐藏""背包"" 列", ref P.Config.DefaultHideInventoryColumn))
                         P.Config.Save();

@@ -120,6 +120,9 @@ namespace Artisan
         public int ContextMenuLoops = 1;
         public float ListCraftThrottle2 = 1f;
 
+        public bool SubtractOwnedFinishedProductFromIngredientTable = false;
+        public bool RestockFinishedProductsFromRetainers = false;
+
         public bool DefaultHideInventoryColumn = false;
         public bool DefaultHideRetainerColumn = false;
         public bool DefaultHideRemainingColumn = false;

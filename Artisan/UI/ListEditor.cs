@@ -17,6 +17,7 @@ using global::Artisan.CraftingLogic.Solvers;
 using global::Artisan.GameInterop;
 using global::Artisan.RawInformation.Character;
 using global::Artisan.UI.Tables;
+using global::Artisan.Universalis;
 using ImGuiNET;
 using IPC;
 using Lumina.Excel.Sheets;
@@ -86,6 +87,8 @@ internal class ListEditor : Window, IDisposable
     private bool HQSubcraftsOnly = false;
 
     private bool NeedsToRefreshTable = false;
+
+    private readonly Dictionary<uint, MarketboardLookup> FinishedProductPrices = new();
 
     NewCraftingList? copyList;
 
@@ -214,6 +217,45 @@ internal class ListEditor : Window, IDisposable
             Notify.Success("清单已导出到剪贴板。");
         }
 
+        ImGui.SameLine();
+        if (ImGui.Button("合并剪贴簿清单"))
+        {
+            try
+            {
+                var clipboard = ImGui.GetClipboardText();
+                if (clipboard != string.Empty)
+                {
+                    if (clipboard.TryParseJson<NewCraftingList>(out var import))
+                    {
+                        foreach (var item in import.Recipes)
+                        {
+                            if (SelectedList.Recipes.Any(x => x.ID == item.ID))
+                                SelectedList.Recipes.First(x => x.ID == item.ID).Quantity += item.Quantity;
+                            else
+                                SelectedList.Recipes.Add(new ListItem() { ID = item.ID, Quantity = item.Quantity, ListItemOptions = item.ListItemOptions ?? new() });
+                        }
+
+                        RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+                        RefreshTable(null, true);
+                        P.Config.Save();
+                        Notify.Success($"已合并到{SelectedList.Name}。");
+                    }
+                    else
+                    {
+                        Notify.Error("无效的导入字符串。");
+                    }
+                }
+                else
+                {
+                    Notify.Error("剪贴板无数据。");
+                }
+            }
+            catch (Exception ex)
+            {
+                ex.Log();
+            }
+        }
+
         var restock = ImGuiHelpers.GetButtonSize("从雇员身上补货");
         if (RetainerInfo.ATools)
         {
@@ -252,6 +294,12 @@ internal class ListEditor : Window, IDisposable
                 ImGui.EndTabItem();
             }
 
+            if (ImGui.BeginTabItem("成品库存"))
+            {
+                DrawFinishedProductStock();
+                ImGui.EndTabItem();
+            }
+
             if (ImGui.BeginTabItem("素材表"))
             {
                 if (NeedsToRefreshTable)
@@ -280,6 +328,154 @@ internal class ListEditor : Window, IDisposable
         }
     }
 
+
+    private void DrawFinishedProductStock()
+    {
+        bool showPrice = P.Config.UseUniversalis && P.Config.UniversalisOnDemand;
+
+        if (showPrice)
+        {
+            if (ImGui.Button("一键全搜索价格"))
+            {
+                foreach (var rec in SelectedList.Recipes.Distinct())
+                {
+                    var itemId = LuminaSheets.RecipeSheet[rec.ID].ItemResult.RowId;
+                    if (!FinishedProductPrices.TryGetValue(itemId, out var lookup))
+                        FinishedProductPrices[itemId] = lookup = new MarketboardLookup();
+
+                    if (lookup.Data == null && !lookup.FetchFailed)
+                        MarketboardFetch.Fetch(itemId, onFailed: () => lookup.FetchFailed = true, onComplete: data => lookup.Data = data);
+                }
+            }
+        }
+
+        int columns = 3 + (RetainerInfo.ATools ? 1 : 0) + (showPrice ? 1 : 0);
+        if (ImGui.BeginTable($"###FinishedProductStockContainer{SelectedList.ID}", columns, ImGuiTableFlags.Borders))
+        {
+            ImGui.TableSetupColumn($"物品", ImGuiTableColumnFlags.WidthFixed);
+            ImGui.TableSetupColumn($"所需总数", ImGuiTableColumnFlags.WidthFixed);
+            ImGui.TableSetupColumn($"包裹库存", ImGuiTableColumnFlags.WidthFixed);
+            if (RetainerInfo.ATools) ImGui.TableSetupColumn($"雇员", ImGuiTableColumnFlags.WidthFixed);
+            if (showPrice) ImGui.TableSetupColumn($"价格", ImGuiTableColumnFlags.WidthFixed);
+            ImGui.TableHeadersRow();
+
+            foreach (var rec in SelectedList.Recipes.Distinct())
+            {
+                var recipe = LuminaSheets.RecipeSheet[rec.ID];
+                var itemId = recipe.ItemResult.RowId;
+                var required = rec.Quantity * recipe.AmountResult;
+                var invCount = CraftingListUI.NumberOfIngredient(itemId);
+
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.Text($"{recipe.ItemResult.Value.Name.ToDalamudString()}");
+                ImGui.TableNextColumn();
+                ImGui.Text($"{required}");
+                ImGui.TableNextColumn();
+                ImGui.Text($"{invCount}");
+
+                bool hasEnoughInInv = invCount >= required;
+                if (hasEnoughInInv)
+                {
+                    var color = ImGuiColors.HealerGreen;
+                    color.W -= 0.3f;
+                    ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
+                }
+
+                if (RetainerInfo.ATools)
+                {
+                    ImGui.TableNextColumn();
+                    var retainerCount = RetainerInfo.GetRetainerItemCount(itemId);
+                    ImGui.Text($"{retainerCount}");
+
+                    bool hasEnoughWithRetainer = invCount + retainerCount >= required;
+                    if (!hasEnoughInInv && hasEnoughWithRetainer)
+                    {
+                        var color = ImGuiColors.DalamudOrange;
+                        color.W -= 0.6f;
+                        ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg1, ImGui.ColorConvertFloat4ToU32(color));
+                    }
+                }
+
+                if (showPrice)
+                {
+                    ImGui.TableNextColumn();
+                    if (!FinishedProductPrices.TryGetValue(itemId, out var lookup))
+                        FinishedProductPrices[itemId] = lookup = new MarketboardLookup();
+
+                    bool hasNpc = MarketboardPricing.TryGetNpcPrice(recipe.ItemResult.Value, out var npcUnitPrice);
+                    bool hasMaterialCost = TryGetMaterialCost(recipe, rec.Quantity, out var materialCost);
+
+                    if (lookup.Data != null)
+                    {
+                        var cheapest = MarketboardPricing.GetCheapestWorldCost(lookup.Data, required);
+                        var bestCost = cheapest.Cost;
+                        var label = $"{cheapest.World} - 价格 {cheapest.Cost:N0}, 数量 {cheapest.Qty}";
+
+                        if (hasMaterialCost && materialCost < bestCost)
+                        {
+                            bestCost = materialCost;
+                            label = "自制";
+                        }
+
+                        if (hasNpc && (double)npcUnitPrice * required < bestCost)
+                        {
+                            label = $"NPC商店 - 价格 {npcUnitPrice:N0}, 数量 不限";
+                        }
+
+                        ImGui.Text(label);
+                        if (label == "自制" && ImGui.IsItemHovered())
+                            ImGui.SetTooltip($"市场价约 {cheapest.Cost:N0}，自制材料成本约 {materialCost:N0}");
+                    }
+                    else if (lookup.FetchFailed)
+                    {
+                        if (hasNpc)
+                            ImGui.Text($"NPC商店 - 价格 {npcUnitPrice:N0}, 数量 不限");
+                        else if (hasMaterialCost)
+                            ImGui.Text("自制");
+                        else
+                            ImGui.Text("无法查询价格");
+                    }
+                    else if (ImGui.Button($"获取价格###Price{itemId}"))
+                    {
+                        MarketboardFetch.Fetch(itemId, onFailed: () => lookup.FetchFailed = true, onComplete: data => lookup.Data = data);
+                    }
+                }
+            }
+
+            ImGui.EndTable();
+        }
+    }
+
+    // Sums the cheapest way to buy every ingredient needed for `craftQuantity` crafts of this
+    // recipe (NPC vendor price if the ingredient has one and it's cheaper, otherwise the
+    // cheapest Universalis listing). Returns false if any ingredient's price isn't known yet,
+    // since an incomplete sum would understate the real material cost.
+    private bool TryGetMaterialCost(Recipe recipe, int craftQuantity, out double cost)
+    {
+        cost = 0;
+        if (Table == null) return false;
+
+        foreach (var ing in recipe.Ingredients().Where(x => x.Amount > 0 && x.Item.RowId != 0))
+        {
+            var neededQty = ing.Amount * craftQuantity;
+            var matchingIngredient = Table.ListItems.FirstOrDefault(x => x.Data.RowId == ing.Item.RowId);
+            var hasMarketPrice = matchingIngredient?.MarketboardData != null && matchingIngredient.MarketboardData.AllListings.Count > 0;
+            var marketCost = hasMarketPrice ? MarketboardPricing.GetCheapestWorldCost(matchingIngredient!.MarketboardData!, neededQty).Cost : (double?)null;
+
+            if (MarketboardPricing.TryGetNpcPrice(ing.Item, out var npcUnit))
+            {
+                var npcCost = (double)npcUnit * neededQty;
+                cost += marketCost.HasValue ? Math.Min(npcCost, marketCost.Value) : npcCost;
+                continue;
+            }
+
+            if (!hasMarketPrice) return false;
+            cost += marketCost!.Value;
+        }
+
+        return true;
+    }
 
     private void DrawCopyFromList()
     {
@@ -897,6 +1093,15 @@ internal class ListEditor : Window, IDisposable
 
         ImGui.SameLine();
         ImGui.Checkbox("启用颜色验证", ref ColourValidation);
+
+        if (P.Config.UseUniversalis && P.Config.UniversalisOnDemand)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("一键全搜索价格"))
+            {
+                IngredientTable.CheapestServerColumn.RequestAllPrices(Table.ListItems);
+            }
+        }
 
         ImGui.SameLine();
 

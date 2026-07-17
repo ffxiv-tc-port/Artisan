@@ -42,7 +42,41 @@ namespace Artisan.CraftingLists
                 {
                     ExportSelectedListToTC();
                 }
+
+                if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Paste, "从剪贴簿合并清单（Teamcraft格式）", new Vector2(ImGui.GetContentRegionAvail().X, 30), true))
+                {
+                    MergeClipboardIntoSelectedList();
+                }
             }
+        }
+
+        internal static void MergeClipboardIntoSelectedList()
+        {
+            if (CraftingListUI.selectedList.ID == 0)
+            {
+                Notify.Error("请先选择一个清单。");
+                return;
+            }
+
+            var clipboard = ImGui.GetClipboardText();
+            if (string.IsNullOrWhiteSpace(clipboard))
+            {
+                Notify.Error("剪贴簿是空的。");
+                return;
+            }
+
+            var before = CraftingListUI.selectedList.Recipes.Sum(x => x.Quantity);
+            MergeLinesIntoList(clipboard, CraftingListUI.selectedList, P.Config.DefaultListQuickSynth);
+            var after = CraftingListUI.selectedList.Recipes.Sum(x => x.Quantity);
+
+            if (after == before)
+            {
+                Notify.Error("剪贴簿内容没有可识别的物品，请检查格式。");
+                return;
+            }
+
+            P.Config.Save();
+            Notify.Success("已从剪贴簿合并到目前清单。");
         }
 
         private static void ExportSelectedListToTC()
@@ -187,84 +221,53 @@ namespace Artisan.CraftingLists
             if (string.IsNullOrEmpty(importListName) && string.IsNullOrEmpty(importListItems) && string.IsNullOrEmpty(importListPreCraft)) return null;
             NewCraftingList output = new NewCraftingList();
             output.Name = importListName;
-            using (System.IO.StringReader reader = new System.IO.StringReader(importListPreCraft))
-            {
-                string line = "";
-                while ((line = reader.ReadLine()!) != null)
-                {
-                    var parts = line.Split(" ", StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length < 2)
-                        continue;
-
-                    if (parts[0][^1] == 'x')
-                    {
-                        int numberOfItem = int.Parse(parts[0].Substring(0, parts[0].Length - 1));
-                        var builder = new StringBuilder();
-                        for (int i = 1; i < parts.Length; i++)
-                        {
-                            builder.Append(parts[i]);
-                            builder.Append(" ");
-                        }
-                        var item = builder.ToString().Trim();
-                        Svc.Log.Debug($"{numberOfItem} x {item}");
-
-                        var recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId > 0 && x.ItemResult.ValueNullable?.Name.ToDalamudString().ToString() == item);
-                        if (recipe?.RowId > 0)
-                        {
-                            int quantity = (int)Math.Ceiling(numberOfItem / (double)recipe.Value.AmountResult);
-                            if (output.Recipes.Any(x => x.ID == recipe.Value.RowId))
-                                output.Recipes.First(x => x.ID == recipe.Value.RowId).Quantity += quantity;
-                            else
-                                output.Recipes.Add(new ListItem() { ID = recipe.Value.RowId, Quantity = quantity, ListItemOptions = new() });
-
-                            if (precraftQS && recipe.Value.CanQuickSynth)
-                                output.Recipes.First(x => x.ID == recipe.Value.RowId).ListItemOptions.NQOnly = true;
-                        }
-                    }
-
-                }
-            }
-            using (System.IO.StringReader reader = new System.IO.StringReader(importListItems))
-            {
-                string line = "";
-                while ((line = reader.ReadLine()!) != null)
-                {
-                    var parts = line.Split(" ", StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length < 2)
-                        continue;
-
-                    if (parts[0][^1] == 'x')
-                    {
-                        int numberOfItem = int.Parse(parts[0].Substring(0, parts[0].Length - 1));
-                        var builder = new StringBuilder();
-                        for (int i = 1; i < parts.Length; i++)
-                        {
-                            builder.Append(parts[i]);
-                            builder.Append(" ");
-                        }
-                        var item = builder.ToString().Trim();
-                        if (DebugTab.Debug) Svc.Log.Debug($"{numberOfItem} x {item}");
-
-                        var recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId > 0 && x.ItemResult.ValueNullable?.Name.ToDalamudString().ToString() == item);
-                        if (recipe?.RowId > 0)
-                        {
-                            int quantity = (int)Math.Ceiling(numberOfItem / (double)recipe.Value.AmountResult);
-                            if (output.Recipes.Any(x => x.ID == recipe.Value.RowId))
-                                output.Recipes.First(x => x.ID == recipe.Value.RowId).Quantity += quantity;
-                            else
-                                output.Recipes.Add(new ListItem() { ID = recipe.Value.RowId, Quantity = quantity, ListItemOptions = new() });
-
-                            if (finalitemQS && recipe.Value.CanQuickSynth)
-                                output.Recipes.First(x => x.ID == recipe.Value.RowId).ListItemOptions.NQOnly = true;
-                        }
-                    }
-
-                }
-            }
+            MergeLinesIntoList(importListPreCraft, output, precraftQS);
+            MergeLinesIntoList(importListItems, output, finalitemQS);
 
             if (output.Recipes.Count == 0) return null;
 
             return output;
+        }
+
+        // Parses Teamcraft's "copy as text" format ("NxItem Name" per line) and merges
+        // the parsed quantities into an existing list, rather than always building a new one -
+        // shared by the full-list import window and the "merge from clipboard" button.
+        private static void MergeLinesIntoList(string text, NewCraftingList target, bool quickSynth)
+        {
+            using System.IO.StringReader reader = new(text);
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                var parts = line.Split(" ", StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 2)
+                    continue;
+
+                if (parts[0][^1] != 'x')
+                    continue;
+
+                int numberOfItem = int.Parse(parts[0].Substring(0, parts[0].Length - 1));
+                var builder = new StringBuilder();
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    builder.Append(parts[i]);
+                    builder.Append(" ");
+                }
+                var item = builder.ToString().Trim();
+                if (DebugTab.Debug) Svc.Log.Debug($"{numberOfItem} x {item}");
+
+                var recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId > 0 && x.ItemResult.ValueNullable?.Name.ToDalamudString().ToString() == item);
+                if (recipe?.RowId > 0)
+                {
+                    int quantity = (int)Math.Ceiling(numberOfItem / (double)recipe.Value.AmountResult);
+                    if (target.Recipes.Any(x => x.ID == recipe.Value.RowId))
+                        target.Recipes.First(x => x.ID == recipe.Value.RowId).Quantity += quantity;
+                    else
+                        target.Recipes.Add(new ListItem() { ID = recipe.Value.RowId, Quantity = quantity, ListItemOptions = new() });
+
+                    if (quickSynth && recipe.Value.CanQuickSynth)
+                        target.Recipes.First(x => x.ID == recipe.Value.RowId).ListItemOptions.NQOnly = true;
+                }
+            }
         }
     }
 }

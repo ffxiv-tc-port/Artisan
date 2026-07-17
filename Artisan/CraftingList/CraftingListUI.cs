@@ -146,7 +146,6 @@ namespace Artisan.CraftingLists
                 }
             }
 
-
             ImGui.EndChild();
 
             ImGui.BeginChild("TeamCraftSection", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 5f), false);

@@ -1,6 +1,7 @@
 ﻿using Artisan.CraftingLists;
 using Artisan.IPC;
 using Artisan.RawInformation;
+using Artisan.Universalis;
 using Dalamud.Interface.Colors;
 using ECommons;
 using ECommons.Automation;
@@ -327,6 +328,23 @@ namespace Artisan.UI.Tables
             public override float Width => _cheapestColumnWidth;
             public Dictionary<uint, (string World, double Qty, double Cost)> CheapestListings = new();
 
+            public static void RequestPrice(Ingredient item)
+            {
+                MarketboardFetch.Fetch(item.Data.RowId,
+                    onFailed: () => item.MarketboardFetchFailed = true,
+                    onComplete: data => item.MarketboardData = data);
+            }
+
+            // Fires off a price fetch for every row that still needs one - used by the
+            // "一键全搜索" bulk button so the user doesn't have to click each row individually.
+            public static void RequestAllPrices(IEnumerable<Ingredient> items)
+            {
+                foreach (var item in items.Where(x => x.MarketboardData == null && !x.MarketboardFetchFailed && x.Remaining > 0))
+                {
+                    RequestPrice(item);
+                }
+            }
+
             public override int Compare(Ingredient lhs, Ingredient rhs)
             {
                 var lh = lhs.MarketboardData?.LowestWorld;
@@ -343,41 +361,17 @@ namespace Artisan.UI.Tables
                 if (item.Remaining == 0) return $"无需购买";
                 if (item.MarketboardData != null && !CheapestListings.ContainsKey(item.Data.RowId))
                 {
-                    double totalCost = 0;
-                    double qty = 0;
-
-                    double currentWorldCost = 0;
-                    string currentWorld = "";
-                    double currentWorldQty = 0;
-
-                    foreach (var world in item.MarketboardData.AllListings.Select(x => x.World))
-                    {
-                        totalCost = 0;
-                        qty = 0;
-
-                        foreach (var listing in item.MarketboardData.AllListings.Where(x => x.World == world).OrderBy(x => x.TotalPrice))
-                        {
-                            if (qty >= item.Remaining) break;
-                            qty += listing.Quantity;
-                            totalCost += listing.TotalPrice;
-                        }
-
-                        if ((totalCost < currentWorldCost && qty >= item.Remaining) || currentWorldCost == 0 || (qty > currentWorldQty && qty < item.Remaining))
-                        {
-                            currentWorldCost = totalCost;
-                            currentWorld = world;
-                            currentWorldQty = qty;
-                        }
-                    }
-
-                    CheapestListings.TryAdd(item.Data.RowId, new(currentWorld, currentWorldQty, currentWorldCost));
-
-                    item.MarketboardData.LowestWorld = currentWorld;
+                    var cheapest = MarketboardPricing.GetCheapestWorldCost(item.MarketboardData, item.Remaining);
+                    CheapestListings.TryAdd(item.Data.RowId, (cheapest.World, cheapest.Qty, cheapest.Cost));
+                    item.MarketboardData.LowestWorld = cheapest.World;
                 }
 
                 if (CheapestListings.ContainsKey(item.Data.RowId))
                 {
                     var listing = CheapestListings[item.Data.RowId];
+
+                    if (MarketboardPricing.TryGetNpcPrice(item.Data, out var npcUnitPrice) && (double)npcUnitPrice * item.Remaining < listing.Cost)
+                        return $"NPC商店 - 价格 {npcUnitPrice.ToString("N0")}, 数量 不限";
 
                     return $"{listing.World} - 价格 {listing.Cost.ToString("N0")}, 数量 {listing.Qty}";
 
@@ -415,14 +409,16 @@ namespace Artisan.UI.Tables
                         return;
                     }
 
+                    if (item.MarketboardFetchFailed)
+                    {
+                        ImGui.Text($"无法查询价格");
+                        return;
+                    }
+
                     using var smallBtnStyle = ImRaii.PushStyle(ImGuiStyleVar.FramePadding, new Vector2(ImGui.GetStyle().FramePadding.X, 0));
                     if (ImGui.Button($"获取价格"))
                     {
-                        P.UniversalsisClient.PlayerWorld = Svc.ClientState.LocalPlayer?.CurrentWorld.RowId;
-                        if (P.Config.LimitUnversalisToDC)
-                            Task.Run(() => P.UniversalsisClient.GetDCData(item.Data.RowId, ref item.MarketboardData));
-                        else
-                            Task.Run(() => P.UniversalsisClient.GetRegionData(item.Data.RowId, ref item.MarketboardData));
+                        CheapestServerColumn.RequestPrice(item);
                     }
                 }
             }

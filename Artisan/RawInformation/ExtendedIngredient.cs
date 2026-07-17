@@ -38,6 +38,7 @@ namespace Artisan.RawInformation
         public Dictionary<uint, int> UsedInMaterialsListCount = new();
         public Dictionary<uint, List<Tuple<uint, int, int>>> SubSubMaterials = new();
         public MarketboardData? MarketboardData;
+        public bool MarketboardFetchFailed;
         public bool RecipeOnList;
         public IngredientHelpers IngredientHelper;
 

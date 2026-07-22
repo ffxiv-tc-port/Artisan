@@ -5,6 +5,7 @@ using Dalamud.Interface.Components;
 using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using ImGuiNET;
 using Lumina.Excel.Sheets;
 using PunishLib.ImGuiMethods;
@@ -27,23 +28,23 @@ namespace Artisan.CraftingLists
 
         internal static void DrawTeamCraftListButtons()
         {
-            string labelText = "Teamcraft 清单";
+            string labelText = "Teamcraft Lists".Loc();
             var labelLength = ImGui.CalcTextSize(labelText);
             ImGui.SetCursorPosX((ImGui.GetContentRegionMax().X - labelLength.X) * 0.5f);
             ImGui.TextColored(ImGuiColors.ParsedGreen, labelText);
-            if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Download, "导入", new Vector2(ImGui.GetContentRegionAvail().X, 30)))
+            if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Download, "Import".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 30)))
             {
                 openImportWindow = true;
             }
             OpenTeamcraftImportWindow();
             if (CraftingListUI.selectedList.ID != 0)
             {
-                if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Upload, "导出", new Vector2(ImGui.GetContentRegionAvail().X, 30), true))
+                if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Upload, "Export".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 30), true))
                 {
                     ExportSelectedListToTC();
                 }
 
-                if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Paste, "从剪贴簿合并清单（Teamcraft格式）", new Vector2(ImGui.GetContentRegionAvail().X, 30), true))
+                if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Paste, "Merge List From Clipboard (Teamcraft Export)".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 30), true))
                 {
                     MergeClipboardIntoSelectedList();
                 }
@@ -54,14 +55,14 @@ namespace Artisan.CraftingLists
         {
             if (CraftingListUI.selectedList.ID == 0)
             {
-                Notify.Error("请先选择一个清单。");
+                Notify.Error("Please select a list first.".Loc());
                 return;
             }
 
             var clipboard = ImGui.GetClipboardText();
             if (string.IsNullOrWhiteSpace(clipboard))
             {
-                Notify.Error("剪贴簿是空的。");
+                Notify.Error("Clipboard is empty.".Loc());
                 return;
             }
 
@@ -71,12 +72,12 @@ namespace Artisan.CraftingLists
 
             if (after == before)
             {
-                Notify.Error("剪贴簿内容没有可识别的物品，请检查格式。");
+                Notify.Error("The clipboard contains no recognisable items. Please check the format.".Loc());
                 return;
             }
 
             P.Config.Save();
-            Notify.Success("已从剪贴簿合并到目前清单。");
+            Notify.Success("Merged clipboard items into the current list.".Loc());
         }
 
         private static void ExportSelectedListToTC()
@@ -113,7 +114,7 @@ namespace Artisan.CraftingLists
 
             Svc.Log.Debug($"{baseUrl}{base64}");
             ImGui.SetClipboardText($"{baseUrl}{base64}");
-            Notify.Success("链接已复制到剪贴板");
+            Notify.Success("Link copied to clipboard".Loc());
         }
 
         private static void ExtractRecipes(List<ListItem> sublist, Recipe recipe)
@@ -150,34 +151,34 @@ namespace Artisan.CraftingLists
 
             ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.2f, 0.1f, 0.2f, 1f));
             ImGui.SetNextWindowSize(new Vector2(1, 1), ImGuiCond.Appearing);
-            if (ImGui.Begin("Teamcraft 导入###TCImport", ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.AlwaysAutoResize))
+            if (ImGui.Begin("Teamcraft Import".Loc() + "###TCImport", ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.AlwaysAutoResize))
             {
-                ImGui.Text("清单名称");
+                ImGui.Text("List Name".Loc());
                 ImGui.SameLine();
-                ImGuiComponents.HelpMarker("导入清单指南。\r\n\r\n" +
-                    "步骤 1. 在 Teamcraft 上打开一个包含您想要制作的物品的列表。\r\n\r\n" +
-                    "步骤 2. 找到预制作部分并点击“复制为文本”按钮。\r\n\r\n" +
-                    "步骤 3. 将内容粘贴到此窗口的前置配方物品中。\r\n\r\n" +
-                    "步骤 4. 重复步骤 2 和 3，但用于成品部分。\r\n\r\n" +
-                    "步骤 5. 为您的列表命名并点击导入。");
+                ImGuiComponents.HelpMarker(("Guide to importing lists.\n\n" +
+                    "Step 1. Open a list on Teamcraft with the items you wish to craft.\n\n" +
+                    "Step 2. Find the pre crafts section and click the \"Copy as Text\" button.\n\n" +
+                    "Step 3. Paste into the Pre-Craft Items box in this window.\n\n" +
+                    "Step 4. Repeat Step 2 & 3 but for the final items section.\n\n" +
+                    "Step 5. Give your list a name and click import.").Loc());
                 ImGui.InputText("###ImportListName", ref importListName, 50);
-                ImGui.Text("前置配方物品");
+                ImGui.Text("Pre-craft Items".Loc());
                 ImGui.InputTextMultiline("###PrecraftItems", ref importListPreCraft, 5000000, new Vector2(ImGui.GetContentRegionAvail().X, 100));
 
                 if (!P.Config.DefaultListQuickSynth)
-                    ImGui.Checkbox("导入为简易制作###ImportQSPre", ref precraftQS);
+                    ImGui.Checkbox("Import as Quick Synth".Loc() + "###ImportQSPre", ref precraftQS);
                 else
-                    ImGui.TextWrapped($@"由于默认设置已启用，这些物品将尝试被添加为简易制作。");
-                ImGui.Text("成品");
+                    ImGui.TextWrapped("These items will try to be added as quick synth due to the default setting being enabled.".Loc());
+                ImGui.Text("Final Items".Loc());
                 ImGui.InputTextMultiline("###FinalItems", ref importListItems, 5000000, new Vector2(ImGui.GetContentRegionAvail().X, 100));
                 if (!P.Config.DefaultListQuickSynth)
-                    ImGui.Checkbox("导入为简易制作###ImportQSFinal", ref finalitemQS);
+                    ImGui.Checkbox("Import as Quick Synth".Loc() + "###ImportQSFinal", ref finalitemQS);
                 else
-                    ImGui.TextWrapped($@"由于默认设置已启用，这些物品将尝试被添加为简易制作。");
+                    ImGui.TextWrapped("These items will try to be added as quick synth due to the default setting being enabled.".Loc());
 
                 try
                 {
-                    if (ImGui.Button("导入"))
+                    if (ImGui.Button("Import".Loc()))
                     {
                         NewCraftingList? importedList = ParseImport(precraftQS, finalitemQS);
                         if (importedList is not null)
@@ -194,7 +195,7 @@ namespace Artisan.CraftingLists
                         }
                         else
                         {
-                            Notify.Error("此导入清单没有物品，请检查并重试。");
+                            Notify.Error("The imported list has no items. Please check your import and try again.".Loc());
                         }
 
                     }
@@ -204,7 +205,7 @@ namespace Artisan.CraftingLists
                     ex.Log();
                 }
                 ImGui.SameLine();
-                if (ImGui.Button("取消"))
+                if (ImGui.Button("Cancel".Loc()))
                 {
                     openImportWindow = false;
                     importListName = "";

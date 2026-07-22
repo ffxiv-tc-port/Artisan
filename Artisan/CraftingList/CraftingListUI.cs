@@ -12,6 +12,7 @@ using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.GameHelpers;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using ECommons.Reflection;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using ImGuiNET;
@@ -54,11 +55,11 @@ namespace Artisan.CraftingLists
 
         internal static void Draw()
         {
-            ImGui.TextWrapped($"制作清单是将不同的制作品按队列排序依次制作的绝佳方式。请使用底部的按钮导入Teamcraft清单来创建制作清单，或单击“+”图标并命名来创建制作清单。" +
-                              $" 你也可以右键单击游戏配方菜单中的某个物品，如果未选择它，则将其添加到新清单中，或者如果未选择清单，则将其作为第一个物品创建新清单。");
+            ImGui.TextWrapped(("Crafting lists are a fantastic way to queue up different crafts and have them craft one-by-one. Create a list by importing from Teamcraft using the button at the bottom, or click the '+' icon and give your list a name." +
+                              " You can also right click an item from the game's recipe menu to either add it to a new list if one is not selected, or to create a new list with it as the first item if a list is not selected.").Loc());
 
             ImGui.Dummy(new Vector2(0, 14f));
-            ImGui.TextWrapped("左键单击清单打开编辑器。右键单击清单将其选中而不打开编辑器。");
+            ImGui.TextWrapped("Left click a list to open the editor. Right click a list to select it without opening the editor.".Loc());
 
             ImGui.Separator();
 
@@ -78,7 +79,7 @@ namespace Artisan.CraftingLists
                 if (Endurance.Enable || Processing)
                     ImGui.BeginDisabled();
 
-                if (ImGui.Button("启动清单制作", new Vector2(ImGui.GetContentRegionAvail().X, 30)))
+                if (ImGui.Button("Start Crafting List".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 30)))
                 {
                     StartList();
                 }
@@ -118,7 +119,7 @@ namespace Artisan.CraftingLists
                     ImGui.EndDisabled();
             }
 
-            if (ImGui.Button("从剪贴板导入清单（Artisan导出）", new Vector2(ImGui.GetContentRegionAvail().X, 30)))
+            if (ImGui.Button("Import List From Clipboard (Artisan Export)".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 30)))
             {
                 try
                 {
@@ -132,12 +133,12 @@ namespace Artisan.CraftingLists
                         }
                         else
                         {
-                            Notify.Error("无效的导入字符串。");
+                            Notify.Error("Invalid import string.".Loc());
                         }
                     }
                     else
                     {
-                        Notify.Error("剪贴板无数据。");
+                        Notify.Error("Clipboard is empty.".Loc());
                     }
                 }
                 catch (Exception ex)

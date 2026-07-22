@@ -12,6 +12,7 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using ECommons.Logging;
 using ImGuiNET;
 using System;
@@ -76,7 +77,7 @@ namespace Artisan.UI
             if (!P.Config.DisableHighlightedAction)
                 Hotbars.MakeButtonsGlow(CraftingProcessor.NextRec.Action);
 
-            if (ImGuiEx.AddHeaderIcon("OpenConfig", FontAwesomeIcon.Cog, new ImGuiEx.HeaderIconOptions() { Tooltip = "打开设置" }))
+            if (ImGuiEx.AddHeaderIcon("OpenConfig", FontAwesomeIcon.Cog, new ImGuiEx.HeaderIconOptions() { Tooltip = "Open Config".Loc() }))
             {
                 P.PluginUi.IsOpen = true;
             }
@@ -84,11 +85,11 @@ namespace Artisan.UI
             if (Crafting.CurCraft != null && !Crafting.CurCraft.CraftExpert && Crafting.CurRecipe?.SecretRecipeBook.RowId > 0 && Crafting.CurCraft?.CraftLevel == Crafting.CurCraft?.StatLevel && !CraftingProcessor.ActiveSolver.IsType<MacroSolver>())
             {
                 ImGui.Dummy(new System.Numerics.Vector2(12f));
-                ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "这是当前等级的高难度配方。成功率可能会不稳定，建议使用Artisan的宏功能或手动完成该配方。");
+                ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "This is a current level master recipe. Your success rate may vary so it is recommended to use an Artisan macro or manually solve this.".Loc());
             }
 
             bool autoMode = P.Config.AutoMode;
-            if (ImGui.Checkbox("自动制作模式", ref autoMode))
+            if (ImGui.Checkbox("Auto Action Mode".Loc(), ref autoMode))
             {
                 P.Config.AutoMode = autoMode;
                 P.Config.Save();
@@ -98,7 +99,7 @@ namespace Artisan.UI
             {
                 var delay = P.Config.AutoDelay;
                 ImGui.PushItemWidth(200);
-                if (ImGui.SliderInt("设置延迟（毫秒）", ref delay, 0, 1000))
+                if (ImGui.SliderInt("Set delay (ms)".Loc(), ref delay, 0, 1000))
                 {
                     if (delay < 0) delay = 0;
                     if (delay > 1000) delay = 1000;
@@ -110,7 +111,7 @@ namespace Artisan.UI
 
             if (Endurance.RecipeID != 0 && !CraftingListUI.Processing && Endurance.Enable)
             {
-                if (ImGui.Button("禁用耐力模式"))
+                if (ImGui.Button("Disable Endurance".Loc()))
                 {
                     Endurance.ToggleEndurance(false);
                     P.TM.Abort();
@@ -120,38 +121,38 @@ namespace Artisan.UI
             }
 
             if (!Endurance.Enable && Crafting.IsTrial)
-                ImGui.Checkbox("重复制作练习", ref RepeatTrial);
+                ImGui.Checkbox("Trial Craft Repeat".Loc(), ref RepeatTrial);
 
             if (CraftingProcessor.ActiveSolver)
             {
-                var text = $"使用[{CraftingProcessor.ActiveSolver.Name}]";
+                var text = "Using ??".Loc(CraftingProcessor.ActiveSolver.Name);
                 if (CraftingProcessor.NextRec.Comment.Length > 0)
                     text += $" ({CraftingProcessor.NextRec.Comment})";
                 ImGuiEx.TextWrapped(text.Replace("%", ""));
             }
 
             if (P.Config.CraftingX && Endurance.Enable)
-                ImGui.Text($"剩余制作：{P.Config.CraftX}");
+                ImGui.Text("Remaining Crafts: ??".Loc(P.Config.CraftX));
 
             if (_estimatedCraftEnd != default)
             {
                 var diff = _estimatedCraftEnd - DateTime.Now;
                 string duration = string.Format("{0:D2}h {1:D2}m {2:D2}s", diff.Hours, diff.Minutes, diff.Seconds);
-                ImGui.Text($"大致剩余时间：{duration}");
+                ImGui.Text("Approximate Remaining Duration: ??".Loc(duration));
             }
 
             if (!P.Config.AutoMode)
             {
-                ImGui.Text("半手动模式");
+                ImGui.Text("Semi-Manual Mode".Loc());
 
                 var action = CraftingProcessor.NextRec.Action;
                 using var disable = ImRaii.Disabled(action == Skills.None);
 
-                if (ImGui.Button("执行建议的操作"))
+                if (ImGui.Button("Execute recommended action".Loc()))
                 {
                     ActionManagerEx.UseSkill(action);
                 }
-                if (ImGui.Button("获取建议"))
+                if (ImGui.Button("Fetch Recommendation".Loc()))
                 {
                     ShowRecommendation(action);
                 }
@@ -163,7 +164,7 @@ namespace Artisan.UI
             if (!P.Config.DisableToasts)
             {
                 QuestToastOptions options = new() { IconId = action.IconOfAction(CharacterInfo.JobID) };
-                Svc.Toasts.ShowQuest($"使用{action.NameOfAction()}", options);
+                Svc.Toasts.ShowQuest("Use ??".Loc(action.NameOfAction()), options);
             }
         }
 
@@ -179,7 +180,7 @@ namespace Artisan.UI
 
         private void OnSolverFailed(Lumina.Excel.Sheets.Recipe recipe, string reason)
         {
-            var text = $"{reason}. Artisan不会继续。";
+            var text = "??. Artisan will not continue.".Loc(reason);
             Svc.Toasts.ShowError(text);
             DuoLog.Error(text);
         }

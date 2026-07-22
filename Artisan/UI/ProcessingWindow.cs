@@ -3,6 +3,7 @@ using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Dalamud.Interface.Windowing;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using ImGuiNET;
 using System;
 
@@ -10,7 +11,7 @@ namespace Artisan.UI
 {
     internal class ProcessingWindow : Window
     {
-        public ProcessingWindow() : base("Processing List###ProcessingList", ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoCollapse)
+        public ProcessingWindow() : base("Processing List".Loc() + "###ProcessingList", ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoCollapse)
         {
             IsOpen = true;
             ShowCloseButton = false;
@@ -55,23 +56,23 @@ namespace Artisan.UI
                 //    P.PluginUi.IsOpen = true;
                 //}
 
-                ImGui.Text($"Now Processing: {CraftingListUI.selectedList.Name}");
+                ImGui.Text("Now Processing: ??".Loc(CraftingListUI.selectedList.Name));
                 ImGui.Separator();
                 ImGui.Spacing();
                 if (CraftingListUI.CurrentProcessedItem != 0)
                 {
-                    ImGuiEx.TextV($"Crafting: {LuminaSheets.RecipeSheet[CraftingListUI.CurrentProcessedItem].ItemResult.Value.Name.ToDalamudString().ToString()}");
-                    ImGuiEx.TextV($"Current Item Progress: {CraftingListUI.CurrentProcessedItemCount} / {CraftingListUI.CurrentProcessedItemListCount}");
-                    ImGuiEx.TextV($"Overall List Progress: {CraftingListFunctions.CurrentIndex + 1} / {CraftingListUI.selectedList.ExpandedList.Count}");
+                    ImGuiEx.TextV("Crafting: ??".Loc(LuminaSheets.RecipeSheet[CraftingListUI.CurrentProcessedItem].ItemResult.Value.Name.ToDalamudString().ToString()));
+                    ImGuiEx.TextV("Current Item Progress: ?? / ??".Loc(CraftingListUI.CurrentProcessedItemCount, CraftingListUI.CurrentProcessedItemListCount));
+                    ImGuiEx.TextV("Overall List Progress: ?? / ??".Loc(CraftingListFunctions.CurrentIndex + 1, CraftingListUI.selectedList.ExpandedList.Count));
 
-                    string duration = CraftingListFunctions.ListEndTime == TimeSpan.Zero ? "Unknown" : string.Format("{0:D2}d {1:D2}h {2:D2}m {3:D2}s", CraftingListFunctions.ListEndTime.Days, CraftingListFunctions.ListEndTime.Hours, CraftingListFunctions.ListEndTime.Minutes, CraftingListFunctions.ListEndTime.Seconds);
-                    ImGuiEx.TextV($"Approximate Remaining Duration: {duration}");
+                    string duration = CraftingListFunctions.ListEndTime == TimeSpan.Zero ? "Unknown".Loc() : string.Format("{0:D2}d {1:D2}h {2:D2}m {3:D2}s", CraftingListFunctions.ListEndTime.Days, CraftingListFunctions.ListEndTime.Hours, CraftingListFunctions.ListEndTime.Minutes, CraftingListFunctions.ListEndTime.Seconds);
+                    ImGuiEx.TextV("Approximate Remaining Duration: ??".Loc(duration));
 
                 }
 
                 if (!CraftingListFunctions.Paused)
                 {
-                    if (ImGui.Button("Pause"))
+                    if (ImGui.Button("Pause".Loc()))
                     {
                         CraftingListFunctions.Paused = true;
                         P.TM.Abort();
@@ -81,7 +82,7 @@ namespace Artisan.UI
                 }
                 else
                 {
-                    if (ImGui.Button("Resume"))
+                    if (ImGui.Button("Resume".Loc()))
                     {
                         if (Crafting.CurState is Crafting.State.IdleNormal or Crafting.State.IdleBetween)
                         {
@@ -94,7 +95,7 @@ namespace Artisan.UI
                 }
 
                 ImGui.SameLine();
-                if (ImGui.Button("Cancel"))
+                if (ImGui.Button("Cancel".Loc()))
                 {
                     CraftingListUI.Processing = false;
                     CraftingListFunctions.Paused = false;

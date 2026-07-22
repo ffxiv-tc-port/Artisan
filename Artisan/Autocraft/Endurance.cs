@@ -13,6 +13,7 @@ using ECommons.CircularBuffers;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using ECommons.Logging;
 using ImGuiNET;
 using Lumina.Excel.Sheets;
@@ -71,7 +72,7 @@ namespace Artisan.Autocraft
 
         internal static string RecipeName
         {
-            get => RecipeID == 0 ? "未选中配方" : LuminaSheets.RecipeSheet[RecipeID].ItemResult.Value.Name.ToDalamudString().ToString().Trim();
+            get => RecipeID == 0 ? "No Recipe Selected".Loc() : LuminaSheets.RecipeSheet[RecipeID].ItemResult.Value.Name.ToDalamudString().ToString().Trim();
         }
 
         internal static void ToggleEndurance(bool enable)
@@ -99,24 +100,24 @@ namespace Artisan.Autocraft
         {
             if (CraftingListUI.Processing)
             {
-                ImGui.TextWrapped("正在处理清单...");
+                ImGui.TextWrapped("Processing list...".Loc());
                 return;
             }
 
-            ImGui.TextWrapped("耐力模式是Artisan一遍又一遍地重复制作相同配方的方式，直到完成指定数量或用完素材。它具有完整的功能：当身上的某件装备低于设定的耐久度会自动修理你的装备、可以自动使用食物/药水/指南、装备精炼度满值时精制魔晶石。请注意，这里的设置是独立的，不会影响制作清单的设置，仅用于重复制作一件物品。");
+            ImGui.TextWrapped("Endurance mode is Artisan's way to repeat the same craft over and over, either so many times or until you run out of materials. It has full capabilities to automatically repair your gear once a piece is under a certain percentage, use food/potions/exp manuals and extract materia from spiritbonding. Please note these settings are independent of crafting list settings, and only intended to be used to craft the one item repeatedly.".Loc());
             ImGui.Separator();
             ImGui.Spacing();
 
             if (RecipeID == 0)
             {
-                ImGuiEx.TextV(ImGuiColors.DalamudRed, "未选中配方");
+                ImGuiEx.TextV(ImGuiColors.DalamudRed, "No recipe selected".Loc());
             }
             else
             {
                 if (!CraftingListFunctions.HasItemsForRecipe(RecipeID))
                     ImGui.BeginDisabled();
 
-                if (ImGui.Checkbox("启用耐力模式", ref enable))
+                if (ImGui.Checkbox("Enable Endurance Mode".Loc(), ref enable))
                 {
                     ToggleEndurance(enable);
                 }
@@ -128,23 +129,23 @@ namespace Artisan.Autocraft
                     if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                     {
                         ImGui.BeginTooltip();
-                        ImGui.Text($"你不能开始耐力模式，因为你没有制作这个配方的素材。");
+                        ImGui.Text("You cannot start Endurance as you do not possess ingredients to craft this recipe.".Loc());
                         ImGui.EndTooltip();
                     }
                 }
 
-                ImGuiComponents.HelpMarker("为了开始耐力模式制作，你应该先在制作菜单中选择一个配方。\n耐力模式将自动地重复制作选择的配方，并且会考虑维持指定的食物/药物buff。");
+                ImGuiComponents.HelpMarker("In order to begin Endurance Mode crafting you should first select the recipe in the crafting menu.\nEndurance Mode will automatically repeat the selected recipe similar to Auto-Craft but will factor in food/medicine buffs before doing so.".Loc());
 
-                ImGuiEx.Text($"配方：{RecipeName} {(RecipeID != 0 ? $"({LuminaSheets.ClassJobSheet[LuminaSheets.RecipeSheet[RecipeID].CraftType.RowId + 8].Abbreviation})" : "")}");
+                ImGuiEx.Text("Recipe: ?? ??".Loc(RecipeName, RecipeID != 0 ? $"({LuminaSheets.ClassJobSheet[LuminaSheets.RecipeSheet[RecipeID].CraftType.RowId + 8].Abbreviation})" : ""));
             }
 
             bool repairs = P.Config.Repair;
-            if (ImGui.Checkbox("自动修理", ref repairs))
+            if (ImGui.Checkbox("Automatic Repairs".Loc(), ref repairs))
             {
                 P.Config.Repair = repairs;
                 P.Config.Save();
             }
-            ImGuiComponents.HelpMarker($"如果启用，当任何部位的装备达到设置的修复阈值时，Artisan将自动修复你的装备。\n\n当前装备的最小耐久度为 {RepairManager.GetMinEquippedPercent()}% ，在修理工处修理的价格为 {RepairManager.GetNPCRepairPrice()} 金币。\n\n如果无法用暗物质修理，将尝试使用附近的修理NPC。");
+            ImGuiComponents.HelpMarker("If enabled, Artisan will automatically repair your gear when any piece reaches the configured repair threshold.\n\nCurrent min gear condition is ??% and cost to repair at a vendor is ?? gil.\n\nIf unable to repair with Dark Matter, will try for a nearby repair NPC.".Loc(RepairManager.GetMinEquippedPercent(), RepairManager.GetNPCRepairPrice()));
             if (P.Config.Repair)
             {
                 //ImGui.SameLine();
@@ -161,7 +162,7 @@ namespace Artisan.Autocraft
                 ImGui.BeginDisabled();
 
             bool materia = P.Config.Materia;
-            if (ImGui.Checkbox("自动精制魔晶石", ref materia))
+            if (ImGui.Checkbox("Automatically Extract Materia".Loc(), ref materia))
             {
                 P.Config.Materia = materia;
                 P.Config.Save();
@@ -171,15 +172,15 @@ namespace Artisan.Autocraft
             {
                 ImGui.EndDisabled();
 
-                ImGuiComponents.HelpMarker("此角色尚未解锁精制魔晶石。此设置将被忽略。");
+                ImGuiComponents.HelpMarker("This character has not unlocked materia extraction. This setting will be ignored.".Loc());
             }
             else
-                ImGuiComponents.HelpMarker("一旦装备的精炼度达到100%，就会自动从装备中精致魔晶石。");
+                ImGuiComponents.HelpMarker("Will automatically extract materia from any equipped gear once it's spiritbond is 100%".Loc());
 
-            ImGui.Checkbox("指定制作次数", ref P.Config.CraftingX);
+            ImGui.Checkbox("Craft only X times".Loc(), ref P.Config.CraftingX);
             if (P.Config.CraftingX)
             {
-                ImGui.Text("次数：");
+                ImGui.Text("Number of Times:".Loc());
                 ImGui.SameLine();
                 ImGui.PushItemWidth(200);
                 if (ImGui.InputInt("###TimesRepeat", ref P.Config.CraftX))
@@ -189,31 +190,31 @@ namespace Artisan.Autocraft
                 }
             }
 
-            if (ImGui.Checkbox("尽可能使用简易制作", ref P.Config.QuickSynthMode))
+            if (ImGui.Checkbox("Use Quick Synthesis where possible".Loc(), ref P.Config.QuickSynthMode))
             {
                 P.Config.Save();
             }
 
             bool stopIfFail = P.Config.EnduranceStopFail;
-            if (ImGui.Checkbox("制作失败时自动停止耐力模式。", ref stopIfFail))
+            if (ImGui.Checkbox("Disable Endurance Mode Upon Failed Craft".Loc(), ref stopIfFail))
             {
                 P.Config.EnduranceStopFail = stopIfFail;
                 P.Config.Save();
             }
 
             bool stopIfNQ = P.Config.EnduranceStopNQ;
-            if (ImGui.Checkbox("制作出NQ装备时自动停止耐力模式。", ref stopIfNQ))
+            if (ImGui.Checkbox("Disable Endurance Mode Upon Crafting an NQ item".Loc(), ref stopIfNQ))
             {
                 P.Config.EnduranceStopNQ = stopIfNQ;
                 P.Config.Save();
             }
 
-            if (ImGui.Checkbox("最大数量模式", ref P.Config.MaxQuantityMode))
+            if (ImGui.Checkbox("Max Quantity Mode".Loc(), ref P.Config.MaxQuantityMode))
             {
                 P.Config.Save();
             }
 
-            ImGuiComponents.HelpMarker("将为你设置素材，以最大限度地增加制品数量。");
+            ImGuiComponents.HelpMarker("Will set ingredients for you, to maximise the amount of crafts possible.".Loc());
         }
 
         internal static void DrawRecipeData()
@@ -297,7 +298,7 @@ namespace Artisan.Autocraft
                 {
                     ToggleEndurance(false);
                     P.Config.CraftingX = false;
-                    DuoLog.Information("Craft X has completed.");
+                    DuoLog.Information("Craft X has completed.".Loc());
                     if (P.Config.PlaySoundFinishEndurance)
                         SoundPlayer.PlaySound();
 
@@ -306,8 +307,8 @@ namespace Artisan.Autocraft
 
                 if (RecipeID == 0)
                 {
-                    Svc.Toasts.ShowError("No recipe has been set for Endurance mode. Disabling Endurance mode.");
-                    DuoLog.Error("No recipe has been set for Endurance mode. Disabling Endurance mode.");
+                    Svc.Toasts.ShowError("No recipe has been set for Endurance mode. Disabling Endurance mode.".Loc());
+                    DuoLog.Error("No recipe has been set for Endurance mode. Disabling Endurance mode.".Loc());
                     ToggleEndurance(false);
                     return;
                 }
@@ -403,11 +404,11 @@ namespace Artisan.Autocraft
                                         {
                                             if (!IPCOverride)
                                             {
-                                                DuoLog.Error($"Unable to start crafting. Disabling Endurance. {(!P.Config.MaxQuantityMode ? "Please enable Max Quantity mode or set your ingredients before starting." : "")}");
+                                                DuoLog.Error("Unable to start crafting. Disabling Endurance. ??".Loc(!P.Config.MaxQuantityMode ? "Please enable Max Quantity mode or set your ingredients before starting.".Loc() : ""));
                                             }
                                             else
                                             {
-                                                DuoLog.Error($"Something has gone wrong whilst another plugin tried to control Artisan. Disabling Endurance.");
+                                                DuoLog.Error("Something has gone wrong whilst another plugin tried to control Artisan. Disabling Endurance.".Loc());
                                             }
                                             ToggleEndurance(false);
                                         }
@@ -451,8 +452,8 @@ namespace Artisan.Autocraft
                 Svc.Log.Warning($"Error Warnings [{Errors.Count(x => x > Environment.TickCount64 - 10 * 1000)}]: {message}");
                 if (Errors.Count() >= 5 && Errors.All(x => x > Environment.TickCount64 - 10 * 1000))
                 {
-                    Svc.Toasts.ShowError($"Current crafting mode has been {(Enable ? "disabled" : "paused")} due to too many errors in succession.");
-                    DuoLog.Error($"Current crafting mode has been {(Enable ? "disabled" : "paused")} due to too many errors in succession.");
+                    Svc.Toasts.ShowError("Current crafting mode has been ?? due to too many errors in succession.".Loc(Enable ? "disabled".Loc() : "paused".Loc()));
+                    DuoLog.Error("Current crafting mode has been ?? due to too many errors in succession.".Loc(Enable ? "disabled".Loc() : "paused".Loc()));
                     if (enable)
                         ToggleEndurance(false);
                     if (CraftingListUI.Processing)

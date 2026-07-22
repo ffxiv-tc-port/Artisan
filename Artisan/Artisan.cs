@@ -16,6 +16,7 @@ using Dalamud.Plugin;
 using ECommons;
 using ECommons.Automation.LegacyTaskManager;
 using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using ECommons.Logging;
 using OtterGui.Classes;
 using PunishLib;
@@ -45,6 +46,7 @@ public unsafe class Artisan : IDalamudPlugin
     public Artisan(IDalamudPluginInterface pluginInterface)
     {
         ECommonsMain.Init(pluginInterface, this, Module.All);
+        ECommons.LanguageHelpers.Localization.Init("ChineseTraditional");
         PunishLibMain.Init(pluginInterface, "Artisan", new AboutPlugin() { Sponsor = "https://ko-fi.com/taurenkey" });
         P = this;
 
@@ -66,18 +68,18 @@ public unsafe class Artisan : IDalamudPlugin
 
         Svc.Commands.AddHandler(commandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开Artisan主窗口。\n" +
-            "/artisan lists → 打开制作清单设置窗口。\n" +
-            "/artisan lists <ID> → 按ID打开指定的制作清单。\n" +
-            "/artisan lists <ID> start → 按ID开始指定的制作清单。\n" +
-            "/artisan macros → 打开宏设置窗口。\n" +
-            "/artisan macros <ID> → 按ID打开指定的宏。\n" +
-            "/artisan endurance → 打开耐力模式设置窗口。\n" +
-            "/artisan endurance start|stop → 开始或停止耐力模式。\n" +
-            "/artisan settings → 打开插件设置窗口。\n" +
-            "/artisan workshops → 打开部队工房设置窗口。\n" +
-            "/artisan builder → 打开清单生成器窗口。\n" +
-            "/artisan automode → 开关自动制作模式。",
+            HelpMessage = "Opens the Artisan menu.".Loc() + "\n" +
+            "/artisan lists → Open Lists.".Loc() + "\n" +
+            "/artisan lists <ID> → Opens specific list by ID.".Loc() + "\n" +
+            "/artisan lists <ID> start → Starts specific list by ID.".Loc() + "\n" +
+            "/artisan macros → Open Macros.".Loc() + "\n" +
+            "/artisan macros <ID> → Opens specific macro by ID.".Loc() + "\n" +
+            "/artisan endurance → Open Endurance.".Loc() + "\n" +
+            "/artisan endurance start|stop → Starts or stops endurance mode.".Loc() + "\n" +
+            "/artisan settings → Open Settings.".Loc() + "\n" +
+            "/artisan workshops → Open FC Workshops.".Loc() + "\n" +
+            "/artisan builder → Open List Builder.".Loc() + "\n" +
+            "/artisan automode → Toggles Automatic Action Execution Mode on/off.".Loc(),
             ShowInHelp = true,
         });
 
@@ -298,19 +300,19 @@ public unsafe class Artisan : IDalamudPlugin
                         }
                         else
                         {
-                            DuoLog.Error("List ID does not exist.");
+                            DuoLog.Error("List ID does not exist.".Loc());
                             return;
                         }
                     }
                     else
                     {
-                        DuoLog.Error("Unable to parse ID as a number.");
+                        DuoLog.Error("Unable to parse ID as a number.".Loc());
                         return;
                     }
                 }
                 else
                 {
-                    DuoLog.Error("Unable to open list whilst processing.");
+                    DuoLog.Error("Unable to open list whilst processing.".Loc());
                     return;
                 }
             }
@@ -329,19 +331,19 @@ public unsafe class Artisan : IDalamudPlugin
                         }
                         else
                         {
-                            DuoLog.Error("Macro ID does not exist.");
+                            DuoLog.Error("Macro ID does not exist.".Loc());
                             return;
                         }
                     }
                     else
                     {
-                        DuoLog.Error("Unable to parse ID as a number.");
+                        DuoLog.Error("Unable to parse ID as a number.".Loc());
                         return;
                     }
                 }
                 else
                 {
-                    DuoLog.Error("Unable to open edit macros whilst crafting.");
+                    DuoLog.Error("Unable to open edit macros whilst crafting.".Loc());
                     return;
                 }
             }
@@ -352,17 +354,17 @@ public unsafe class Artisan : IDalamudPlugin
                 {
                     if (CraftingListUI.Processing)
                     {
-                        DuoLog.Error("Cannot start endurance whilst processing a list.");
+                        DuoLog.Error("Cannot start endurance whilst processing a list.".Loc());
                         return;
                     }
                     if (Endurance.RecipeID == 0)
                     {
-                        DuoLog.Error("Cannot start endurance without setting a recipe.");
+                        DuoLog.Error("Cannot start endurance without setting a recipe.".Loc());
                         return;
                     }
                     if (!CraftingListFunctions.HasItemsForRecipe(Endurance.RecipeID))
                     {
-                        DuoLog.Error("Cannot start endurance as you do not possess all ingredients for your recipe in your inventory.");
+                        DuoLog.Error("Cannot start endurance as you do not possess all ingredients for your recipe in your inventory.".Loc());
                         return;
                     }
 
@@ -377,7 +379,7 @@ public unsafe class Artisan : IDalamudPlugin
                 {
                     if (!Endurance.Enable)
                     {
-                        DuoLog.Error("Endurance is not running so cannot be stopped.");
+                        DuoLog.Error("Endurance is not running so cannot be stopped.".Loc());
                         return;
                     }
                     if (Endurance.Enable)

@@ -98,6 +98,9 @@
     <None Update="Images\ThemeCraftingWindowExample.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="LanguageChineseTraditional.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="raphael-cli.exe">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

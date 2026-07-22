@@ -7,6 +7,7 @@ using ECommons;
 using ECommons.Automation;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using ECommons.Reflection;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
@@ -41,18 +42,18 @@ namespace Artisan.UI.Tables
         private static float _numberForSaleWidth = 100;
 
         public readonly IdColumn _idColumn = new() { Label = "ID" };
-        public readonly NameColumn _nameColumn = new() { Label = "物品名称" };
-        public readonly RequiredColumn _requiredColumn = new() { Label = "所需数量" };
-        public readonly InventoryCountColumn _inventoryColumn = new() { Label = "库存" };
-        public readonly RetainerCountColumn _retainerColumn = new() { Label = "雇员" };
-        public readonly RemaingCountColumn _remainingColumn = new() { Label = "剩余需求" };
-        public readonly CraftableColumn _craftableColumn = new() { Label = "来源" };
-        public readonly CraftableCountColumn _craftableCountColumn = new() { Label = "可制作数量" };
-        public readonly CraftItemsColumn _craftItemsColumn = new() { Label = "用于制作" };
-        public readonly ItemCategoryColumn _itemCategoryColumn = new() { Label = "分类" };
-        public readonly GatherItemLocationColumn _gatherItemLocationColumn = new() { Label = "采集区域" };
-        public readonly CheapestServerColumn _cheapestServerColumn = new() { Label = "最佳购买服务器" };
-        public readonly NumberForSaleColumn _numberForSaleColumn = new() { Label = "出售数量（所有服务器）" };
+        public readonly NameColumn _nameColumn = new() { Label = "Item Name".Loc() };
+        public readonly RequiredColumn _requiredColumn = new() { Label = "Required".Loc() };
+        public readonly InventoryCountColumn _inventoryColumn = new() { Label = "Inventory".Loc() };
+        public readonly RetainerCountColumn _retainerColumn = new() { Label = "Retainers".Loc() };
+        public readonly RemaingCountColumn _remainingColumn = new() { Label = "Remaining Needed".Loc() };
+        public readonly CraftableColumn _craftableColumn = new() { Label = "Sources".Loc() };
+        public readonly CraftableCountColumn _craftableCountColumn = new() { Label = "Number Craftable".Loc() };
+        public readonly CraftItemsColumn _craftItemsColumn = new() { Label = "Used to Craft".Loc() };
+        public readonly ItemCategoryColumn _itemCategoryColumn = new() { Label = "Category".Loc() };
+        public readonly GatherItemLocationColumn _gatherItemLocationColumn = new() { Label = "Gathered Zone".Loc() };
+        public readonly CheapestServerColumn _cheapestServerColumn = new() { Label = "Optimal World For Buying".Loc() };
+        public readonly NumberForSaleColumn _numberForSaleColumn = new() { Label = "Quantity For Sale (All Worlds)".Loc() };
 
         private static bool GatherBuddy =>
             DalamudReflector.TryGetDalamudPlugin("GatherBuddy", out var _, false, true);
@@ -184,7 +185,7 @@ namespace Artisan.UI.Tables
                 if (selected)
                 {
                     ImGui.SetClipboardText(item.Data.Name.ToString());
-                    Notify.Success("名称已复制到剪贴板");
+                    Notify.Success("Name copied to clipboard".Loc());
                 }
 
                 if (ImGui.IsItemHovered())
@@ -198,7 +199,7 @@ namespace Artisan.UI.Tables
                         sb.Append($"{usedin.NameOfRecipe()} - {amountUsed}\r\n");
                     }
                     ImGui.BeginTooltip();
-                    ImGui.Text($"用于：\r\n{sb}");
+                    ImGui.Text("Used in:".Loc() + $"\n{sb}");
                     ImGui.EndTooltip();
                 }
             }
@@ -358,7 +359,7 @@ namespace Artisan.UI.Tables
 
             public override string ToName(Ingredient item)
             {
-                if (item.Remaining == 0) return $"无需购买";
+                if (item.Remaining == 0) return "No need to buy".Loc();
                 if (item.MarketboardData != null && !CheapestListings.ContainsKey(item.Data.RowId))
                 {
                     var cheapest = MarketboardPricing.GetCheapestWorldCost(item.MarketboardData, item.Remaining);
@@ -371,13 +372,13 @@ namespace Artisan.UI.Tables
                     var listing = CheapestListings[item.Data.RowId];
 
                     if (MarketboardPricing.TryGetNpcPrice(item.Data, out var npcUnitPrice) && (double)npcUnitPrice * item.Remaining < listing.Cost)
-                        return $"NPC商店 - 价格 {npcUnitPrice.ToString("N0")}, 数量 不限";
+                        return "NPC Shop - Cost ??, Qty unlimited".Loc(npcUnitPrice.ToString("N0"));
 
-                    return $"{listing.World} - 价格 {listing.Cost.ToString("N0")}, 数量 {listing.Qty}";
+                    return "?? - Cost ??, Qty ??".Loc(listing.World, listing.Cost.ToString("N0"), listing.Qty);
 
                 }
 
-                return "错误 - 无物品列表（可能是 Universalis 连接问题）";
+                return "ERROR - No Listings (Possible Universalis Connection Issue)".Loc();
             }
 
             public override void DrawColumn(Ingredient item, int _)
@@ -391,7 +392,7 @@ namespace Artisan.UI.Tables
                         if (ImGui.IsItemHovered())
                         {
                             ImGui.BeginTooltip();
-                            ImGui.Text($"点击前往 {server}.");
+                            ImGui.Text("Click to travel to ??.".Loc(server));
                             ImGui.EndTooltip();
                         }
 
@@ -405,18 +406,18 @@ namespace Artisan.UI.Tables
                 {
                     if (item.Remaining == 0)
                     {
-                        ImGui.Text($"无需购买");
+                        ImGui.Text("No need to buy".Loc());
                         return;
                     }
 
                     if (item.MarketboardFetchFailed)
                     {
-                        ImGui.Text($"无法查询价格");
+                        ImGui.Text("Unable to fetch prices".Loc());
                         return;
                     }
 
                     using var smallBtnStyle = ImRaii.PushStyle(ImGuiStyleVar.FramePadding, new Vector2(ImGui.GetStyle().FramePadding.X, 0));
-                    if (ImGui.Button($"获取价格"))
+                    if (ImGui.Button("Fetch Prices".Loc()))
                     {
                         CheapestServerColumn.RequestPrice(item);
                     }
@@ -446,7 +447,7 @@ namespace Artisan.UI.Tables
                     var qty = item.MarketboardData.TotalQuantityOfUnits;
                     var listings = item.MarketboardData.TotalNumberOfListings;
 
-                    return $"{listings:N0} 个列表 - 共 {qty:N0} 件物品";
+                    return "?? listings - ?? total items".Loc($"{listings:N0}", $"{qty:N0}");
                 }
                 return "";
             }
@@ -464,7 +465,7 @@ namespace Artisan.UI.Tables
             {
                 Flags -= ImGuiTableColumnFlags.NoResize;
                 SetFlags(ItemFilter.GatherZone, ItemFilter.NoGatherZone, ItemFilter.TimedNode, ItemFilter.NonTimedNode);
-                SetNames("采集区域", "无采集区域", "定时节点", "非定时节点");
+                SetNames("Gather Zone".Loc(), "No Gather Zone".Loc(), "Timed Node".Loc(), "Non-Timed Node".Loc());
 
             }
             public override float Width
@@ -502,7 +503,7 @@ namespace Artisan.UI.Tables
             {
                 Flags -= ImGuiTableColumnFlags.NoResize;
                 SetFlags(ItemFilter.NonCrystals, ItemFilter.Crystals);
-                SetNames("非水晶", "水晶");
+                SetNames("Non-Crystals".Loc(), "Crystals".Loc());
             }
 
 
@@ -573,7 +574,7 @@ namespace Artisan.UI.Tables
             {
                 Flags -= ImGuiTableColumnFlags.NoResize;
                 SetFlags(ItemFilter.MissingItems, ItemFilter.NoMissingItems);
-                SetNames("缺失物品", "无缺失物品");
+                SetNames("Missing Items".Loc(), "No Missing Items".Loc());
             }
 
             public override float Width
@@ -598,7 +599,7 @@ namespace Artisan.UI.Tables
                             var owned = RetainerInfo.GetRetainerItemCount(LuminaSheets.RecipeSheet[i.Key].ItemResult.RowId) + CraftingListUI.NumberOfIngredient(LuminaSheets.RecipeSheet[i.Key].ItemResult.RowId);
                             if (SourceList.FindFirst(x => x.CraftedRecipe.RowId == i.Key, out var ingredient))
                             {
-                                sb.AppendLine($"{i.Value} 需求减少，因拥有 {(owned > ingredient.Required ? "至少" : "")}{Math.Min(ingredient.Required, owned)}x {i.Key.NameOfRecipe()}");
+                                sb.AppendLine("?? less is required due to having ????x ??".Loc(i.Value, owned > ingredient.Required ? "at least ".Loc() : "", Math.Min(ingredient.Required, owned), i.Key.NameOfRecipe()));
                             }
                         }
                     }
@@ -643,7 +644,7 @@ namespace Artisan.UI.Tables
             {
                 Flags -= ImGuiTableColumnFlags.NoResize;
                 SetFlags(ItemFilter.Crafted, ItemFilter.Gathered, ItemFilter.Fishing, ItemFilter.Vendor, ItemFilter.MonsterDrop, ItemFilter.Unknown);
-                SetNames("Crafted", "Gathered", "Fishing", "Vendor", "Monster Drop", "Unknown");
+                SetNames("Crafted".Loc(), "Gathered".Loc(), "Fishing".Loc(), "Vendor".Loc(), "Monster Drop".Loc(), "Unknown".Loc());
             }
 
 
@@ -657,12 +658,12 @@ namespace Artisan.UI.Tables
             {
                 List<string> outputs = new();
 
-                if (item.Sources.Contains(1)) outputs.Add("Crafted");
-                if (item.Sources.Contains(2)) outputs.Add("Gathered");
-                if (item.Sources.Contains(3)) outputs.Add("Fishing");
-                if (item.Sources.Contains(4)) outputs.Add("Vendor");
-                if (item.Sources.Contains(5)) outputs.Add("Monster Drop");
-                if (item.Sources.Contains(-1)) outputs.Add("Unknown");
+                if (item.Sources.Contains(1)) outputs.Add("Crafted".Loc());
+                if (item.Sources.Contains(2)) outputs.Add("Gathered".Loc());
+                if (item.Sources.Contains(3)) outputs.Add("Fishing".Loc());
+                if (item.Sources.Contains(4)) outputs.Add("Vendor".Loc());
+                if (item.Sources.Contains(5)) outputs.Add("Monster Drop".Loc());
+                if (item.Sources.Contains(-1)) outputs.Add("Unknown".Loc());
 
                 ImGui.Text($"{string.Join(", ", outputs)}");
             }
@@ -708,7 +709,7 @@ namespace Artisan.UI.Tables
 
             if (Marketboard)
             {
-                if (ImGui.Selectable("Market Board Lookup"))
+                if (ImGui.Selectable("Market Board Lookup".Loc()))
                 {
                     Chat.Instance.SendMessage($"/pmb {itemName}");
                 }
@@ -722,17 +723,17 @@ namespace Artisan.UI.Tables
 
             if (RetainerInfo.GetReachableRetainerBell() == null)
             {
-                ImGui.TextDisabled($"Fetch From Retainer (please stand by a bell)");
+                ImGui.TextDisabled("Fetch From Retainer (please stand by a bell)".Loc());
             }
             else
             {
                 if (RetainerInfo.TM.IsBusy)
                 {
-                    ImGui.TextDisabled($"Currently fetching. Please wait.");
+                    ImGui.TextDisabled("Currently fetching. Please wait.".Loc());
                     return;
                 }
 
-                if (!ImGui.Selectable("Fetch From Retainer"))
+                if (!ImGui.Selectable("Fetch From Retainer".Loc()))
                     return;
 
                 var howManyToGet = item.Required - item.Inventory;
@@ -757,7 +758,7 @@ namespace Artisan.UI.Tables
 
                 if (item.Sources.Contains(1) && isOnList.Value)
                 {
-                    if (ImGui.Selectable($"Show ingredients used for this"))
+                    if (ImGui.Selectable("Show ingredients used for this".Loc()))
                     {
                         FilteredItems.Clear();
                         var idx = 0;
@@ -777,7 +778,7 @@ namespace Artisan.UI.Tables
 
             if (CraftFiltered)
             {
-                if (!ImGui.Selectable($"Clear Filters"))
+                if (!ImGui.Selectable("Clear Filters".Loc()))
                     return;
 
                 CraftFiltered = false;
@@ -793,7 +794,7 @@ namespace Artisan.UI.Tables
 
             if (MonsterLookup)
             {
-                if (!ImGui.Selectable("Monster Loot Lookup"))
+                if (!ImGui.Selectable("Monster Loot Lookup".Loc()))
                     return;
 
                 try
@@ -807,7 +808,7 @@ namespace Artisan.UI.Tables
             }
             else
             {
-                ImGui.TextDisabled("Monster Loot Lookup (Please install Monster Loot Hunter)");
+                ImGui.TextDisabled("Monster Loot Lookup (Please install Monster Loot Hunter)".Loc());
             }
         }
 
@@ -820,7 +821,7 @@ namespace Artisan.UI.Tables
             {
                 if (ItemVendorLocation.ItemHasVendor(itemId))
                 {
-                    if (!ImGui.Selectable("Item Vendor Lookup"))
+                    if (!ImGui.Selectable("Item Vendor Lookup".Loc()))
                         return;
 
                     try
@@ -835,7 +836,7 @@ namespace Artisan.UI.Tables
             }
             else
             {
-                ImGui.TextDisabled("Item Vendor Lookup (Please install Item Vendor Location)");
+                ImGui.TextDisabled("Item Vendor Lookup (Please install Item Vendor Location)".Loc());
             }
         }
 
@@ -844,7 +845,7 @@ namespace Artisan.UI.Tables
             if (itemId == 0)
                 return;
 
-            if (!ImGui.Selectable("Search for Item"))
+            if (!ImGui.Selectable("Search for Item".Loc()))
                 return;
 
             try
@@ -865,7 +866,7 @@ namespace Artisan.UI.Tables
 
             if (GatherBuddy)
             {
-                if (!ImGui.Selectable("Gather Item"))
+                if (!ImGui.Selectable("Gather Item".Loc()))
                     return;
 
                 try
@@ -882,7 +883,7 @@ namespace Artisan.UI.Tables
             }
             else
             {
-                ImGui.TextDisabled("Gather Item (Please install Gatherbuddy)");
+                ImGui.TextDisabled("Gather Item (Please install Gatherbuddy)".Loc());
             }
         }
     }

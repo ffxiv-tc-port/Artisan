@@ -17,23 +17,23 @@ public static class Simulator
 {
     public enum CraftStatus
     {
-        [Description("制作进行中")]
+        [Description("製作進行中")]
         InProgress,
-        [Description("因耐久不足导致制作失败")]
+        [Description("因耐久不足導致製作失敗")]
         FailedDurability,
-        [Description("因未达到最低品质导致制作失败")]
+        [Description("因未達到最低品質導致製作失敗")]
         FailedMinQuality,
-        [Description("已完成第一个品质突破点")]
+        [Description("已完成第一個品質突破點")]
         SucceededQ1,
-        [Description("已完成第二个品质突破点")]
+        [Description("已完成第二個品質突破點")]
         SucceededQ2,
-        [Description("已完成第三个品质突破点")]
+        [Description("已完成第三個品質突破點")]
         SucceededQ3,
-        [Description("已完成最高品质")]
+        [Description("已完成最高品質")]
         SucceededMaxQuality,
-        [Description("已完成，但未达到最高品质")]
+        [Description("已完成，但未達到最高品質")]
         SucceededSomeQuality,
-        [Description("已完成，不需要品质")]
+        [Description("已完成，不需要品質")]
         SucceededNoQualityReq,
 
         Count
@@ -110,7 +110,7 @@ public static class Simulator
     {
         hintColor = ImGuiColors.DalamudWhite;
         var solver = CraftingProcessor.GetSolverForRecipe(config, craft).CreateSolver(craft);
-        if (solver == null) return "没有找到有效的解算器";
+        if (solver == null) return "沒有找到有效的解算器";
         var startingQuality = GetStartingQuality(recipe, assumeMaxStartingQuality, craft.StatLevel);
         var time = SolverUtils.EstimateCraftTime(solver, craft, startingQuality);
         var result = SolverUtils.SimulateSolverExecution(solver, craft, startingQuality);
@@ -119,17 +119,17 @@ public static class Simulator
 
         string solverHint = status switch
         {
-            CraftStatus.InProgress => "制作未完成（解算器在完成之前未返回任何步骤）。",
-            CraftStatus.FailedDurability => $"因耐久度不足导致制作失败。(进展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品质：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
-            CraftStatus.FailedMinQuality => $"制作完成并达到满品质，耗时（进展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品质：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
-            CraftStatus.SucceededQ1 => $"制作完成并达到第一个品质门槛，耗时 {time.TotalSeconds:f0} 秒。",
-            CraftStatus.SucceededQ2 => $"制作完成并达到第二个品质门槛，耗时 {time.TotalSeconds:f0} 秒。",
-            CraftStatus.SucceededQ3 => $"制作完成并达到第三个品质门槛，耗时 {time.TotalSeconds:f0} 秒！",
-            CraftStatus.SucceededMaxQuality => $"制作完成并达到满品质，耗时 {time.TotalSeconds:f0} 秒！",
-            CraftStatus.SucceededSomeQuality => $"制作完成但未达到最大品质（{hq}%），耗时 {time.TotalSeconds:f0} 秒。",
-            CraftStatus.SucceededNoQualityReq => $"制作完成，无需品质，耗时 {time.TotalSeconds:f0} 秒！",
-            CraftStatus.Count => "你不应该看到这个，请报告问题。",
-            _ => "你不应该看到这个，请报告问题。",
+            CraftStatus.InProgress => "製作未完成（解算器在完成之前未返回任何步驟）。",
+            CraftStatus.FailedDurability => $"因耐久度不足導致製作失敗。(進展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品質：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
+            CraftStatus.FailedMinQuality => $"製作完成並達到滿品質，耗時（進展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品質：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
+            CraftStatus.SucceededQ1 => $"製作完成並達到第一個品質門檻，耗時 {time.TotalSeconds:f0} 秒。",
+            CraftStatus.SucceededQ2 => $"製作完成並達到第二個品質門檻，耗時 {time.TotalSeconds:f0} 秒。",
+            CraftStatus.SucceededQ3 => $"製作完成並達到第三個品質門檻，耗時 {time.TotalSeconds:f0} 秒！",
+            CraftStatus.SucceededMaxQuality => $"製作完成並達到滿品質，耗時 {time.TotalSeconds:f0} 秒！",
+            CraftStatus.SucceededSomeQuality => $"製作完成但未達到最大品質（{hq}%），耗時 {time.TotalSeconds:f0} 秒。",
+            CraftStatus.SucceededNoQualityReq => $"製作完成，無需品質，耗時 {time.TotalSeconds:f0} 秒！",
+            CraftStatus.Count => "你不應該看到這個，請報告問題。",
+            _ => "你不應該看到這個，請報告問題。",
         };
 
 
@@ -300,19 +300,19 @@ public static class Simulator
         {
             reason = action switch
             {
-                Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade => "当前状态不是良好/绝佳，或未激活专心致志",
-                Skills.PrudentSynthesis or Skills.PrudentTouch => "你拥有俭约状态",
-                Skills.MuscleMemory or Skills.Reflect => "你不在制作的第一步",
-                Skills.TrainedFinesse => "你的内静层数不足10层",
-                Skills.ByregotsBlessing => "你的内静层数为0",
-                Skills.TrainedEye => craft.CraftExpert ? "该配方为专家配方" : step.Index != 1 ? "你不在制作的第一步" : "配方等级未比你当前等级低10级或以上",
-                Skills.Manipulation => "你尚未解锁掌握",
-                Skills.CarefulObservation => craft.Specialist ? Crafting.DelineationCount() == 0 ? "你的能工巧匠图纸已用尽。" : $"你已使用设计变动3次" : "你不是专家",
-                Skills.HeartAndSoul => craft.Specialist ? Crafting.DelineationCount() == 0 ? "你的能工巧匠图纸已用尽。" : "本次制作已无法再次使用专心致志" : "你不是专家",
-                Skills.TrainedPerfection => "你已使用过工匠的神技",
-                Skills.DaringTouch => "仓促制作未成功",
-                Skills.QuickInnovation => !craft.Specialist ? "你不是专家" : Crafting.DelineationCount() == 0 ? "你的能工巧匠图纸已用尽。" : step.QuickInnoLeft == 0 ? "本次制作已无法再次使用快速改革" : step.InnovationLeft > 0 ? "你已有改革状态" : "",
-                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "本次制作无法使用素材奇迹" : step.MaterialMiracleActive ? "你已激活素材奇迹" : step.MaterialMiracleCharges == 0 ? "你已没有剩余的素材奇迹次数" : ""
+                Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade => "當前狀態不是良好/絕佳，或未啟用專心致志",
+                Skills.PrudentSynthesis or Skills.PrudentTouch => "你擁有儉約狀態",
+                Skills.MuscleMemory or Skills.Reflect => "你不在製作的第一步",
+                Skills.TrainedFinesse => "你的內靜層數不足10層",
+                Skills.ByregotsBlessing => "你的內靜層數為0",
+                Skills.TrainedEye => craft.CraftExpert ? "該配方為專家配方" : step.Index != 1 ? "你不在製作的第一步" : "配方等級未比你當前等級低10級或以上",
+                Skills.Manipulation => "你尚未解鎖掌握",
+                Skills.CarefulObservation => craft.Specialist ? Crafting.DelineationCount() == 0 ? "你的能工巧匠圖紙已用盡。" : $"你已使用設計變動3次" : "你不是專家",
+                Skills.HeartAndSoul => craft.Specialist ? Crafting.DelineationCount() == 0 ? "你的能工巧匠圖紙已用盡。" : "本次製作已無法再次使用專心致志" : "你不是專家",
+                Skills.TrainedPerfection => "你已使用過工匠的神技",
+                Skills.DaringTouch => "倉促製作未成功",
+                Skills.QuickInnovation => !craft.Specialist ? "你不是專家" : Crafting.DelineationCount() == 0 ? "你的能工巧匠圖紙已用盡。" : step.QuickInnoLeft == 0 ? "本次製作已無法再次使用快速改革" : step.InnovationLeft > 0 ? "你已有改革狀態" : "",
+                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "本次製作無法使用素材奇蹟" : step.MaterialMiracleActive ? "你已啟用素材奇蹟" : step.MaterialMiracleCharges == 0 ? "你已沒有剩餘的素材奇蹟次數" : ""
             };
 
             return true;

@@ -5,6 +5,7 @@ using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using ImGuiNET;
 using System.Collections.Generic;
 using System.Globalization;
@@ -37,8 +38,8 @@ namespace Artisan.UI
 
         public static void Draw()
         {
-            ImGuiEx.TextWrapped($"本标签页可根据配方条件，快速为配方批量分配解算器与消耗品。");
-            ImGuiEx.TextWrapped($"职业缩写对照：CRP - 刻木匠；ARM - 铸甲匠；LTW - 制革匠；ALC - 炼金术士；BSM - 锻铁匠；GSM - 雕金匠；WVR - 裁衣匠；CUL - 烹调师。");
+            ImGuiEx.TextWrapped("This tab allows you to quickly assign solvers and consumables to recipes based on recipe criteria.".Loc());
+            ImGuiEx.TextWrapped("Job abbreviations: CRP - Carpenter; ARM - Armorer; LTW - Leatherworker; ALC - Alchemist; BSM - Blacksmith; GSM - Goldsmith; WVR - Weaver; CUL - Culinarian.".Loc());
             ImGui.Separator();
             ImGui.Spacing();
             DrawCriteria();
@@ -47,7 +48,7 @@ namespace Artisan.UI
 
         private static void DrawCriteria()
         {
-            ImGuiEx.TextCentered($"条件");
+            ImGuiEx.TextCentered("Criteria".Loc());
             DrawAssignOptions();
         }
 
@@ -68,8 +69,8 @@ namespace Artisan.UI
             DummyConfig.DrawSquadronManual();
             DummyConfig.DrawSolver(c, false, false);
 
-            ImGui.Checkbox("分配配方时显示通知", ref Notification);
-            if (ImGui.Button("全部分配", new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
+            ImGui.Checkbox("Show which crafts have been assigned as a notification".Loc(), ref Notification);
+            if (ImGui.Button("Assign To All".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
             {
                 foreach (var rec in filteredRecipes)
                 {
@@ -85,7 +86,7 @@ namespace Artisan.UI
                     };
                     if (Notification)
                     {
-                        P.TM.Enqueue(() => Notify.Success($"Assigned {rec.CraftType.Value.Name} - {rec.ItemResult.Value.Name}"));
+                        P.TM.Enqueue(() => Notify.Success("Assigned ?? - ??".Loc(rec.CraftType.Value.Name, rec.ItemResult.Value.Name)));
                         P.TM.DelayNext(75);
                     }
                 }

@@ -10,6 +10,7 @@ using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using ImGuiNET;
 using Lumina.Excel.Sheets;
@@ -50,10 +51,10 @@ public class RecipeConfig
     public bool RequiredPotionHQ => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : requiredPotionHQ;
 
 
-    public string FoodName => requiredFood == Default ? $"{P.Config.DefaultConsumables.FoodName} (默认)" : RequiredFood == Disabled ? "已禁用" : $"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
-    public string PotionName => requiredPotion == Default ? $"{P.Config.DefaultConsumables.PotionName} (默认)" : RequiredPotion == Disabled ? "已禁用" : $"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
-    public string ManualName => requiredManual == Default ? $"{P.Config.DefaultConsumables.ManualName} (默认)" : RequiredManual == Disabled ? "已禁用" : $"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
-    public string SquadronManualName => requiredSquadronManual == Default ? $"{P.Config.DefaultConsumables.SquadronManualName} (默认)" : RequiredSquadronManual == Disabled ? "已禁用" : $"{ConsumableChecker.SquadronManuals.FirstOrDefault(x => x.Id == RequiredSquadronManual).Name}";
+    public string FoodName => requiredFood == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.FoodName) : RequiredFood == Disabled ? "Disabled".Loc() :$"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
+    public string PotionName => requiredPotion == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.PotionName) : RequiredPotion == Disabled ? "Disabled".Loc() :$"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
+    public string ManualName => requiredManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.ManualName) : RequiredManual == Disabled ? "Disabled".Loc() :$"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
+    public string SquadronManualName => requiredSquadronManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.SquadronManualName) : RequiredSquadronManual == Disabled ? "Disabled".Loc() :$"{ConsumableChecker.SquadronManuals.FirstOrDefault(x => x.Id == RequiredSquadronManual).Name}";
 
 
 
@@ -79,21 +80,21 @@ public class RecipeConfig
     public bool DrawFood(bool hasButton = false)
     {
         bool changed = false;
-        ImGuiEx.TextV("食物使用：");
+        ImGuiEx.TextV("Food Usage:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         if (ImGui.BeginCombo("##foodBuff", FoodName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.FoodName})"))
+                if (ImGui.Selectable("Default (??)".Loc(P.Config.DefaultConsumables.FoodName)))
                 {
                     requiredFood = Default;
                     requiredFoodHQ = false;
                     changed = true;
                 }
             }
-            if (ImGui.Selectable("禁用"))
+            if (ImGui.Selectable("Disable".Loc()))
             {
                 requiredFood = Disabled;
                 requiredFoodHQ = false;
@@ -125,21 +126,21 @@ public class RecipeConfig
     public bool DrawPotion(bool hasButton = false)
     {
         bool changed = false;
-        ImGuiEx.TextV("药水使用：");
+        ImGuiEx.TextV("Medicine Usage:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         if (ImGui.BeginCombo("##potBuff", PotionName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.PotionName})"))
+                if (ImGui.Selectable("Default (??)".Loc(P.Config.DefaultConsumables.PotionName)))
                 {
                     requiredPotion = Default;
                     requiredPotionHQ = false;
                     changed = true;
                 }
             }
-            if (ImGui.Selectable("禁用"))
+            if (ImGui.Selectable("Disable".Loc()))
             {
                 requiredPotion = Disabled;
                 requiredPotionHQ = false;
@@ -171,20 +172,20 @@ public class RecipeConfig
     public bool DrawManual(bool hasButton = false)
     {
         bool changed = false;
-        ImGuiEx.TextV("指南使用：");
+        ImGuiEx.TextV("Manual Usage:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         if (ImGui.BeginCombo("##manualBuff", ManualName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.ManualName})"))
+                if (ImGui.Selectable("Default (??)".Loc(P.Config.DefaultConsumables.ManualName)))
                 {
                     requiredManual = Default;
                     changed = true;
                 }
             }
-            if (ImGui.Selectable("禁用"))
+            if (ImGui.Selectable("Disable".Loc()))
             {
                 requiredManual = Disabled;
                 changed = true;
@@ -207,20 +208,20 @@ public class RecipeConfig
     public bool DrawSquadronManual(bool hasButton = false)
     {
         bool changed = false;
-        ImGuiEx.TextV("军用指南：");
+        ImGuiEx.TextV("Squadron Manual:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         if (ImGui.BeginCombo("##squadronManualBuff", SquadronManualName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.SquadronManualName})"))
+                if (ImGui.Selectable("Default (??)".Loc(P.Config.DefaultConsumables.SquadronManualName)))
                 {
                     requiredSquadronManual = Default;
                     changed = true;
                 }
             }
-            if (ImGui.Selectable("禁用"))
+            if (ImGui.Selectable("Disable".Loc()))
             {
                 requiredSquadronManual = Disabled;
                 changed = true;
@@ -241,7 +242,7 @@ public class RecipeConfig
     public bool DrawSolver(CraftState craft, bool hasButton = false, bool liveStats = true)
     {
         bool changed = false;
-        ImGuiEx.TextV($"解算器：");
+        ImGuiEx.TextV("Solver:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         var solver = CraftingProcessor.GetSolverForRecipe(this, craft);
@@ -252,7 +253,7 @@ public class RecipeConfig
                 if (opt == default) continue;
                 if (opt.UnsupportedReason.Length > 0)
                 {
-                    ImGui.Text($"{opt.Name} 不受支持 - {opt.UnsupportedReason}");
+                    ImGui.Text("?? is unsupported - ??".Loc(opt.Name, opt.UnsupportedReason));
                 }
                 else
                 {
@@ -283,15 +284,15 @@ public class RecipeConfig
             var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor);
             var solver = CraftingProcessor.GetSolverForRecipe(config, craft);
 
-            if (solver.Name != "专家配方求解器")
+            if (solver.Name != "Expert Recipe Solver".Loc())
             {
-                if (craft.MissionHasMaterialMiracle && solver.Name == "标准配方求解器" && P.Config.UseMaterialMiracle)
-                    ImGuiEx.TextWrapped($"这将使用材料奇迹，与模拟器不兼容。");
+                if (craft.MissionHasMaterialMiracle && solver.Name == "Standard Recipe Solver".Loc() && P.Config.UseMaterialMiracle)
+                    ImGuiEx.TextWrapped("This would use Material Miracle, which is not compatible with the simulator.".Loc());
                 else
                     ImGuiEx.TextWrapped(hintColor, solverHint);
             }
             else
-                ImGuiEx.TextWrapped($"请在模拟器中运行此配方以获得结果。");
+                ImGuiEx.TextWrapped("Please run this recipe in the simulator for results.".Loc());
 
             if (ImGui.IsItemClicked())
             {
@@ -334,7 +335,7 @@ public class RecipeConfig
 
             if (ImGui.IsItemHovered())
             {
-                ImGuiEx.Tooltip($"点击在模拟器中打开");
+                ImGuiEx.Tooltip("Click to open in simulator".Loc());
             }
 
 

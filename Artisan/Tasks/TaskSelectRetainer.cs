@@ -263,15 +263,23 @@ internal unsafe static class RetainerHandlers
                     var indexOfRetrieveAll = -1;
                     var indexOfRetrieveQuantity = -1;
 
+                    // Compare extracted plain text on both sides instead of raw ReadOnlySeString equality:
+                    // the sheet value and the live context-menu label can carry different SeString payloads
+                    // (auto-translate/highlight codes) for text that reads identically, which made the raw
+                    // byte-exact comparison silently fail to find either entry on the TC client - the menu
+                    // opened (visible right-click) but nothing was ever selected, so no items were retrieved.
+                    var retrieveAllText = LuminaSheets.AddonSheet[98].Text.ExtractText().Trim();
+                    var retrieveQuantityText = LuminaSheets.AddonSheet[773].Text.ExtractText().Trim();
+
                     int looper = 0;
                     foreach (var contextObj in contextAgent->EventParams)
                     {
                         if (contextObj.Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String)
                         {
-                            var label = MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String));
+                            var label = MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String)).ExtractText().Trim();
 
-                            if (LuminaSheets.AddonSheet[98].Text == label.TextValue) indexOfRetrieveAll = looper;
-                            if (LuminaSheets.AddonSheet[773].Text == label.TextValue) indexOfRetrieveQuantity = looper;
+                            if (retrieveAllText == label) indexOfRetrieveAll = looper;
+                            if (retrieveQuantityText == label) indexOfRetrieveQuantity = looper;
 
                             looper++;
                         }
@@ -281,12 +289,20 @@ internal unsafe static class RetainerHandlers
                     {
                         if (item->Quantity == 1 || item->ItemId <= 19)
                         {
-                            if (indexOfRetrieveAll == -1) return true;
+                            if (indexOfRetrieveAll == -1)
+                            {
+                                Svc.Log.Warning($"Artisan: couldn't find \"{retrieveAllText}\" in the retainer item context menu, item {ItemId} was not retrieved.");
+                                return true;
+                            }
                             Callback.Fire(contextMenu, true, 0, indexOfRetrieveAll, 0, 0, 0);
                         }
                         else
                         {
-                            if (indexOfRetrieveQuantity == -1) return true;
+                            if (indexOfRetrieveQuantity == -1)
+                            {
+                                Svc.Log.Warning($"Artisan: couldn't find \"{retrieveQuantityText}\" in the retainer item context menu, item {ItemId} was not retrieved.");
+                                return true;
+                            }
                             Callback.Fire(contextMenu, true, 0, indexOfRetrieveQuantity, 0, 0, 0);
                         }
                         return true;

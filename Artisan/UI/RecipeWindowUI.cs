@@ -20,9 +20,10 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -92,7 +93,7 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
@@ -127,7 +128,7 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
@@ -275,7 +276,7 @@ namespace Artisan
             {
                 try
                 {
-                    var subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu");
+                    var subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu").Address;
                     if (subcontext != null && subcontext->IsVisible)
                         return;
 
@@ -289,7 +290,7 @@ namespace Artisan
                     if (timerWindow == IntPtr.Zero)
                         return;
 
-                    var atkUnitBase = (AtkUnitBase*)timerWindow;
+                    var atkUnitBase = (AtkUnitBase*)timerWindow.Address;
                     var node = atkUnitBase->UldManager.NodeList[19];
 
                     if (!node->IsVisible())
@@ -361,12 +362,12 @@ namespace Artisan
             {
                 try
                 {
-                    var subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("AddonContextSub");
+                    var subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("AddonContextSub").Address;
 
                     if (subcontext != null && subcontext->IsVisible)
                         return;
 
-                    subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu");
+                    subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu").Address;
                     if (subcontext != null && subcontext->IsVisible)
                         return;
 
@@ -374,7 +375,7 @@ namespace Artisan
                     if (timerWindow == IntPtr.Zero)
                         return;
 
-                    var atkUnitBase = (AtkUnitBase*)timerWindow;
+                    var atkUnitBase = (AtkUnitBase*)timerWindow.Address;
 
                     if (atkUnitBase->AtkValues[233].Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int)
                         return;
@@ -566,7 +567,7 @@ namespace Artisan
                 if (subWindow == IntPtr.Zero)
                     return;
 
-                var addonPtr = (AtkUnitBase*)subWindow;
+                var addonPtr = (AtkUnitBase*)subWindow.Address;
                 if (addonPtr == null)
                     return;
 
@@ -706,7 +707,7 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
@@ -763,10 +764,14 @@ namespace Artisan
 
         private static void DrawCopyOfCraftMenu()
         {
-            if (ImGuiEx.AddHeaderIcon("OpenConfig", FontAwesomeIcon.Cog, new ImGuiEx.HeaderIconOptions() { Tooltip = "Open Config".Loc() }))
+            // ECommons dropped AddHeaderIcon in favor of Window.TitleBarButton, but this
+            // window uses NoTitleBar so the native title bar button row never renders;
+            // draw an equivalent inline icon button instead.
+            if (ImGuiEx.IconButton(FontAwesomeIcon.Cog, "OpenConfig"))
             {
                 P.PluginUi.IsOpen = true;
             }
+            ImGuiEx.Tooltip("Open Config".Loc());
 
             bool autoMode = P.Config.AutoMode;
 
@@ -805,7 +810,7 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
@@ -873,7 +878,7 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 

@@ -19,11 +19,12 @@ using global::Artisan.GameInterop;
 using global::Artisan.RawInformation.Character;
 using global::Artisan.UI.Tables;
 using global::Artisan.Universalis;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using IPC;
 using Lumina.Excel.Sheets;
 using Newtonsoft.Json;
 using OtterGui;
+using OtterGui.Extensions;
 using OtterGui.Filesystem;
 using OtterGui.Raii;
 using PunishLib.ImGuiMethods;
@@ -236,7 +237,7 @@ internal class ListEditor : Window, IDisposable
                                 SelectedList.Recipes.Add(new ListItem() { ID = item.ID, Quantity = item.Quantity, ListItemOptions = item.ListItemOptions ?? new() });
                         }
 
-                        RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+                        RecipeSelector.ReplaceItems(SelectedList.Recipes.Distinct());
                         RefreshTable(null, true);
                         P.Config.Save();
                         Notify.Success("Merged into ??.".Loc(SelectedList.Name));
@@ -618,7 +619,7 @@ internal class ListEditor : Window, IDisposable
                         SelectedList.Recipes.Add(new ListItem() { Quantity = recipe.Quantity, ID = recipe.ID });
                 }
                 Notify.Success("All items copied from ?? to ??.".Loc(copyList.Name, SelectedList.Name));
-                RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+                RecipeSelector.ReplaceItems(SelectedList.Recipes.Distinct());
                 RefreshTable(null, true);
                 P.Config.Save();
             }
@@ -793,7 +794,7 @@ internal class ListEditor : Window, IDisposable
                     SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions.NQOnly = SelectedList.AddAsQuickSynth;
                 }
 
-                RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+                RecipeSelector.ReplaceItems(SelectedList.Recipes.Distinct());
 
                 NeedsToRefreshTable = true;
 
@@ -832,7 +833,7 @@ internal class ListEditor : Window, IDisposable
                     SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions.NQOnly = SelectedList.AddAsQuickSynth;
                 }
 
-                RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+                RecipeSelector.ReplaceItems(SelectedList.Recipes.Distinct());
                 RefreshTable(null, true);
                 P.Config.Save();
                 if (P.Config.ResetTimesToAdd)
@@ -878,7 +879,7 @@ internal class ListEditor : Window, IDisposable
             }
 
             SelectedList.Recipes = newList;
-            RecipeSelector.Items = SelectedList.Recipes.Distinct().ToList();
+            RecipeSelector.ReplaceItems(SelectedList.Recipes.Distinct());
             P.Config.Save();
         }
 
@@ -1579,9 +1580,9 @@ internal class ListEditor : Window, IDisposable
             }
         }
 
-        var stats = CharacterStats.GetBaseStatsForClassHeuristic(Job.CRP + recipe.CraftType.RowId);
+        var stats = CharacterStats.GetBaseStatsForClassHeuristic((Job)((uint)Job.CRP + recipe.CraftType.RowId));
         stats.AddConsumables(new(config.RequiredFood, config.RequiredFoodHQ), new(config.RequiredPotion, config.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
-        var craft = Crafting.BuildCraftStateForRecipe(stats, Job.CRP + recipe.CraftType.RowId, recipe);
+        var craft = Crafting.BuildCraftStateForRecipe(stats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
         if (config.DrawSolver(craft))
         {
             P.Config.RecipeConfigs[selectedListItem] = config;
@@ -1639,6 +1640,40 @@ internal class ListEditor : Window, IDisposable
 
 internal class RecipeSelector : ItemSelector<ListItem>
 {
+    // OtterGui's ItemSelector<T> dropped the built-in ItemAdded/ItemDeleted/
+    // ItemSkipTriggered events (and the "out bool changes" OnDraw signature)
+    // when it migrated to Dalamud.Bindings.ImGui; re-implement them locally so
+    // ListEditor can still refresh its table on add/delete/skip-toggle.
+    public event EventHandler<bool>? ItemAdded;
+    public event EventHandler<bool>? ItemDeleted;
+    public event EventHandler<bool>? ItemSkipTriggered;
+
+    // OtterGui's ItemSelector<T>.Items went from a public field to a protected
+    // one, and Current's setter went from public to private, when it migrated
+    // to Dalamud.Bindings.ImGui. Re-expose both publicly here so ListEditor
+    // (a sibling, not derived, class) can keep reading/mutating them directly.
+    public new IList<ListItem> Items => base.Items;
+
+    // Items is now a readonly field on the base class (was a mutable public
+    // field before), so wholesale reassignment is no longer possible; mutate
+    // contents in place instead.
+    public void ReplaceItems(IEnumerable<ListItem> newItems)
+    {
+        Items.Clear();
+        foreach (var item in newItems)
+            Items.Add(item);
+    }
+
+    public new ListItem? Current
+    {
+        get => base.Current;
+        set
+        {
+            if (value != null)
+                SetCurrent(value);
+        }
+    }
+
     public float maxSize = 100;
 
     private readonly NewCraftingList List;
@@ -1698,6 +1733,7 @@ internal class RecipeSelector : ItemSelector<ListItem>
         }
 
         P.Config.Save();
+        ItemAdded?.Invoke(this, true);
 
         return true;
     }
@@ -1708,12 +1744,12 @@ internal class RecipeSelector : ItemSelector<ListItem>
         List.Recipes.Remove(ItemId);
         Items.RemoveAt(idx);
         P.Config.Save();
+        ItemDeleted?.Invoke(this, true);
         return true;
     }
 
-    protected override bool OnDraw(int idx, out bool changes)
+    protected override bool OnDraw(int idx)
     {
-        changes = false;
         var ItemId = Items[idx];
         var itemCount = ItemId.Quantity;
         var yield = LuminaSheets.RecipeSheet[ItemId.ID].AmountResult * itemCount;
@@ -1741,7 +1777,7 @@ internal class RecipeSelector : ItemSelector<ListItem>
                     if (ImGui.Selectable(ItemId.ListItemOptions.Skipping ? "Enable this recipe".Loc() : "Skip this recipe".Loc()))
                     {
                         ItemId.ListItemOptions.Skipping = !ItemId.ListItemOptions.Skipping;
-                        changes = true;
+                        ItemSkipTriggered?.Invoke(this, true);
                         P.Config.Save();
                     }
 
@@ -1813,9 +1849,8 @@ internal class ListFolders : ItemSelector<NewCraftingList>
         return true;
     }
 
-    protected override bool OnDraw(int idx, out bool changes)
+    protected override bool OnDraw(int idx)
     {
-        changes = false;
         if (CraftingListUI.Processing && CraftingListUI.selectedList.ID == P.Config.NewCraftingLists[idx].ID)
             ImGui.BeginDisabled();
 

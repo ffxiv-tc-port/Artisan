@@ -249,10 +249,14 @@ namespace Artisan.RawInformation
                     return false;
                 
                 //Next, find the MissionUnit that has our MissionRecipe row
-                var missionUnit = Svc.Data.GetExcelSheet<WKSMissionUnit>().First(missionUnit => missionUnit.WKSMissionRecipe == (ushort)missionRec.RowId);
+                var missionUnit = Svc.Data.GetExcelSheet<WKSMissionUnit>().First(missionUnit => missionUnit.WKSMissionRecipe.RowId == missionRec.RowId);
 
                 //Get the MissionToDo from the MissionUnit
-                var missionToDo = Svc.Data.GetExcelSheet<WKSMissionToDo>().GetRow(missionUnit.Unknown7);
+                // Lumina's WKSMissionUnit schema now exposes this directly as a
+                // MissionToDo row-ref collection instead of the old scalar
+                // "Unknown7" field id; take the first entry (matches prior
+                // single-value lookup behavior).
+                var missionToDo = missionUnit.MissionToDo[0].Value;
 
                 //Svc.Log.Verbose($"{id} -> {missionRec.RowId} -> {missionUnit.RowId} -> {missionToDo.RowId} -> {missionToDo.Unknown0}");
                 return missionToDo.Unknown0 == (uint)Skills.MaterialMiracle;

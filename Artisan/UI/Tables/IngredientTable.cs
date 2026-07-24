@@ -11,9 +11,10 @@ using ECommons.LanguageHelpers;
 using ECommons.Reflection;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using OtterGui.Raii;
 using OtterGui.Table;
 using System;
@@ -41,19 +42,19 @@ namespace Artisan.UI.Tables
         private static float _cheapestColumnWidth = 100;
         private static float _numberForSaleWidth = 100;
 
-        public readonly IdColumn _idColumn = new() { Label = "ID" };
-        public readonly NameColumn _nameColumn = new() { Label = "Item Name".Loc() };
-        public readonly RequiredColumn _requiredColumn = new() { Label = "Required".Loc() };
-        public readonly InventoryCountColumn _inventoryColumn = new() { Label = "Inventory".Loc() };
-        public readonly RetainerCountColumn _retainerColumn = new() { Label = "Retainers".Loc() };
-        public readonly RemaingCountColumn _remainingColumn = new() { Label = "Remaining Needed".Loc() };
-        public readonly CraftableColumn _craftableColumn = new() { Label = "Sources".Loc() };
-        public readonly CraftableCountColumn _craftableCountColumn = new() { Label = "Number Craftable".Loc() };
-        public readonly CraftItemsColumn _craftItemsColumn = new() { Label = "Used to Craft".Loc() };
-        public readonly ItemCategoryColumn _itemCategoryColumn = new() { Label = "Category".Loc() };
-        public readonly GatherItemLocationColumn _gatherItemLocationColumn = new() { Label = "Gathered Zone".Loc() };
-        public readonly CheapestServerColumn _cheapestServerColumn = new() { Label = "Optimal World For Buying".Loc() };
-        public readonly NumberForSaleColumn _numberForSaleColumn = new() { Label = "Quantity For Sale (All Worlds)".Loc() };
+        public readonly IdColumn _idColumn;
+        public readonly NameColumn _nameColumn;
+        public readonly RequiredColumn _requiredColumn;
+        public readonly InventoryCountColumn _inventoryColumn;
+        public readonly RetainerCountColumn _retainerColumn;
+        public readonly RemaingCountColumn _remainingColumn;
+        public readonly CraftableColumn _craftableColumn;
+        public readonly CraftableCountColumn _craftableCountColumn;
+        public readonly CraftItemsColumn _craftItemsColumn;
+        public readonly ItemCategoryColumn _itemCategoryColumn;
+        public readonly GatherItemLocationColumn _gatherItemLocationColumn;
+        public readonly CheapestServerColumn _cheapestServerColumn;
+        public readonly NumberForSaleColumn _numberForSaleColumn;
 
         private static bool GatherBuddy =>
             DalamudReflector.TryGetDalamudPlugin("GatherBuddy", out var _, false, true);
@@ -77,33 +78,86 @@ namespace Artisan.UI.Tables
         private bool CraftFiltered = false;
         private bool? isOnList = null;
 
-        public IngredientTable(List<Ingredient> ingredientList)
-            : base("IngredientTable", ingredientList)
-        {
-            if (P.Config.DefaultHideInventoryColumn) _inventoryColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
-            if (P.Config.DefaultHideRetainerColumn) _retainerColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
-            if (P.Config.DefaultHideRemainingColumn) _remainingColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
-            if (P.Config.DefaultHideCraftableColumn) _craftableColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
-            if (P.Config.DefaultHideCraftableCountColumn) _craftableCountColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
-            if (P.Config.DefaultHideCraftItemsColumn) _craftItemsColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
-            if (P.Config.DefaultHideCategoryColumn) _itemCategoryColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
-            if (P.Config.DefaultHideGatherLocationColumn) _gatherItemLocationColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
-            if (P.Config.DefaultHideIdColumn) _idColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+        // OtterGui's Table<T>.FilteredItems is now `internal` (cross-assembly
+        // inaccessible), so "show only ingredients used in this craft" can no
+        // longer splice the base class' filtered list directly; instead drive
+        // it through NameColumn's FilterFunc via this set (see ExtraFilter).
+        private HashSet<Ingredient>? _craftFilterSet;
 
-            List<Column<Ingredient>> headers = new() { _nameColumn, _requiredColumn, _inventoryColumn, _remainingColumn, _craftableColumn, _craftableCountColumn, _craftItemsColumn, _itemCategoryColumn, _gatherItemLocationColumn, _idColumn };
-            if (RetainerInfo.ATools) headers.Insert(3, _retainerColumn);
+        // OtterGui's Table<T>.Headers is now assigned solely through the base
+        // constructor (was a mutable field before, settable from the derived
+        // constructor body); build every column up front in a static helper so
+        // it can be handed to base(...) before `this` exists, then recover the
+        // individual column instances via out-params for the fields below.
+        private static Column<Ingredient>[] BuildHeaders(
+            out IdColumn idColumn, out NameColumn nameColumn, out RequiredColumn requiredColumn,
+            out InventoryCountColumn inventoryColumn, out RetainerCountColumn retainerColumn,
+            out RemaingCountColumn remainingColumn, out CraftableColumn craftableColumn,
+            out CraftableCountColumn craftableCountColumn, out CraftItemsColumn craftItemsColumn,
+            out ItemCategoryColumn itemCategoryColumn, out GatherItemLocationColumn gatherItemLocationColumn,
+            out CheapestServerColumn cheapestServerColumn, out NumberForSaleColumn numberForSaleColumn)
+        {
+            idColumn = new() { Label = "ID" };
+            nameColumn = new() { Label = "Item Name".Loc() };
+            requiredColumn = new() { Label = "Required".Loc() };
+            inventoryColumn = new() { Label = "Inventory".Loc() };
+            retainerColumn = new() { Label = "Retainers".Loc() };
+            remainingColumn = new() { Label = "Remaining Needed".Loc() };
+            craftableColumn = new() { Label = "Sources".Loc() };
+            craftableCountColumn = new() { Label = "Number Craftable".Loc() };
+            craftItemsColumn = new() { Label = "Used to Craft".Loc() };
+            itemCategoryColumn = new() { Label = "Category".Loc() };
+            gatherItemLocationColumn = new() { Label = "Gathered Zone".Loc() };
+            cheapestServerColumn = new() { Label = "Optimal World For Buying".Loc() };
+            numberForSaleColumn = new() { Label = "Quantity For Sale (All Worlds)".Loc() };
+
+            if (P.Config.DefaultHideInventoryColumn) inventoryColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+            if (P.Config.DefaultHideRetainerColumn) retainerColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+            if (P.Config.DefaultHideRemainingColumn) remainingColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+            if (P.Config.DefaultHideCraftableColumn) craftableColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+            if (P.Config.DefaultHideCraftableCountColumn) craftableCountColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+            if (P.Config.DefaultHideCraftItemsColumn) craftItemsColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+            if (P.Config.DefaultHideCategoryColumn) itemCategoryColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+            if (P.Config.DefaultHideGatherLocationColumn) gatherItemLocationColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+            if (P.Config.DefaultHideIdColumn) idColumn.Flags |= ImGuiTableColumnFlags.DefaultHide;
+
+            List<Column<Ingredient>> headers = new() { nameColumn, requiredColumn, inventoryColumn, remainingColumn, craftableColumn, craftableCountColumn, craftItemsColumn, itemCategoryColumn, gatherItemLocationColumn, idColumn };
+            if (RetainerInfo.ATools) headers.Insert(3, retainerColumn);
             if (P.Config.UseUniversalis)
             {
-                headers.Insert(headers.Count - 1, _cheapestServerColumn);
-                headers.Insert(headers.Count - 1, _numberForSaleColumn);
+                headers.Insert(headers.Count - 1, cheapestServerColumn);
+                headers.Insert(headers.Count - 1, numberForSaleColumn);
             }
-            this.Headers = headers.ToArray();
+            return headers.ToArray();
+        }
+
+        public IngredientTable(List<Ingredient> ingredientList)
+            : base("IngredientTable", ingredientList,
+                BuildHeaders(out var idColumn, out var nameColumn, out var requiredColumn, out var inventoryColumn,
+                    out var retainerColumn, out var remainingColumn, out var craftableColumn, out var craftableCountColumn,
+                    out var craftItemsColumn, out var itemCategoryColumn, out var gatherItemLocationColumn,
+                    out var cheapestServerColumn, out var numberForSaleColumn))
+        {
+            _idColumn = idColumn;
+            _nameColumn = nameColumn;
+            _requiredColumn = requiredColumn;
+            _inventoryColumn = inventoryColumn;
+            _retainerColumn = retainerColumn;
+            _remainingColumn = remainingColumn;
+            _craftableColumn = craftableColumn;
+            _craftableCountColumn = craftableCountColumn;
+            _craftItemsColumn = craftItemsColumn;
+            _itemCategoryColumn = itemCategoryColumn;
+            _gatherItemLocationColumn = gatherItemLocationColumn;
+            _cheapestServerColumn = cheapestServerColumn;
+            _numberForSaleColumn = numberForSaleColumn;
 
             Sortable = true;
             ListItems = ingredientList;
             Flags |= ImGuiTableFlags.Hideable | ImGuiTableFlags.Reorderable | ImGuiTableFlags.Resizable;
 
             _nameColumn.OnContextMenuRequest += OpenContextMenu;
+            _nameColumn.ExtraFilter = item => _craftFilterSet is null || _craftFilterSet.Contains(item);
             _remainingColumn.SourceList = ListItems;
 
             foreach (var item in Items)
@@ -133,6 +187,18 @@ namespace Artisan.UI.Tables
 
         public sealed class NameColumn : ColumnString<Ingredient>
         {
+            // OtterGui's ColumnString<T> dropped the built-in OnContextMenuRequest
+            // event / InvokeContextMenu helper when it migrated to
+            // Dalamud.Bindings.ImGui; re-implement them locally.
+            public event EventHandler<Ingredient>? OnContextMenuRequest;
+
+            public void InvokeContextMenu(Ingredient e)
+                => OnContextMenuRequest?.Invoke(this, e);
+
+            // See _craftFilterSet on the owning IngredientTable: additional
+            // predicate combined with the normal text-search filter below.
+            public Func<Ingredient, bool>? ExtraFilter;
+
             public NameColumn()
                => Flags |= ImGuiTableColumnFlags.NoHide;
 
@@ -140,6 +206,9 @@ namespace Artisan.UI.Tables
             {
                 return item.Data.Name.ToString();
             }
+
+            public override bool FilterFunc(Ingredient item)
+                => base.FilterFunc(item) && (ExtraFilter?.Invoke(item) ?? true);
 
             public bool ShowColour = false;
             public bool ShowHQOnly = false;
@@ -749,7 +818,7 @@ namespace Artisan.UI.Tables
             if (item.Data.RowId == 0)
                 return;
 
-            if (FilteredItems.Count == Items.Count || Headers.Any(x => x.FilterFunc(item)))
+            if (!CraftFiltered || Headers.Any(x => x.FilterFunc(item)))
             {
                 if (isOnList == null)
                 {
@@ -760,18 +829,16 @@ namespace Artisan.UI.Tables
                 {
                     if (ImGui.Selectable("Show ingredients used for this".Loc()))
                     {
-                        FilteredItems.Clear();
-                        var idx = 0;
-                        FilteredItems.Add((item, idx));
-                        idx++;
+                        var craftFilterSet = new HashSet<Ingredient> { item };
                         foreach (var ingredient in CraftingListHelpers.GetIngredientRecipe(item.Data.RowId).Value.Ingredients().Where(x => x.Amount > 0))
                         {
                             if (Items.FindFirst(x => x.Data.RowId == ingredient.Item.RowId, out var result))
-                                FilteredItems.Add((result, idx));
-                            idx++;
+                                craftFilterSet.Add(result);
                         }
 
+                        _craftFilterSet = craftFilterSet;
                         CraftFiltered = true;
+                        FilterDirty = true;
                     }
                 }
             }
@@ -782,6 +849,7 @@ namespace Artisan.UI.Tables
                     return;
 
                 CraftFiltered = false;
+                _craftFilterSet = null;
                 FilterDirty = true;
 
             }

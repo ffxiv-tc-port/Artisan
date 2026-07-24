@@ -13,6 +13,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Linq;
 using Condition = Artisan.CraftingLogic.CraftData.Condition;
@@ -462,7 +463,7 @@ public static unsafe class Crafting
 
     private static AddonSynthesis* GetAddon()
     {
-        var synthWindow = (AddonSynthesis*)Svc.GameGui.GetAddonByName("Synthesis");
+        var synthWindow = (AddonSynthesis*)Svc.GameGui.GetAddonByName("Synthesis").Address;
         if (synthWindow == null)
             return null; // not ready
 
@@ -477,7 +478,7 @@ public static unsafe class Crafting
 
     public static AtkUnitBase* GetCosmicAddon()
     {
-        var cosmicAddon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook");
+        var cosmicAddon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook").Address;
         if (cosmicAddon == null || !cosmicAddon->IsVisible || !cosmicAddon->IsReady)
             return null; // not ready
 
@@ -486,7 +487,7 @@ public static unsafe class Crafting
 
     private static AtkUnitBase* GetQuickSynthAddon()
     {
-        var addon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("SynthesisSimple");
+        var addon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("SynthesisSimple").Address;
         if (addon == null)
             return null;
 

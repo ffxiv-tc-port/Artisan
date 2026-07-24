@@ -6,6 +6,7 @@ using ECommons.DalamudServices;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -45,7 +46,7 @@ namespace Artisan.RawInformation
         public Ingredient(uint ItemId, int required, NewCraftingList originList, Dictionary<uint, int> materials, IngredientHelpers ingredientHelpers)
         {
             Data = LuminaSheets.ItemSheet.Values.First(x => x.RowId == ItemId);
-            Icon = P.Icons.TryLoadIconAsync(Data.Icon).Result;
+            Icon = P.Icons.LoadIcon(Data.Icon);
             Required = required;
             if (LuminaSheets.RecipeSheet.Values.FindFirst(x => x.ItemResult.RowId == ItemId, out CraftedRecipe)) { Sources.Add(1); CanBeCrafted = true; }
             if (LuminaSheets.GatheringItemSheet.Values.Any(x => x.Item.RowId == ItemId)) Sources.Add(2);

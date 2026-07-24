@@ -14,7 +14,7 @@ using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
 using ECommons.LanguageHelpers;
 using ECommons.Logging;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 
 namespace Artisan.UI
@@ -77,10 +77,14 @@ namespace Artisan.UI
             if (!P.Config.DisableHighlightedAction)
                 Hotbars.MakeButtonsGlow(CraftingProcessor.NextRec.Action);
 
-            if (ImGuiEx.AddHeaderIcon("OpenConfig", FontAwesomeIcon.Cog, new ImGuiEx.HeaderIconOptions() { Tooltip = "Open Config".Loc() }))
+            // ECommons dropped AddHeaderIcon in favor of Window.TitleBarButton, but this
+            // window uses NoTitleBar so the native title bar button row never renders;
+            // draw an equivalent inline icon button instead.
+            if (ImGuiEx.IconButton(FontAwesomeIcon.Cog, "OpenConfig"))
             {
                 P.PluginUi.IsOpen = true;
             }
+            ImGuiEx.Tooltip("Open Config".Loc());
 
             if (Crafting.CurCraft != null && !Crafting.CurCraft.CraftExpert && Crafting.CurRecipe?.SecretRecipeBook.RowId > 0 && Crafting.CurCraft?.CraftLevel == Crafting.CurCraft?.StatLevel && !CraftingProcessor.ActiveSolver.IsType<MacroSolver>())
             {

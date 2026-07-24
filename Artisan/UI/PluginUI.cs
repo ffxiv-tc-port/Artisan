@@ -13,7 +13,7 @@ using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
 using ECommons.LanguageHelpers;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using PunishLib.ImGuiMethods;
 using System;
@@ -133,7 +133,7 @@ namespace Artisan.UI
                         {
                             ImGuiEx.LineCentered("###ArtisanLogo", () =>
                             {
-                                ImGui.Image(logo.ImGuiHandle, new(100f.Scale(), 100f.Scale()));
+                                ImGui.Image(logo.Handle, new(100f.Scale(), 100f.Scale()));
                                 if (ImGui.IsItemHovered())
                                 {
                                     ImGui.BeginTooltip();
@@ -279,7 +279,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###ArtisanTextLogo", () =>
                 {
-                    ImGui.Image(logo.ImGuiHandle, new Vector2(logo.Width, 100f.Scale()));
+                    ImGui.Image(logo.Handle, new Vector2(logo.Width, 100f.Scale()));
                 });
             }
 
@@ -312,7 +312,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###AutoModeExample", () =>
                 {
-                    ImGui.Image(example.ImGuiHandle, new Vector2(example.Width, example.Height));
+                    ImGui.Image(example.Handle, new Vector2(example.Width, example.Height));
                 });
             }
 
@@ -325,7 +325,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###CraftWindowExample", () =>
                 {
-                    ImGui.Image(example.ImGuiHandle, new Vector2(example.Width, example.Height));
+                    ImGui.Image(example.Handle, new Vector2(example.Width, example.Height));
                 });
             }
 
@@ -340,7 +340,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###OutlineExample", () =>
                 {
-                    ImGui.Image(example.ImGuiHandle, new Vector2(example.Width, example.Height));
+                    ImGui.Image(example.Handle, new Vector2(example.Width, example.Height));
                 });
             }
 
@@ -377,7 +377,7 @@ namespace Artisan.UI
             {
                 ImGuiEx.LineCentered("###RecipeWindowExample", () =>
                 {
-                    ImGui.Image(example.ImGuiHandle, new Vector2(example.Width, example.Height));
+                    ImGui.Image(example.Handle, new Vector2(example.Width, example.Height));
                 });
             }
 
@@ -974,7 +974,7 @@ namespace Artisan.UI
                 {
                     ImGuiEx.ImGuiLineCentered("###EnduranceNewSetting", () =>
                     {
-                        ImGui.Image(img.ImGuiHandle, new Vector2(img.Width, img.Height));
+                        ImGui.Image(img.Handle, new Vector2(img.Width, img.Height));
                     });
                 }
 

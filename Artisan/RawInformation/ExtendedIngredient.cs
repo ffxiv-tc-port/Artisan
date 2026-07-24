@@ -138,7 +138,13 @@ namespace Artisan.RawInformation
             {
                 if (DateTime.Now > RetainerCheck)
                 {
-                    retainerCount = Task.Run(() => RetainerInfo.GetRetainerItemCount(Data.RowId)).Result;
+                    // GetRetainerItemCount reads RetainerManager.Instance(), a native FFXIVClientStructs
+                    // struct, which must be read from the game/framework thread. The previous
+                    // Task.Run(...).Result wrapping ran that native read on a thread-pool thread while
+                    // still blocking this (main/UI) thread waiting on it - strictly worse than calling
+                    // it directly, and unsafe to boot. Call it synchronously in place, matching the
+                    // ReainterCountHQ getter below.
+                    retainerCount = RetainerInfo.GetRetainerItemCount(Data.RowId);
                     RetainerCheck = DateTime.Now.AddSeconds(0.5);
                 }
                 return retainerCount;

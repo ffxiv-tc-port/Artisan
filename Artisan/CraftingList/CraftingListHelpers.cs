@@ -5,6 +5,7 @@ using Artisan.RawInformation;
 using ECommons.DalamudServices;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;

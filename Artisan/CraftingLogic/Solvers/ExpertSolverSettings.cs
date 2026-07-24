@@ -5,7 +5,7 @@ using Dalamud.Interface.Components;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
 using ECommons.LanguageHelpers;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 using static Artisan.RawInformation.AddonExtensions;
 

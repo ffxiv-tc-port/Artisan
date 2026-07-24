@@ -6,6 +6,7 @@ using Dalamud.Game.ClientState.Conditions;
 using ECommons.DalamudServices;
 using ECommons.Logging;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 
 namespace Artisan.IPC

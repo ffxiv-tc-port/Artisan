@@ -15,9 +15,10 @@ using ECommons.ImGuiMethods;
 using ECommons.LanguageHelpers;
 using ECommons.Reflection;
 using FFXIVClientStructs.FFXIV.Client.Game;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -233,9 +234,9 @@ namespace Artisan.CraftingLists
 
             var recipe = LuminaSheets.RecipeSheet[recipeId];
             var config = P.Config.RecipeConfigs.GetValueOrDefault(recipe.RowId) ?? new();
-            var stats = CharacterStats.GetBaseStatsForClassHeuristic(Job.CRP + recipe.CraftType.RowId);
+            var stats = CharacterStats.GetBaseStatsForClassHeuristic((Job)((uint)Job.CRP + recipe.CraftType.RowId));
             stats.AddConsumables(new(config.RequiredFood, config.RequiredFoodHQ), new(config.RequiredPotion, config.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
-            var craft = Crafting.BuildCraftStateForRecipe(stats, Job.CRP + recipe.CraftType.RowId, recipe);
+            var craft = Crafting.BuildCraftStateForRecipe(stats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
             var solver = CraftingProcessor.GetSolverForRecipe(config, craft).CreateSolver(craft);
             if (solver != null)
             {

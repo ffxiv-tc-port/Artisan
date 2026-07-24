@@ -5,7 +5,7 @@ using Dalamud.Interface.Colors;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
 using ECommons.LanguageHelpers;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;

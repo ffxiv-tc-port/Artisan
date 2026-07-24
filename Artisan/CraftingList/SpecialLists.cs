@@ -5,7 +5,7 @@ using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
 using ECommons.LanguageHelpers;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using System.Collections.Generic;
 using System.Linq;
@@ -54,13 +54,13 @@ namespace Artisan.CraftingLists
             ImGui.PushItemWidth(ImGui.GetContentRegionAvail().X / 2);
             ImGui.InputText("###NameInput", ref listName, 300);
 
-            ImGui.Columns(6, null, false);
+            ImGui.Columns(6, "", false);
 
             ImGui.TextWrapped("Select Job(s)".Loc());
 
             if (ImGui.BeginListBox("###JobSelectListBox", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 110)))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 foreach (var item in JobSelected)
                 {
                     string jobName = LuminaSheets.ClassJobSheet[item.Key].Abbreviation.ToString().ToUpper();
@@ -79,7 +79,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Already Crafted Recipe".Loc());
             if (ImGui.BeginListBox("###AlreadyCraftedRecipes", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 bool yes = alreadyCrafted[1];
                 if (ImGui.Checkbox("Yes".Loc(), ref yes))
                 {
@@ -97,7 +97,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Collectable Recipe".Loc());
             if (ImGui.BeginListBox("###CollectableRecipes", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 bool yes = isCollectable[1];
                 if (ImGui.Checkbox("Yes".Loc(), ref yes))
                 {
@@ -117,7 +117,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Max Durability".Loc());
             if (ImGui.BeginListBox("###SpecialListDurability", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 110)))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 foreach (var dur in Durabilities)
                 {
                     var val = dur.Value;
@@ -135,7 +135,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Level-based Recipes".Loc());
             if (ImGui.BeginListBox("###IsLevelBasedRecipe", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 bool yes = isLevelBased[1];
                 if (ImGui.Checkbox("Yes".Loc(), ref yes))
                 {
@@ -155,7 +155,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("HQable Recipe".Loc());
             if (ImGui.BeginListBox("###HQRecipes", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 bool yes = isHQAble[1];
                 if (ImGui.Checkbox("Yes".Loc(), ref yes))
                 {
@@ -182,7 +182,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Recipe from a Book".Loc());
             if (ImGui.BeginListBox("###UnlockableRecipe", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 bool yes = hasToBeUnlocked[1];
                 if (ImGui.Checkbox("Yes".Loc(), ref yes))
                 {
@@ -200,7 +200,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Quest Only Recipe".Loc());
             if (ImGui.BeginListBox("###QuestRecipe", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 bool yes = questRecipe[1];
                 if (ImGui.Checkbox("Yes".Loc(), ref yes))
                 {
@@ -234,7 +234,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Expert Recipe".Loc());
             if (ImGui.BeginListBox("###ExpertRecipe", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 bool yes = isExpert[1];
                 if (ImGui.Checkbox("Yes".Loc(), ref yes))
                 {
@@ -252,7 +252,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Secondary Recipe".Loc());
             if (ImGui.BeginListBox("###SecondaryRecipes", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 32f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 bool yes = isSecondary[1];
                 if (ImGui.Checkbox("Yes".Loc(), ref yes))
                 {
@@ -277,7 +277,7 @@ namespace Artisan.CraftingLists
             ImGui.TextWrapped("Amount Result".Loc());
             if (ImGui.BeginListBox("###Yields", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 120f.Scale())))
             {
-                ImGui.Columns(2, null, false);
+                ImGui.Columns(2, "", false);
                 foreach (var yield in Yields)
                 {
                     var val = yield.Value;
@@ -321,7 +321,7 @@ namespace Artisan.CraftingLists
 
             if (ImGui.BeginListBox("###Stats", new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 120)))
             {
-                ImGui.Columns(6, null, false);
+                ImGui.Columns(6, "", false);
                 foreach (var stat in Stats)
                 {
                     var statName = Svc.Data.GetExcelSheet<BaseParam>()?.First(x => x.RowId == stat.Key).Name.ExtractText();

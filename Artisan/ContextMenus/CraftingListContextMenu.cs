@@ -4,11 +4,12 @@ using ECommons.DalamudServices;
 using System;
 using System.Linq;
 using OtterGui;
+using OtterGui.Extensions;
 using Artisan.IPC;
 using Artisan.Autocraft;
 using Artisan.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Gui.ContextMenu;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using System.Collections.Generic;
@@ -247,7 +248,7 @@ internal static class CraftingListContextMenu
 
     private static unsafe IntPtr AgentById(AgentId id)
     {
-        var uiModule = (UIModule*)Svc.GameGui.GetUIModule();
+        var uiModule = (UIModule*)Svc.GameGui.GetUIModule().Address;
         var agents = uiModule->GetAgentModule();
         var agent = agents->GetAgentByInternalId(id);
         return (IntPtr)agent;
@@ -331,7 +332,7 @@ internal static class CraftingListContextMenu
         {
             if (w.WindowName == $"List Editor###{CraftingListUI.selectedList.ID}")
             {
-                (w as ListEditor).RecipeSelector.Items = CraftingListUI.selectedList.Recipes.ToList();
+                (w as ListEditor).RecipeSelector.ReplaceItems(CraftingListUI.selectedList.Recipes);
                 (w as ListEditor).RefreshTable(null, true);
             }
         }

@@ -1,4 +1,4 @@
-﻿using ECommons.DalamudServices;
+using ECommons.DalamudServices;
 using Lumina.Excel.Sheets;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -6,12 +6,32 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Threading.Tasks;
 
 namespace Artisan.RawInformation
 {
     public class DropSources
     {
-        public static List<DropSources>? Sources = DropList()?.ToList();
+        private static List<DropSources> _sources = new();
+        private static bool checkStarted = false;
+
+        // Sources used to be populated by a synchronous HttpClient GET running inside this
+        // static field's initializer, executed implicitly and synchronously on whatever thread
+        // first touched the type. Kick the fetch off in the background on first access instead
+        // and return the (initially empty) cached list until it lands.
+        public static List<DropSources> Sources
+        {
+            get
+            {
+                if (!checkStarted)
+                {
+                    checkStarted = true;
+                    Task.Run(FetchDropList);
+                }
+
+                return _sources;
+            }
+        }
 
         public DropSources(uint ItemId, List<uint> monsterId)
         {
@@ -27,9 +47,9 @@ namespace Artisan.RawInformation
         public List<uint> MonsterId { get; set; }
         public bool UsedInRecipes { get; set; }
 
-        private static List<DropSources>? DropList()
+        private static void FetchDropList()
         {
-            List<DropSources>? output = new();
+            List<DropSources> output = new();
             try
             {
                 using HttpResponseMessage? sources = new HttpClient().GetAsync("https://raw.githubusercontent.com/ffxiv-teamcraft/ffxiv-teamcraft/master/libs/data/src/lib/json/drop-sources.json").Result;
@@ -51,12 +71,12 @@ namespace Artisan.RawInformation
                             output.Add(source);
                     }
                 }
+
+                _sources = output;
             }
             catch (Exception ex)
             {
             }
-
-            return output;
         }
     }
 }

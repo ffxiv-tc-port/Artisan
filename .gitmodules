@@ -9,7 +9,7 @@
 	url = https://github.com/Taurenkey/ClickLib.git
 [submodule "OtterGui"]
 	path = OtterGui
-	url = https://github.com/Lother/OtterGui.git
+	url = https://github.com/ffxiv-tc-port/OtterGui.git
 [submodule "raphael-rs"]
 	path = raphael-rs
 	url = https://github.com/Taurenkey/raphael-rs.git

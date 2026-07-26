@@ -5,10 +5,10 @@
   "Description": "整合各種功能的全能製作插件。",
   "InternalName": "Artisan",
   "ApplicableVersion": "any",
-  "IconUrl": "https://raw.githubusercontent.com/Lother/DalamudPluginsTC/main/icons/Artisan.png",
+  "IconUrl": "https://raw.githubusercontent.com/ffxiv-tc-port/DalamudPluginsTC/main/icons/Artisan.png",
   "Tags": [
     "crafting"
   ],
-  "RepoUrl": "https://github.com/Lother/Artisan",
+  "RepoUrl": "https://github.com/ffxiv-tc-port/Artisan",
   "DalamudApiLevel": 12
 }

@@ -20,6 +20,7 @@ namespace Artisan.CraftingLists
     internal static class Teamcraft
     {
         internal static string importListName = "";
+        internal static string importListLink = "";
         internal static string importListPreCraft = "";
         internal static string importListItems = "";
         internal static bool openImportWindow = false;
@@ -44,7 +45,7 @@ namespace Artisan.CraftingLists
                     ExportSelectedListToTC();
                 }
 
-                if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Paste, "Merge List From Clipboard (Teamcraft Export)".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 30), true))
+                if (IconButtons.IconTextButton(Dalamud.Interface.FontAwesomeIcon.Paste, "Merge List From Clipboard (Teamcraft Export/Link)".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 30), true))
                 {
                     MergeClipboardIntoSelectedList();
                 }
@@ -67,7 +68,10 @@ namespace Artisan.CraftingLists
             }
 
             var before = CraftingListUI.selectedList.Recipes.Sum(x => x.Quantity);
-            MergeLinesIntoList(clipboard, CraftingListUI.selectedList, P.Config.DefaultListQuickSynth);
+            if (clipboard.Contains("/import/", StringComparison.OrdinalIgnoreCase))
+                MergeTeamcraftLinkIntoList(clipboard, CraftingListUI.selectedList, P.Config.DefaultListQuickSynth);
+            else
+                MergeLinesIntoList(clipboard, CraftingListUI.selectedList, P.Config.DefaultListQuickSynth);
             var after = CraftingListUI.selectedList.Recipes.Sum(x => x.Quantity);
 
             if (after == before)
@@ -156,12 +160,14 @@ namespace Artisan.CraftingLists
                 ImGui.Text("List Name".Loc());
                 ImGui.SameLine();
                 ImGuiComponents.HelpMarker(("Guide to importing lists.\n\n" +
-                    "Step 1. Open a list on Teamcraft with the items you wish to craft.\n\n" +
-                    "Step 2. Find the pre crafts section and click the \"Copy as Text\" button.\n\n" +
-                    "Step 3. Paste into the Pre-Craft Items box in this window.\n\n" +
-                    "Step 4. Repeat Step 2 & 3 but for the final items section.\n\n" +
-                    "Step 5. Give your list a name and click import.").Loc());
+                    "Option A: Paste a Teamcraft import link (https://ffxivteamcraft.com/import/...) into the Teamcraft Link box. Items are matched by ID, so this works no matter which language Teamcraft is displaying.\n\n" +
+                    "Option B: Use Teamcraft's \"Copy as Text\" button on the pre crafts and final items sections, and paste them into the boxes below. Item names must match your game client's language exactly.\n\n" +
+                    "Give your list a name and click import.").Loc());
                 ImGui.InputText("###ImportListName", ref importListName, 50);
+                ImGui.Text("Teamcraft Link".Loc());
+                ImGui.SameLine();
+                ImGuiComponents.HelpMarker("Items imported from a link are matched by item ID instead of item name, so this works even when your Teamcraft language does not match the game client (e.g. English Teamcraft with a Traditional Chinese client).".Loc());
+                ImGui.InputText("###ImportListLink", ref importListLink, 5000);
                 ImGui.Text("Pre-craft Items".Loc());
                 ImGui.InputTextMultiline("###PrecraftItems", ref importListPreCraft, 5000000, new Vector2(ImGui.GetContentRegionAvail().X, 100));
 
@@ -189,6 +195,7 @@ namespace Artisan.CraftingLists
                             importedList.Save();
                             openImportWindow = false;
                             importListName = "";
+                            importListLink = "";
                             importListPreCraft = "";
                             importListItems = "";
 
@@ -209,6 +216,7 @@ namespace Artisan.CraftingLists
                 {
                     openImportWindow = false;
                     importListName = "";
+                    importListLink = "";
                     importListPreCraft = "";
                     importListItems = "";
                 }
@@ -219,9 +227,10 @@ namespace Artisan.CraftingLists
 
         private static NewCraftingList? ParseImport(bool precraftQS, bool finalitemQS)
         {
-            if (string.IsNullOrEmpty(importListName) && string.IsNullOrEmpty(importListItems) && string.IsNullOrEmpty(importListPreCraft)) return null;
+            if (string.IsNullOrEmpty(importListName) && string.IsNullOrEmpty(importListLink) && string.IsNullOrEmpty(importListItems) && string.IsNullOrEmpty(importListPreCraft)) return null;
             NewCraftingList output = new NewCraftingList();
             output.Name = importListName;
+            MergeTeamcraftLinkIntoList(importListLink, output, finalitemQS);
             MergeLinesIntoList(importListPreCraft, output, precraftQS);
             MergeLinesIntoList(importListItems, output, finalitemQS);
 
@@ -258,17 +267,75 @@ namespace Artisan.CraftingLists
 
                 var recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId > 0 && x.ItemResult.ValueNullable?.Name.ToDalamudString().ToString() == item);
                 if (recipe?.RowId > 0)
-                {
-                    int quantity = (int)Math.Ceiling(numberOfItem / (double)recipe.Value.AmountResult);
-                    if (target.Recipes.Any(x => x.ID == recipe.Value.RowId))
-                        target.Recipes.First(x => x.ID == recipe.Value.RowId).Quantity += quantity;
-                    else
-                        target.Recipes.Add(new ListItem() { ID = recipe.Value.RowId, Quantity = quantity, ListItemOptions = new() });
-
-                    if (quickSynth && recipe.Value.CanQuickSynth)
-                        target.Recipes.First(x => x.ID == recipe.Value.RowId).ListItemOptions.NQOnly = true;
-                }
+                    AddRecipeToList(target, recipe.Value, numberOfItem, quickSynth);
             }
+        }
+
+        // Parses Teamcraft's import-link format (https://ffxivteamcraft.com/import/<base64>,
+        // decoding to "itemId,recipeId|null,quantity;...") and merges it into an existing list.
+        // Matching is by item ID rather than name, so it works regardless of the game client's
+        // data language - names exported from an English Teamcraft cannot match TC-client sheets.
+        internal static void MergeTeamcraftLinkIntoList(string text, NewCraftingList target, bool quickSynth)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            if (!TryExtractLinkPayload(text, out var payload)) return;
+
+            foreach (var entry in payload.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var fields = entry.Split(',');
+                if (fields.Length < 2) continue;
+
+                if (!long.TryParse(fields[0].Trim(), out var rawItemId)) continue;
+                var itemId = (uint)Math.Abs(rawItemId);
+                if (!int.TryParse(fields[^1].Trim(), out var numberOfItem) || numberOfItem <= 0) continue;
+                if (DebugTab.Debug) Svc.Log.Debug($"{numberOfItem} x item#{itemId}");
+
+                var recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId == itemId && itemId > 0);
+                if (recipe?.RowId > 0)
+                    AddRecipeToList(target, recipe.Value, numberOfItem, quickSynth);
+            }
+        }
+
+        private static bool TryExtractLinkPayload(string text, out string payload)
+        {
+            payload = "";
+            var t = text.Trim();
+            var idx = t.IndexOf("/import/", StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+                t = t.Substring(idx + "/import/".Length);
+
+            foreach (var cut in new[] { '?', '#' })
+            {
+                var c = t.IndexOf(cut);
+                if (c >= 0) t = t.Substring(0, c);
+            }
+
+            // Tolerate URL-encoded and URL-safe base64 variants with stripped padding.
+            t = Uri.UnescapeDataString(t).Trim().Replace('-', '+').Replace('_', '/');
+            if (t.Length == 0) return false;
+            if (t.Length % 4 != 0) t = t.PadRight(t.Length + (4 - t.Length % 4), '=');
+
+            try
+            {
+                payload = Encoding.UTF8.GetString(Convert.FromBase64String(t));
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void AddRecipeToList(NewCraftingList target, Recipe recipe, int numberOfItem, bool quickSynth)
+        {
+            int quantity = (int)Math.Ceiling(numberOfItem / (double)recipe.AmountResult);
+            if (target.Recipes.Any(x => x.ID == recipe.RowId))
+                target.Recipes.First(x => x.ID == recipe.RowId).Quantity += quantity;
+            else
+                target.Recipes.Add(new ListItem() { ID = recipe.RowId, Quantity = quantity, ListItemOptions = new() });
+
+            if (quickSynth && recipe.CanQuickSynth)
+                target.Recipes.First(x => x.ID == recipe.RowId).ListItemOptions.NQOnly = true;
         }
     }
 }

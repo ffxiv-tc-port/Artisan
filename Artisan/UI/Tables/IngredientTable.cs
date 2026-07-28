@@ -244,8 +244,11 @@ namespace Artisan.UI.Tables
                     }
                 }
 
-                if (item.Icon is not null)
-                ImGuiUtil.HoverIcon(item.Icon, Interface.LineIconSize);
+                // Fetch the wrap fresh every frame: shared immediate texture wraps must not
+                // be cached across frames - a cached wrap gets disposed once Dalamud evicts
+                // the texture, and drawing it then throws ObjectDisposedException (fatal).
+                if (P.Icons.TryLoadIcon(item.Data.Icon, out var icon))
+                    ImGuiUtil.HoverIcon(icon, Interface.LineIconSize);
                 ImGui.SameLine();
 
                 var selected = ImGui.Selectable($"{item.Data.Name.ToString()}");

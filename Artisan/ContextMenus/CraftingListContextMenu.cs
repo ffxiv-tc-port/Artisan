@@ -1,6 +1,7 @@
 ﻿using Artisan.CraftingLists;
 using Artisan.RawInformation;
 using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using System;
 using System.Linq;
 using OtterGui;
@@ -60,7 +61,7 @@ internal static class CraftingListContextMenu
 
         var recipeId = LuminaSheets.RecipeSheet.Values.First(x => x.ItemResult.RowId == ItemId).RowId;
 
-        if (ImGui.Selectable($"Open Recipe Log"))
+        if (ImGui.Selectable("Open Recipe Log".Loc()))
         {
             CraftingListFunctions.OpenRecipeByID(recipeId);
         }

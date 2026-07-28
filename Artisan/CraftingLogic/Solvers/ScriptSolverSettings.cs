@@ -75,12 +75,12 @@ public class ScriptSolverSettings
             using (ImRaii.Disabled(state == CompilationState.InProgress))
             {
                 // TODO: show icon depending on state...
-                if (ImGui.Button($"Recompile: {state}", new(100, 0)))
+                if (ImGui.Button("Recompile: ??".Loc(state), new(100, 0)))
                     _compiler.Recompile(s);
                 if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
                     ImGui.BeginTooltip();
-                    ImGui.TextUnformatted($"Compilation output:\n{s.CompilationOutput()}");
+                    ImGui.TextUnformatted("Compilation output:\n??".Loc(s.CompilationOutput()));
                     ImGui.EndTooltip();
                 }
             }

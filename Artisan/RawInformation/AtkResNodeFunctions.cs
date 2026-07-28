@@ -1,4 +1,5 @@
-﻿using FFXIVClientStructs.FFXIV.Component.GUI;
+﻿using ECommons.LanguageHelpers;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 using Dalamud.Bindings.ImGui;
 using System;
 using System.Linq;
@@ -104,8 +105,8 @@ namespace Artisan.RawInformation
             ImGui.Begin($"###SliderQuality", ImGuiWindowFlags.NoScrollbar
                 | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoNavFocus
                 | ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.NoTitleBar);
-            var textSize = ImGui.CalcTextSize("Simulated Starting Quality");
-            ImGui.TextUnformatted($"Simulated Starting Quality");
+            var textSize = ImGui.CalcTextSize("Simulated Starting Quality".Loc());
+            ImGui.TextUnformatted("Simulated Starting Quality".Loc());
             ImGui.PushItemWidth(textSize.Length());
             if (ImGui.SliderInt("", ref currentSimulated, 0, (int)maxFactor))
             {

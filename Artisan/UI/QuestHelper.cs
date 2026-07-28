@@ -4,6 +4,7 @@ using Artisan.GameInterop;
 using Artisan.QuestSync;
 using Artisan.RawInformation;
 using Dalamud.Interface.Windowing;
+using ECommons.LanguageHelpers;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Dalamud.Bindings.ImGui;
 using System;
@@ -49,7 +50,7 @@ namespace Artisan.UI
             bool hasIngredientsAny = QuestList.HasIngredientsForAny();
             if (hasIngredientsAny)
             {
-                ImGui.Text($"Quest Helper (click to open recipe)");
+                ImGui.Text("Quest Helper (click to open recipe)".Loc());
                 foreach (var quest in QuestList.Quests)
                 {
                     if (QuestList.IsOnQuest((ushort)quest.Key))
@@ -75,13 +76,13 @@ namespace Artisan.UI
             bool isOnSayQuest = QuestList.IsOnSayQuest();
             if (isOnSayQuest)
             {
-                ImGui.Text($"Quest Helper (click to say)");
+                ImGui.Text("Quest Helper (click to say)".Loc());
                 foreach (var quest in QuestManager.Instance()->DailyQuests)
                 {
                     string message = QuestList.GetSayQuestString(quest.QuestId);
                     if (message != "")
                     {
-                        if (ImGui.Button($@"Say ""{message}"""))
+                        if (ImGui.Button("Say \"??\"".Loc(message)))
                         {
                             CommandProcessor.ExecuteThrottled($"/say {message}");
                         }
@@ -91,14 +92,14 @@ namespace Artisan.UI
             bool isOnEmoteQuest = QuestList.IsOnEmoteQuest();
             if (isOnEmoteQuest)
             {
-                ImGui.Text("Quest Helper (click to target and emote)");
+                ImGui.Text("Quest Helper (click to target and emote)".Loc());
                 foreach (var quest in QuestManager.Instance()->DailyQuests)
                 {
                     if (quest.IsCompleted) continue;
 
                     if (QuestList.EmoteQuests.TryGetValue(quest.QuestId, out var data))
                     {
-                        if (ImGui.Button($@"Target {LuminaSheets.ENPCResidentSheet[data.NPCDataId].Singular.ExtractText()} and do {data.Emote}"))
+                        if (ImGui.Button("Target ?? and do ??".Loc(LuminaSheets.ENPCResidentSheet[data.NPCDataId].Singular.ExtractText(), data.Emote)))
                         {
                             QuestList.DoEmoteQuest(quest.QuestId);
                         }
@@ -109,7 +110,7 @@ namespace Artisan.UI
                         {
                             if (QuestList.EmoteQuests.TryGetValue(9998, out var npc1))
                             {
-                                if (ImGui.Button($@"Target {LuminaSheets.ENPCResidentSheet[npc1.NPCDataId].Singular.ExtractText()} and do {npc1.Emote}"))
+                                if (ImGui.Button("Target ?? and do ??".Loc(LuminaSheets.ENPCResidentSheet[npc1.NPCDataId].Singular.ExtractText(), npc1.Emote)))
                                 {
                                     QuestList.DoEmoteQuest(9998);
                                 }
@@ -117,7 +118,7 @@ namespace Artisan.UI
 
                             if (QuestList.EmoteQuests.TryGetValue(9999, out var npc2))
                             {
-                                if (ImGui.Button($@"Target {LuminaSheets.ENPCResidentSheet[npc2.NPCDataId].Singular.ExtractText()} and do {npc2.Emote}"))
+                                if (ImGui.Button("Target ?? and do ??".Loc(LuminaSheets.ENPCResidentSheet[npc2.NPCDataId].Singular.ExtractText(), npc2.Emote)))
                                 {
                                     QuestList.DoEmoteQuest(9999);
                                 }

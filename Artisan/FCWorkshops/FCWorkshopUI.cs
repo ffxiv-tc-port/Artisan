@@ -143,7 +143,7 @@ namespace Artisan.FCWorkshops
                         ImGui.EndTable();
                     }
 
-                    ImGui.InputInt("Number of Times###LoopProject", ref NumberOfLoops);
+                    ImGui.InputInt("Number of Times".Loc() + "###LoopProject", ref NumberOfLoops);
 
                     if (ImGui.Button("Create Crafting List for this Project".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 24f.Scale())))
                     {

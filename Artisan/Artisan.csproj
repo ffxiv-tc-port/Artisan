@@ -64,6 +64,10 @@
   </PropertyGroup>
 	
   <ItemGroup>
+    <EmbeddedResource Include="RawInformation\TeamcraftItemNames.tsv" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\.editorconfig" Link=".editorconfig" />
     <None Update="bcryptprimitives.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>

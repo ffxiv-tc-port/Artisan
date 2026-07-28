@@ -8,12 +8,16 @@ using ECommons.ImGuiMethods;
 using ECommons.LanguageHelpers;
 using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
+using Newtonsoft.Json.Linq;
 using PunishLib.ImGuiMethods;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Numerics;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace Artisan.CraftingLists
 {
@@ -26,6 +30,8 @@ namespace Artisan.CraftingLists
         internal static bool openImportWindow = false;
         private static bool precraftQS = false;
         private static bool finalitemQS = false;
+        private static readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(20) };
+        private static bool fetchingList = false;
 
         internal static void DrawTeamCraftListButtons()
         {
@@ -64,6 +70,26 @@ namespace Artisan.CraftingLists
             if (string.IsNullOrWhiteSpace(clipboard))
             {
                 Notify.Error("Clipboard is empty.".Loc());
+                return;
+            }
+
+            if (TryGetListShareUid(clipboard, out var uid))
+            {
+                var targetId = CraftingListUI.selectedList.ID;
+                FetchListShareItemsAsync(uid, entries =>
+                {
+                    var target = P.Config.NewCraftingLists.FirstOrDefault(x => x.ID == targetId);
+                    if (target == null) return;
+                    var before = target.Recipes.Sum(x => x.Quantity);
+                    MergeShareEntriesIntoList(entries, target, P.Config.DefaultListQuickSynth, P.Config.DefaultListQuickSynth);
+                    if (target.Recipes.Sum(x => x.Quantity) == before)
+                    {
+                        Notify.Error("The Teamcraft list contains no craftable items.".Loc());
+                        return;
+                    }
+                    P.Config.Save();
+                    Notify.Success("Merged clipboard items into the current list.".Loc());
+                });
                 return;
             }
 
@@ -160,13 +186,13 @@ namespace Artisan.CraftingLists
                 ImGui.Text("List Name".Loc());
                 ImGui.SameLine();
                 ImGuiComponents.HelpMarker(("Guide to importing lists.\n\n" +
-                    "Option A: Paste a Teamcraft import link (https://ffxivteamcraft.com/import/...) into the Teamcraft Link box. Items are matched by ID, so this works no matter which language Teamcraft is displaying.\n\n" +
-                    "Option B: Use Teamcraft's \"Copy as Text\" button on the pre crafts and final items sections, and paste them into the boxes below. Item names must match your game client's language exactly.\n\n" +
+                    "Option A: Paste your Teamcraft list's URL (https://ffxivteamcraft.com/list/...) into the Teamcraft Link box. The list is fetched from Teamcraft directly, including pre-crafts, so this works no matter which language Teamcraft is displaying.\n\n" +
+                    "Option B: Use Teamcraft's \"Copy as Text\" button on the pre crafts and final items sections, and paste them into the boxes below. Item names in English, Simplified Chinese or the game client's language are all recognised.\n\n" +
                     "Give your list a name and click import.").Loc());
                 ImGui.InputText("###ImportListName", ref importListName, 50);
                 ImGui.Text("Teamcraft Link".Loc());
                 ImGui.SameLine();
-                ImGuiComponents.HelpMarker("Items imported from a link are matched by item ID instead of item name, so this works even when your Teamcraft language does not match the game client (e.g. English Teamcraft with a Traditional Chinese client).".Loc());
+                ImGuiComponents.HelpMarker("Accepts a Teamcraft list URL (ffxivteamcraft.com/list/...), fetched online with pre-crafts included, or an import link (ffxivteamcraft.com/import/...), decoded offline. Items are matched by ID, so any Teamcraft display language works.".Loc());
                 ImGui.InputText("###ImportListLink", ref importListLink, 5000);
                 ImGui.Text("Pre-craft Items".Loc());
                 ImGui.InputTextMultiline("###PrecraftItems", ref importListPreCraft, 5000000, new Vector2(ImGui.GetContentRegionAvail().X, 100));
@@ -186,25 +212,57 @@ namespace Artisan.CraftingLists
                 {
                     if (ImGui.Button("Import".Loc()))
                     {
-                        NewCraftingList? importedList = ParseImport(precraftQS, finalitemQS);
-                        if (importedList is not null)
+                        if (TryGetListShareUid(importListLink, out var uid))
                         {
-                            if (GenericHelpers.IsNullOrEmpty(importedList.Name))
-                                importedList.Name = importedList.Recipes.FirstOrDefault().ID.NameOfRecipe();
-                            importedList.SetID();
-                            importedList.Save();
+                            var name = importListName;
+                            var precraftText = importListPreCraft;
+                            var finalText = importListItems;
+                            var preQS = precraftQS;
+                            var finalQS = finalitemQS;
+                            FetchListShareItemsAsync(uid, entries =>
+                            {
+                                var list = new NewCraftingList { Name = name };
+                                MergeShareEntriesIntoList(entries, list, preQS, finalQS);
+                                MergeLinesIntoList(precraftText, list, preQS);
+                                MergeLinesIntoList(finalText, list, finalQS);
+                                if (list.Recipes.Count == 0)
+                                {
+                                    Notify.Error("The imported list has no items. Please check your import and try again.".Loc());
+                                    return;
+                                }
+                                if (GenericHelpers.IsNullOrEmpty(list.Name))
+                                    list.Name = list.Recipes.FirstOrDefault().ID.NameOfRecipe();
+                                list.SetID();
+                                list.Save();
+                                Notify.Success("List imported from Teamcraft.".Loc());
+                            });
                             openImportWindow = false;
                             importListName = "";
                             importListLink = "";
                             importListPreCraft = "";
                             importListItems = "";
-
                         }
                         else
                         {
-                            Notify.Error("The imported list has no items. Please check your import and try again.".Loc());
-                        }
+                            NewCraftingList? importedList = ParseImport(precraftQS, finalitemQS);
+                            if (importedList is not null)
+                            {
+                                if (GenericHelpers.IsNullOrEmpty(importedList.Name))
+                                    importedList.Name = importedList.Recipes.FirstOrDefault().ID.NameOfRecipe();
+                                importedList.SetID();
+                                importedList.Save();
+                                openImportWindow = false;
+                                importListName = "";
+                                importListLink = "";
+                                importListPreCraft = "";
+                                importListItems = "";
 
+                            }
+                            else
+                            {
+                                Notify.Error("The imported list has no items. Please check your import and try again.".Loc());
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -266,8 +324,80 @@ namespace Artisan.CraftingLists
                 if (DebugTab.Debug) Svc.Log.Debug($"{numberOfItem} x {item}");
 
                 var recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId > 0 && x.ItemResult.ValueNullable?.Name.ToDalamudString().ToString() == item);
+                if (recipe is null && ForeignItemNames.TryGetItemId(item, out var foreignId))
+                    recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId == foreignId);
                 if (recipe?.RowId > 0)
                     AddRecipeToList(target, recipe.Value, numberOfItem, quickSynth);
+            }
+        }
+
+        // Resolves a Teamcraft list share URL (ffxivteamcraft.com/list/<uid>) by reading the
+        // public Firestore document behind it - the URL itself carries no item data, unlike
+        // /import/ links, so this path needs one online request.
+        private static bool TryGetListShareUid(string text, out string uid)
+        {
+            uid = "";
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var m = Regex.Match(text, @"ffxivteamcraft\.com/list/([A-Za-z0-9_-]+)");
+            if (!m.Success) return false;
+            uid = m.Groups[1].Value;
+            return true;
+        }
+
+        private static void FetchListShareItemsAsync(string uid, Action<List<(uint ItemId, int Amount, bool Precraft)>> onSuccess)
+        {
+            if (fetchingList)
+            {
+                Notify.Error("Already fetching a list from Teamcraft, please wait.".Loc());
+                return;
+            }
+            fetchingList = true;
+            Notify.Info("Fetching list from Teamcraft...".Loc());
+            Task.Run(async () =>
+            {
+                try
+                {
+                    var json = await httpClient.GetStringAsync($"https://firestore.googleapis.com/v1/projects/ffxivteamcraft/databases/(default)/documents/lists/{uid}");
+                    var fields = JObject.Parse(json)["fields"];
+                    var entries = new List<(uint ItemId, int Amount, bool Precraft)>();
+                    AddShareArrayEntries(fields?["items"], true, entries);
+                    AddShareArrayEntries(fields?["finalItems"], false, entries);
+                    await Svc.Framework.RunOnFrameworkThread(() => onSuccess(entries));
+                }
+                catch (Exception ex)
+                {
+                    ex.Log();
+                    await Svc.Framework.RunOnFrameworkThread(() => Notify.Error("Failed to fetch the list from Teamcraft. Check the link is correct and the list is public.".Loc()));
+                }
+                finally
+                {
+                    fetchingList = false;
+                }
+            });
+        }
+
+        private static void AddShareArrayEntries(JToken? array, bool precraft, List<(uint ItemId, int Amount, bool Precraft)> entries)
+        {
+            if (array?["arrayValue"]?["values"] is not JArray values) return;
+            foreach (var value in values)
+            {
+                var fields = value["mapValue"]?["fields"];
+                if (fields == null) continue;
+                if (!uint.TryParse((string?)fields["id"]?["integerValue"], out var itemId) || itemId == 0) continue;
+                if (!int.TryParse((string?)fields["amount"]?["integerValue"], out var amount) || amount <= 0) continue;
+                entries.Add((itemId, amount, precraft));
+            }
+        }
+
+        // Non-craftable entries (crystals, gathered materials) simply find no recipe and are
+        // skipped; craftable entries from the "items" array become pre-crafts ahead of finals.
+        private static void MergeShareEntriesIntoList(List<(uint ItemId, int Amount, bool Precraft)> entries, NewCraftingList target, bool precraftQS, bool finalQS)
+        {
+            foreach (var (itemId, amount, precraft) in entries)
+            {
+                var recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId == itemId);
+                if (recipe?.RowId > 0)
+                    AddRecipeToList(target, recipe.Value, amount, precraft ? precraftQS : finalQS);
             }
         }
 

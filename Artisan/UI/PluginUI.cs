@@ -604,7 +604,8 @@ namespace Artisan.UI
 
                 if (P.Config.PlaySoundFinishEndurance || P.Config.PlaySoundFinishList)
                 {
-                    if (ImGui.SliderFloat("Sound Volume".Loc(), ref P.Config.SoundVolume, 0f, 1f, "%.2f"))
+                    ImGui.SliderFloat("Sound Volume".Loc(), ref P.Config.SoundVolume, 0f, 1f, "%.2f");
+                    if (ImGui.IsItemDeactivatedAfterEdit())
                         P.Config.Save();
                 }
 
@@ -651,8 +652,9 @@ namespace Artisan.UI
                 if (ImGui.SliderInt("###SliderMaxQuality", ref maxQuality, 0, 100, $"%d%%"))
                 {
                     P.Config.MaxPercentage = maxQuality;
-                    P.Config.Save();
                 }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    P.Config.Save();
 
                 ImGui.Text("Collectible Threshold Breakpoint".Loc());
                 ImGuiComponents.HelpMarker("The solver will stop going for quality once a collectible has hit a certain breakpoint.".Loc());
@@ -687,7 +689,8 @@ namespace Artisan.UI
                 ImGui.TextWrapped("?? - Max ?? stacks".Loc(Skills.PreparatoryTouch.NameOfAction(), Buffs.InnerQuiet.NameOfBuff()));
                 ImGui.SameLine();
                 ImGuiComponents.HelpMarker("Will only use ?? up to the number of ?? stacks. This is useful to tweak conservation of CP.".Loc(Skills.PreparatoryTouch.NameOfAction(), Buffs.InnerQuiet.NameOfBuff()));
-                if (ImGui.SliderInt($"###MaxIQStacksPrepTouch", ref P.Config.MaxIQPrepTouch, 0, 10))
+                ImGui.SliderInt($"###MaxIQStacksPrepTouch", ref P.Config.MaxIQPrepTouch, 0, 10);
+                if (ImGui.IsItemDeactivatedAfterEdit())
                     P.Config.Save();
 
                 if (ImGui.Checkbox("Use Material Miracle when available".Loc(), ref P.Config.UseMaterialMiracle))
@@ -809,7 +812,8 @@ namespace Artisan.UI
                     if (ImGui.Checkbox("Hide Recipe Window Simulator Result".Loc(), ref P.Config.HideRecipeWindowSimulator))
                         P.Config.Save();
 
-                    if (ImGui.SliderFloat("Simulator Action Image Size".Loc(), ref P.Config.SimulatorActionSize, 5f, 70f))
+                    ImGui.SliderFloat("Simulator Action Image Size".Loc(), ref P.Config.SimulatorActionSize, 5f, 70f);
+                    if (ImGui.IsItemDeactivatedAfterEdit())
                     {
                         P.Config.Save();
                     }
@@ -848,7 +852,8 @@ namespace Artisan.UI
                 {
                     ImGui.TextWrapped("Repair at".Loc());
                     ImGui.SameLine();
-                    if (ImGui.SliderInt("###SliderRepairDefault", ref P.Config.DefaultListRepairPercent, 0, 100, $"%d%%"))
+                    ImGui.SliderInt("###SliderRepairDefault", ref P.Config.DefaultListRepairPercent, 0, 100, $"%d%%");
+                    if (ImGui.IsItemDeactivatedAfterEdit())
                     {
                         P.Config.Save();
                     }
@@ -882,7 +887,9 @@ namespace Artisan.UI
 
                     if (P.Config.ListCraftThrottle2 > 2f)
                         P.Config.ListCraftThrottle2 = 2f;
-
+                }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                {
                     P.Config.Save();
                 }
 

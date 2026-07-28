@@ -110,6 +110,9 @@ namespace Artisan.RawInformation
             if (ImGui.SliderInt("", ref currentSimulated, 0, (int)maxFactor))
             {
                 P.Config.CurrentSimulated = currentSimulated;
+            }
+            if (ImGui.IsItemDeactivatedAfterEdit())
+            {
                 P.Config.Save();
             }
             ImGui.End();

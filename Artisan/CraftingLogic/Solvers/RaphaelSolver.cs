@@ -399,7 +399,8 @@ namespace Artisan.CraftingLogic.Solvers
             ImGui.Indent();
             ImGui.TextWrapped("Raphael settings can change the performance and system memory consumption. If you have low amounts of RAM try not to change settings, recommended minimum amount of RAM free is 2GB".Loc());
 
-            if (ImGui.SliderInt("Maximum Threads".Loc(), ref MaximumThreads, 0, Environment.ProcessorCount))
+            ImGui.SliderInt("Maximum Threads".Loc(), ref MaximumThreads, 0, Environment.ProcessorCount);
+            if (ImGui.IsItemDeactivatedAfterEdit())
             {
                 P.Config.Save();
             }

@@ -154,8 +154,9 @@ namespace Artisan.Autocraft
                 if (ImGui.SliderInt("##repairp", ref percent, 10, 100, $"%d%%"))
                 {
                     P.Config.RepairPercent = percent;
-                    P.Config.Save();
                 }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    P.Config.Save();
             }
 
             if (!CharacterInfo.MateriaExtractionUnlocked())

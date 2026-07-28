@@ -1367,7 +1367,8 @@ internal class ListEditor : Window, IDisposable
         if (SelectedList.Repair)
         {
             ImGui.PushItemWidth(200);
-            if (ImGui.SliderInt("##repairp", ref SelectedList.RepairPercent, 10, 100, "%d%%"))
+            ImGui.SliderInt("##repairp", ref SelectedList.RepairPercent, 10, 100, "%d%%");
+            if (ImGui.IsItemDeactivatedAfterEdit())
                 P.Config.Save();
         }
 

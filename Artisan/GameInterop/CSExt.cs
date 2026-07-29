@@ -90,79 +90,20 @@ public unsafe struct RecipeNoteRecipeEntry
 [StructLayout(LayoutKind.Explicit, Size = 0x3B0)]
 public unsafe struct RecipeNoteRecipeData
 {
-    // TC 7.20: Operations.GetSelectedRecipeEntry() was observed permanently null
-    // while the recipe window was open (live log 2026-07-29: "RecipeNoteRecipeData
-    // .Ptr()=0 ... CurState=IdleNormal", after 5 open attempts). That single null
-    // produced two symptoms at once: TaskSelectRecipe never reached its Done check
-    // and so re-issued OpenRecipeByRecipeId on every retry (flickering window), and
-    // Operations.RepeatActualCraft() bailed at the same check, so ListCraft burned
-    // its 10s timeout and the crafting list never started.
+    // ⚠️ DO NOT probe this struct by scanning for "plausible" pointers.
     //
-    // ⚠️ The cause is NOT settled. RecipeNote.Instance()'s signature is fine - it
-    // matches exactly once in TC's ffxiv_dx11.exe - and the user reports crafting
-    // working normally earlier the same day, which rules out a permanently wrong
-    // RecipeList offset. So this is a resilience measure, not a diagnosis: if the
-    // declared offset does not hold usable data, look for data that IS usable
-    // rather than giving up. If it never fires, nothing here changes behaviour.
-    // Deliberately NOT a permanent cache. RecipeList is legitimately null while the
-    // window is still populating, and a scan performed during that gap could latch
-    // onto some other pointer that happens to validate and then keep using it
-    // forever. So the declared offset is re-checked on every call and always wins;
-    // a scanned offset is only ever used for the call that found it.
-    private static bool _loggedFallback;
-
-    private static bool LooksLikeRecipeData(RecipeNoteRecipeData* rd)
-    {
-        if (rd == null || (nint)rd < 0x10000)
-            return false;
-        // Recipes must be a plausible pointer, the count sane, and the selection
-        // inside it. Random garbage passes none of these together.
-        if (rd->Recipes == null || (nint)rd->Recipes < 0x10000)
-            return false;
-        if (rd->RecipesCount <= 0 || rd->RecipesCount > 4096)
-            return false;
-        return rd->SelectedIndex < rd->RecipesCount;
-    }
-
-    public static RecipeNoteRecipeData* Ptr()
-    {
-        var instance = RecipeNote.Instance();
-        if (instance == null)
-            return null;
-
-        // 1. The offset FFXIVClientStructs declares. Re-checked every call, and it
-        //    always wins when it validates, so a client where CS is correct never
-        //    takes the fallback below.
-        var declared = (RecipeNoteRecipeData*)instance->RecipeList;
-        if (LooksLikeRecipeData(declared))
-            return declared;
-
-        // 2. Only if the declared offset does not hold a usable RecipeData: look for
-        //    one elsewhere in the object. RecipeNote is declared Size = 0xB40; stay
-        //    inside it and keep 8-byte alignment. The result is NOT cached - being
-        //    null here is a normal transient state while the window is still
-        //    populating, and caching a guess made during that gap would be worse
-        //    than returning null.
-        var basePtr = (byte*)instance;
-        for (var off = 0x00; off <= 0xB00; off += 8)
-        {
-            var cand = *(RecipeNoteRecipeData**)(basePtr + off);
-            if (!LooksLikeRecipeData(cand))
-                continue;
-            if (!_loggedFallback)
-            {
-                _loggedFallback = true;
-                Svc.Log.Information(
-                    $"Artisan: RecipeNote.RecipeList was unusable at the offset "
-                    + $"FFXIVClientStructs declares (0xB8); a self-consistent RecipeData "
-                    + $"was found at 0x{off:X} instead. Recipes={(nint)cand->Recipes:X}, "
-                    + $"count={cand->RecipesCount}, selected={cand->SelectedIndex}.");
-            }
-            return cand;
-        }
-
-        return null; // window not populated yet - normal while it is still opening
-    }
+    // A scan was added 2026-07-29 to work around Ptr() returning null on TC, and it
+    // CRASHED THE GAME: AccessViolationException in LooksLikeRecipeData, reached from
+    // Endurance.DrawRecipeData on the framework thread. The validator only checked
+    // that a candidate address was >= 0x10000 before dereferencing it - but it then
+    // read SelectedIndex at +0x438, so any value that merely looked like a pointer
+    // sent a read into unmapped memory. There is no safe way to validate an arbitrary
+    // address from managed code; a null return is always better than a crash.
+    //
+    // The underlying report (crafting list stalls, recipe window re-opens) is still
+    // unexplained - see the throttle in PreCrafting.TaskSelectRecipe and the
+    // BlockedBy() diagnostics in Operations.RepeatActualCraft for what is known.
+    public static RecipeNoteRecipeData* Ptr() => (RecipeNoteRecipeData*)RecipeNote.Instance()->RecipeList; // note: can be null
 
     [FieldOffset(0x000)] public RecipeNoteRecipeEntry* Recipes; // note: can be null
     [FieldOffset(0x008)] public int RecipesCount;

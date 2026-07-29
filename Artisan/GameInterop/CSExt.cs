@@ -90,26 +90,26 @@ public unsafe struct RecipeNoteRecipeEntry
 [StructLayout(LayoutKind.Explicit, Size = 0x3B0)]
 public unsafe struct RecipeNoteRecipeData
 {
-    // 🔴 TC 7.20: RecipeNote.RecipeList is NOT at the offset FFXIVClientStructs
-    // declares for the global client.
+    // TC 7.20: Operations.GetSelectedRecipeEntry() was observed permanently null
+    // while the recipe window was open (live log 2026-07-29: "RecipeNoteRecipeData
+    // .Ptr()=0 ... CurState=IdleNormal", after 5 open attempts). That single null
+    // produced two symptoms at once: TaskSelectRecipe never reached its Done check
+    // and so re-issued OpenRecipeByRecipeId on every retry (flickering window), and
+    // Operations.RepeatActualCraft() bailed at the same check, so ListCraft burned
+    // its 10s timeout and the crafting list never started.
     //
-    // Confirmed live 2026-07-29 - `RecipeNoteRecipeData.Ptr()` returned 0 while the
-    // recipe window was open and being re-opened, which made
-    // Operations.GetSelectedRecipeEntry() permanently null. Two whole bugs came out
-    // of that single null: TaskSelectRecipe could never reach its Done check (so it
-    // re-issued OpenRecipeByRecipeId every retry - the flickering window), and
-    // Operations.RepeatActualCraft() bailed at the same check (so ListCraft burned
-    // its 10s timeout and the crafting list never started).
-    //
-    // The RecipeNote.Instance() signature itself is fine: "48 8D 0D ?? ?? ?? ?? 8B
-    // D6 85 FF" matches exactly once in TC's ffxiv_dx11.exe, so the base pointer
-    // resolves. Only the field offset has drifted.
-    //
-    // Rather than hard-code a TC-specific constant that will rot on the next patch,
-    // find it once by structure: walk the RecipeNote object and accept the first
-    // candidate that reads back as a self-consistent RecipeData. The declared
-    // offset is tried first, so on a client where CS is correct this is a no-op.
-    private static int _recipeListOffset = -1;
+    // ⚠️ The cause is NOT settled. RecipeNote.Instance()'s signature is fine - it
+    // matches exactly once in TC's ffxiv_dx11.exe - and the user reports crafting
+    // working normally earlier the same day, which rules out a permanently wrong
+    // RecipeList offset. So this is a resilience measure, not a diagnosis: if the
+    // declared offset does not hold usable data, look for data that IS usable
+    // rather than giving up. If it never fires, nothing here changes behaviour.
+    // Deliberately NOT a permanent cache. RecipeList is legitimately null while the
+    // window is still populating, and a scan performed during that gap could latch
+    // onto some other pointer that happens to validate and then keep using it
+    // forever. So the declared offset is re-checked on every call and always wins;
+    // a scanned offset is only ever used for the call that found it.
+    private static bool _loggedFallback;
 
     private static bool LooksLikeRecipeData(RecipeNoteRecipeData* rd)
     {
@@ -130,32 +130,34 @@ public unsafe struct RecipeNoteRecipeData
         if (instance == null)
             return null;
 
-        var basePtr = (byte*)instance;
-
-        if (_recipeListOffset >= 0)
-            return *(RecipeNoteRecipeData**)(basePtr + _recipeListOffset);
-
-        // 1. the offset FFXIVClientStructs declares (correct on the global client)
+        // 1. The offset FFXIVClientStructs declares. Re-checked every call, and it
+        //    always wins when it validates, so a client where CS is correct never
+        //    takes the fallback below.
         var declared = (RecipeNoteRecipeData*)instance->RecipeList;
         if (LooksLikeRecipeData(declared))
-        {
-            _recipeListOffset = 0xB8;
             return declared;
-        }
 
-        // 2. otherwise scan the object for a pointer that validates. RecipeNote is
-        //    declared Size = 0xB40; stay well inside it and keep 8-byte alignment.
+        // 2. Only if the declared offset does not hold a usable RecipeData: look for
+        //    one elsewhere in the object. RecipeNote is declared Size = 0xB40; stay
+        //    inside it and keep 8-byte alignment. The result is NOT cached - being
+        //    null here is a normal transient state while the window is still
+        //    populating, and caching a guess made during that gap would be worse
+        //    than returning null.
+        var basePtr = (byte*)instance;
         for (var off = 0x00; off <= 0xB00; off += 8)
         {
             var cand = *(RecipeNoteRecipeData**)(basePtr + off);
             if (!LooksLikeRecipeData(cand))
                 continue;
-            _recipeListOffset = off;
-            Svc.Log.Information(
-                $"Artisan: RecipeNote.RecipeList resolved at offset 0x{off:X} "
-                + $"(FFXIVClientStructs declares 0xB8). Recipes={(nint)cand->Recipes:X}, "
-                + $"count={cand->RecipesCount}, selected={cand->SelectedIndex}. "
-                + "This client's struct layout differs from the CS definition.");
+            if (!_loggedFallback)
+            {
+                _loggedFallback = true;
+                Svc.Log.Information(
+                    $"Artisan: RecipeNote.RecipeList was unusable at the offset "
+                    + $"FFXIVClientStructs declares (0xB8); a self-consistent RecipeData "
+                    + $"was found at 0x{off:X} instead. Recipes={(nint)cand->Recipes:X}, "
+                    + $"count={cand->RecipesCount}, selected={cand->SelectedIndex}.");
+            }
             return cand;
         }
 

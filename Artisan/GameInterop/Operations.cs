@@ -107,31 +107,55 @@ public static unsafe class Operations
         }
     }
 
+    // Diagnostic for the TC "crafting list keeps reopening the recipe window" report
+    // (2026-07-29). Every early return below means "not ready, retry"; when one of
+    // them is permanently true, task ListCraft burns its 10s timeout, the list loop
+    // restarts, and the window is opened again - which is what the user sees.
+    //
+    // Logged at INFORMATION, not Debug: the reporting user runs at LogLevel 2, which
+    // is exactly why the previous round produced no usable log. Throttled to once a
+    // second and only emitted while something is actually blocking.
+    private static DateTime _lastBlockLog = DateTime.MinValue;
+
+    private static bool BlockedBy(string reason)
+    {
+        if ((DateTime.Now - _lastBlockLog).TotalMilliseconds >= 1000)
+        {
+            _lastBlockLog = DateTime.Now;
+            Svc.Log.Information($"Artisan: RepeatActualCraft blocked by [{reason}]");
+        }
+        return false;
+    }
+
     public unsafe static bool RepeatActualCraft()
     {
         if (Crafting.CurState is not Crafting.State.IdleBetween and not Crafting.State.IdleNormal)
-            return false;
+            return BlockedBy($"CurState={Crafting.CurState}");
 
         if (PreCrafting.Occupied())
-            return false;
+            return BlockedBy("PreCrafting.Occupied()");
 
         var recipe = GetSelectedRecipeEntry();
         if (recipe == null)
-            return false;
+            return BlockedBy("GetSelectedRecipeEntry()==null");
 
+        var ingIndex = 0;
         foreach (var ing in recipe->IngredientsSpan)
         {
             if (ing.NumAssignedNQ + ing.NumAssignedHQ != ing.NumTotal)
-                return false;
+                return BlockedBy($"ingredient[{ingIndex}] item={ing.ItemId} "
+                                 + $"assignedNQ={ing.NumAssignedNQ} assignedHQ={ing.NumAssignedHQ} "
+                                 + $"total={ing.NumTotal}");
+            ingIndex++;
         }
 
         if (RaphaelCache.InProgressAny())
-            return false;
+            return BlockedBy("RaphaelCache.InProgressAny()");
 
         if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmicAddon))
         {
             if (cosmicAddon == null)
-                return false;
+                return BlockedBy("WKSRecipeNotebook addon null");
 
             Svc.Log.Debug($"Starting actual cosmic craft");
             Callback.Fire(cosmicAddon, true, 6);
@@ -143,9 +167,9 @@ public static unsafe class Operations
         {
             var addon = (AddonRecipeNote*)Svc.GameGui.GetAddonByName("RecipeNote").Address;
             if (addon == null)
-                return false;
+                return BlockedBy("RecipeNote addon null");
 
-            Svc.Log.Debug($"Starting actual craft");
+            Svc.Log.Information($"Artisan: starting actual craft");
             Callback.Fire(&addon->AtkUnitBase, true, 8);
             PreCrafting.Tasks.Clear();
             return true;

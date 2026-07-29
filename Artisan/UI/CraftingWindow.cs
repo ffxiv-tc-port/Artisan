@@ -109,8 +109,11 @@ namespace Artisan.UI
                     if (delay > 1000) delay = 1000;
 
                     P.Config.AutoDelay = delay;
-                    P.Config.Save();
                 }
+                // 同 PluginUI 的 Execution Delay：滑桿拖曳中每畫格都會回傳 true，
+                // 存檔延到放手時才做，避免以幀率同步寫磁碟。
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    P.Config.Save();
             }
 
             if (Endurance.RecipeID != 0 && !CraftingListUI.Processing && Endurance.Enable)

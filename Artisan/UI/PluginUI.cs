@@ -510,8 +510,11 @@ namespace Artisan.UI
                             if (delay > 1000) delay = 1000;
 
                             P.Config.AutoDelay = delay;
-                            P.Config.Save();
                         }
+                        // 0～1000 的滑桿快速拖過去，每畫格都會跨過好幾個整數而回傳 true，
+                        // 存檔留在區塊內等於以幀率同步寫磁碟。數值照樣即時套用，只把存檔延到放手時。
+                        if (ImGui.IsItemDeactivatedAfterEdit())
+                            P.Config.Save();
                     }
                 }
 

@@ -249,6 +249,7 @@ public unsafe class Artisan : IDalamudPlugin
             Svc.ClientState.Login -= DisableEndurance;
             Endurance.Dispose();
             RetainerInfo.Dispose();
+            Sounds.SoundPlayer.Dispose();
             IPC.IPC.Dispose();
         }
         ECommonsMain.Dispose();

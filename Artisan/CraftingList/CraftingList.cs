@@ -194,6 +194,25 @@ namespace Artisan.CraftingLists
         }
 
         private static DateTime _lastConsumableLog = DateTime.MinValue;
+        private static DateTime _lastBranchLog = DateTime.MinValue;
+        private static string _lastBranch = "";
+
+        // Names the guard branch that stopped ProcessList before it could reach
+        // recipe selection. Info level (the reporting user runs at LogLevel 2) and
+        // throttled, but always logs immediately when the branch CHANGES so a loop
+        // between two branches is visible rather than averaged away.
+        private static void ReportBranch(string branch)
+        {
+            if (branch != _lastBranch || (DateTime.Now - _lastBranchLog).TotalSeconds >= 3)
+            {
+                _lastBranch = branch;
+                _lastBranchLog = DateTime.Now;
+                Svc.Log.Information($"Artisan: ProcessList stopped early at [{branch}] "
+                                    + $"(CurState={Crafting.CurState}, "
+                                    + $"PreCrafting.Tasks={PreCrafting.Tasks.Count}, CLTM.IsBusy={CLTM.IsBusy})");
+            }
+        }
+
 
         internal static unsafe void ProcessList(NewCraftingList selectedList)
         {
@@ -324,6 +343,7 @@ namespace Artisan.CraftingLists
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200)));
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskClassChange((Job)recipe.CraftType.Value.RowId + 8), TimeSpan.FromMilliseconds(200)));
 
+                ReportBranch("class-change");
                 return;
             }
 
@@ -332,6 +352,7 @@ namespace Artisan.CraftingLists
             {
                 PreCrafting.equipAttemptLoops = 0;
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskEquipItem(recipe.ItemRequired.RowId), TimeSpan.FromMilliseconds(200)));
+                ReportBranch("equip-item");
                 return;
             }
 
@@ -354,12 +375,14 @@ namespace Artisan.CraftingLists
             if (!Spiritbond.ExtractMateriaTask(selectedList.Materia))
             {
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200)));
+                ReportBranch("materia-extraction");
                 return;
             }
 
             if (selectedList.Repair && !RepairManager.ProcessRepair(selectedList))
             {
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200)));
+                ReportBranch("repair");
                 return;
             }
 

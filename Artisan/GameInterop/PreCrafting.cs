@@ -500,19 +500,17 @@ public unsafe static class PreCrafting
     private static DateTime _lastOpenAttempt = DateTime.MinValue;
     private static int _openAttempts;
 
-    private static bool ShouldIssueRecipeOpen(uint recipeId)
+    private static void ReportRecipeOpenAttempt(uint recipeId)
     {
+        // Reporting only - it must NOT gate the open call. Throttling the open
+        // was one of today's speculative changes and is reverted; upstream issues
+        // it on every retry and that is the baseline to diagnose from.
         var now = DateTime.Now;
         if (_lastOpenedRecipe != recipeId)
         {
             _lastOpenedRecipe = recipeId;
             _openAttempts = 0;
         }
-        else if ((now - _lastOpenAttempt).TotalMilliseconds < 1000)
-        {
-            return false;
-        }
-
         _lastOpenAttempt = now;
         _openAttempts++;
 
@@ -544,25 +542,6 @@ public unsafe static class PreCrafting
                 + (rd == null ? "" : $" (Recipes={(nint)rd->Recipes:X} count={rd->RecipesCount} sel={rd->SelectedIndex})")
                 + $", CurState={Crafting.CurState}.");
         }
-        return true;
-    }
-
-    // Opening the crafting log is not just "call OpenRecipeByRecipeId". On TC that
-    // call was observed doing nothing at all: five attempts left
-    // `addon RecipeNote=NOT OPEN, agent active=False` (live log 2026-07-29 17:50).
-    // An agent that is not active has no addon to drive, so activate it first and
-    // then ask for the recipe. Show()/IsAgentActive() are ordinary CS APIs - there
-    // is no address probing here.
-    private static void IssueRecipeOpen(uint recipeId)
-    {
-        var agent = AgentRecipeNote.Instance();
-        if (agent == null)
-            return;
-
-        if (!agent->AgentInterface.IsAgentActive())
-            agent->AgentInterface.Show();
-
-        agent->OpenRecipeByRecipeId(recipeId);
     }
 
     public static TaskResult TaskSelectRecipe(Recipe recipe)
@@ -577,8 +556,8 @@ public unsafe static class PreCrafting
 
             if (addon == null)
             {
-                if (ShouldIssueRecipeOpen(recipe.RowId))
-                    IssueRecipeOpen(recipe.RowId);
+                ReportRecipeOpenAttempt(recipe.RowId);
+                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
                 return TaskResult.Retry;
             }
 
@@ -603,8 +582,8 @@ public unsafe static class PreCrafting
         }
         else
         {
-            if (ShouldIssueRecipeOpen(recipe.RowId))
-                IssueRecipeOpen(recipe.RowId);
+            ReportRecipeOpenAttempt(recipe.RowId);
+            AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
         }
         return TaskResult.Retry;
     }

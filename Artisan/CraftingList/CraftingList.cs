@@ -404,7 +404,7 @@ namespace Artisan.CraftingLists
                 // Same pile-up as the recipe-selection block below: the CLTM tasks only append to
                 // PreCrafting.Tasks and complete immediately, so DelayNext(100) was the only thing keeping
                 // this from re-queueing every frame. Wait for the queue to drain instead.
-                if (!CLTM.IsBusy && !PreCrafting.Occupied() && PreCrafting.Tasks.Count == 0)
+                if (!CLTM.IsBusy && !PreCrafting.Occupied())
                 {
                     CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200))));
                     CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskUseConsumables(config, type), TimeSpan.FromMilliseconds(200))));
@@ -426,7 +426,7 @@ namespace Artisan.CraftingLists
                 // Waiting for the queue to drain is the back-pressure that was missing; Occupied() itself must
                 // NOT be made queue-aware, because tasks such as TaskUseConsumables call it from inside the
                 // queue and would then deadlock by always seeing themselves as occupied.
-                if (!CLTM.IsBusy && PreCrafting.Tasks.Count == 0)
+                if (!CLTM.IsBusy)
                 {
                     CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskSelectRecipe(recipe), TimeSpan.FromMilliseconds(500))));
 

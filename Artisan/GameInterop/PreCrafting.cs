@@ -547,6 +547,24 @@ public unsafe static class PreCrafting
         return true;
     }
 
+    // Opening the crafting log is not just "call OpenRecipeByRecipeId". On TC that
+    // call was observed doing nothing at all: five attempts left
+    // `addon RecipeNote=NOT OPEN, agent active=False` (live log 2026-07-29 17:50).
+    // An agent that is not active has no addon to drive, so activate it first and
+    // then ask for the recipe. Show()/IsAgentActive() are ordinary CS APIs - there
+    // is no address probing here.
+    private static void IssueRecipeOpen(uint recipeId)
+    {
+        var agent = AgentRecipeNote.Instance();
+        if (agent == null)
+            return;
+
+        if (!agent->AgentInterface.IsAgentActive())
+            agent->AgentInterface.Show();
+
+        agent->OpenRecipeByRecipeId(recipeId);
+    }
+
     public static TaskResult TaskSelectRecipe(Recipe recipe)
     {
         var re = Operations.GetSelectedRecipeEntry();
@@ -560,7 +578,7 @@ public unsafe static class PreCrafting
             if (addon == null)
             {
                 if (ShouldIssueRecipeOpen(recipe.RowId))
-                    AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                    IssueRecipeOpen(recipe.RowId);
                 return TaskResult.Retry;
             }
 
@@ -586,7 +604,7 @@ public unsafe static class PreCrafting
         else
         {
             if (ShouldIssueRecipeOpen(recipe.RowId))
-                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                IssueRecipeOpen(recipe.RowId);
         }
         return TaskResult.Retry;
     }

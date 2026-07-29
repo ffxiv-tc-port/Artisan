@@ -482,6 +482,58 @@ public unsafe static class PreCrafting
         return TaskResult.Done;
     }
 
+    // Guards against the runaway re-open loop reported on TC 2026-07-29 (crafting
+    // menu flickers and sticks when a list starts).
+    //
+    // The task ALWAYS ends in `return TaskResult.Retry` after calling
+    // OpenRecipeByRecipeId, and PreCrafting.Update() re-runs a Retry task every
+    // 500 ms. The only exit is the `Done` check below, which depends on
+    // Operations.GetSelectedRecipeEntry() -> RecipeNoteRecipeData.Ptr(). If that
+    // struct read does not resolve on this client, the check never passes and the
+    // recipe window is re-opened twice a second forever. Deduplicating the queue
+    // (the previous attempt) does not help, because a SINGLE task is enough.
+    //
+    // So: never issue the open more than once per second for the same recipe. If
+    // detection works this changes nothing (the task completes on the next tick);
+    // if it is broken the window stays put instead of strobing.
+    private static uint _lastOpenedRecipe;
+    private static DateTime _lastOpenAttempt = DateTime.MinValue;
+    private static int _openAttempts;
+
+    private static bool ShouldIssueRecipeOpen(uint recipeId)
+    {
+        var now = DateTime.Now;
+        if (_lastOpenedRecipe != recipeId)
+        {
+            _lastOpenedRecipe = recipeId;
+            _openAttempts = 0;
+        }
+        else if ((now - _lastOpenAttempt).TotalMilliseconds < 1000)
+        {
+            return false;
+        }
+
+        _lastOpenAttempt = now;
+        _openAttempts++;
+
+        // Info level on purpose: the reporting user runs at LogLevel 2, where
+        // Svc.Log.Debug is invisible - that is why the first round produced "no
+        // log at all". This fires once, only when something is actually wrong.
+        if (_openAttempts == 5)
+        {
+            var rd = RecipeNoteRecipeData.Ptr();
+            Svc.Log.Information(
+                $"Artisan: recipe {recipeId} still not selected after {_openAttempts} open attempts. "
+                + $"RecipeNoteRecipeData.Ptr()={(nint)rd:X}, "
+                + (rd == null
+                    ? "pointer is NULL - the RecipeNote struct does not resolve on this client"
+                    : $"Recipes={(nint)rd->Recipes:X} SelectedIndex={rd->SelectedIndex} RecipesCount={rd->RecipesCount}")
+                + $", CurState={Crafting.CurState}. If the pointer or counts look wrong, "
+                + "GetSelectedRecipeEntry() can never confirm the selection.");
+        }
+        return true;
+    }
+
     public static TaskResult TaskSelectRecipe(Recipe recipe)
     {
         var re = Operations.GetSelectedRecipeEntry();
@@ -494,7 +546,8 @@ public unsafe static class PreCrafting
 
             if (addon == null)
             {
-                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                if (ShouldIssueRecipeOpen(recipe.RowId))
+                    AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
                 return TaskResult.Retry;
             }
 
@@ -519,7 +572,8 @@ public unsafe static class PreCrafting
         }
         else
         {
-            AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+            if (ShouldIssueRecipeOpen(recipe.RowId))
+                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
         }
         return TaskResult.Retry;
     }

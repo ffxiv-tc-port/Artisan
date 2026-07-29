@@ -382,7 +382,10 @@ namespace Artisan.CraftingLists
 
             if (needFood || needPot || needManual || needSquadronManual)
             {
-                if (!CLTM.IsBusy && !PreCrafting.Occupied())
+                // Same pile-up as the recipe-selection block below: the CLTM tasks only append to
+                // PreCrafting.Tasks and complete immediately, so DelayNext(100) was the only thing keeping
+                // this from re-queueing every frame. Wait for the queue to drain instead.
+                if (!CLTM.IsBusy && !PreCrafting.Occupied() && PreCrafting.Tasks.Count == 0)
                 {
                     CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200))));
                     CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskUseConsumables(config, type), TimeSpan.FromMilliseconds(200))));
@@ -393,7 +396,18 @@ namespace Artisan.CraftingLists
 
             if (Crafting.CurState is Crafting.State.IdleBetween or Crafting.State.IdleNormal && !PreCrafting.Occupied())
             {
-                if (!CLTM.IsBusy)
+                // ProcessList() runs once per frame (ProcessingWindow.Draw), and the CLTM task below only
+                // appends to PreCrafting.Tasks, so it finishes on the very next tick and CLTM goes idle
+                // again - !CLTM.IsBusy therefore provides no back-pressure whatsoever. PreCrafting.Occupied()
+                // only reads ConditionFlags and never looks at the queue either, so while the crafting log is
+                // still opening (TaskSelectRecipe calls OpenRecipeByRecipeId and returns Retry, which
+                // PreCrafting.Update() only re-runs every 500ms) this piled up ~60 duplicate TaskSelectRecipe
+                // entries per second. Each one that got its turn re-opened the recipe window, which is the
+                // flickering / repeatedly reopening crafting menu that made a starting list look stuck.
+                // Waiting for the queue to drain is the back-pressure that was missing; Occupied() itself must
+                // NOT be made queue-aware, because tasks such as TaskUseConsumables call it from inside the
+                // queue and would then deadlock by always seeing themselves as occupied.
+                if (!CLTM.IsBusy && PreCrafting.Tasks.Count == 0)
                 {
                     CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskSelectRecipe(recipe), TimeSpan.FromMilliseconds(500))));
 

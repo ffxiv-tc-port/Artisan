@@ -263,48 +263,73 @@ internal unsafe static class RetainerHandlers
                     var indexOfRetrieveAll = -1;
                     var indexOfRetrieveQuantity = -1;
 
-                    // Compare extracted plain text on both sides instead of raw ReadOnlySeString equality:
-                    // the sheet value and the live context-menu label can carry different SeString payloads
-                    // (auto-translate/highlight codes) for text that reads identically, which made the raw
-                    // byte-exact comparison silently fail to find either entry on the TC client - the menu
-                    // opened (visible right-click) but nothing was ever selected, so no items were retrieved.
+                    // Addon#98 "Retrieve from Retainer" is the ONLY retrieve entry the game ever places in
+                    // the retainer item context menu. Addon#773 "Retrieve Quantity from Retainer" is not a
+                    // menu entry at all - it is the caption of the quantity dialog that the game opens by
+                    // itself once the selected stack holds more than one item. Verified against the client
+                    // data: Addon rows 88-99 are the inventory context-menu block (91 Discard, 92 Split,
+                    // 93 Sell, 96 Equip, 97 Entrust to Retainer, 98 Retrieve from Retainer, 99 Put Up for
+                    // Sale), while 772/773 live in the quantity-dialog block right next to 889/914 "Select
+                    // the desired quantity."; the client binary emits 97+98 together 24 times over and never
+                    // emits 773 anywhere near 98.
+                    // The old code asked for #773 whenever Quantity > 1, never found it, and therefore fired
+                    // no callback at all - the right-click menu opened and nothing was ever retrieved. The
+                    // caller (RetainerInfo.ExtractItem/ExtractSingular) already waits for the quantity dialog
+                    // and types the amount via InputNumericValue, so selecting #98 completes the flow.
+                    // #773 is still preferred when a client really does expose it, so this cannot regress.
                     var retrieveAllText = LuminaSheets.AddonSheet[98].Text.ExtractText().Trim();
                     var retrieveQuantityText = LuminaSheets.AddonSheet[773].Text.ExtractText().Trim();
 
-                    int looper = 0;
-                    foreach (var contextObj in contextAgent->EventParams)
+                    // Index the entries the way the game (and AutoRetainer, which works on this client) does:
+                    // the live menu occupies EventParams[ContexItemStartIndex .. +ContextItemCount]. Scanning
+                    // all 98 slots and counting only strings also matched stale leftovers from a previously
+                    // opened menu, and the resulting counter was not the menu row index the callback wants.
+                    var startIndex = Math.Clamp(contextAgent->ContexItemStartIndex, 0, 98);
+                    var itemCount = Math.Clamp(contextAgent->ContextItemCount, 0, 98 - startIndex);
+                    var labels = new string[itemCount];
+
+                    for (var entry = 0; entry < itemCount; entry++)
                     {
-                        if (contextObj.Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String)
-                        {
-                            var label = MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String)).ExtractText().Trim();
+                        var contextObj = contextAgent->EventParams[startIndex + entry];
+                        if (contextObj.Type is not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
+                            and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
+                            continue;
 
-                            if (retrieveAllText == label) indexOfRetrieveAll = looper;
-                            if (retrieveQuantityText == label) indexOfRetrieveQuantity = looper;
+                        var label = MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String)).ExtractText().Trim();
+                        labels[entry] = label;
 
-                            looper++;
-                        }
+                        if (indexOfRetrieveAll == -1 && retrieveAllText == label) indexOfRetrieveAll = entry;
+                        if (indexOfRetrieveQuantity == -1 && retrieveQuantityText == label) indexOfRetrieveQuantity = entry;
                     }
+
+                    Svc.Log.Debug($"Artisan: retainer context menu for item {ItemId} (qty {item->Quantity}) - ContexItemStartIndex={contextAgent->ContexItemStartIndex}, ContextItemCount={contextAgent->ContextItemCount}, disabledMask=0x{contextAgent->ContextItemDisabledMask:X}, ContextMenu addon=0x{(nint)contextMenu:X}");
+                    for (var entry = 0; entry < itemCount; entry++)
+                    {
+                        var contextObj = contextAgent->EventParams[startIndex + entry];
+                        Svc.Log.Debug($"Artisan:   entry[{entry}] = EventParams[{startIndex + entry}] type={contextObj.Type} disabled={contextAgent->IsContextItemDisabled(entry)} text=\"{labels[entry] ?? "<not a string>"}\"");
+                    }
+                    Svc.Log.Debug($"Artisan: Addon#98 \"{retrieveAllText}\" -> index {indexOfRetrieveAll}; Addon#773 \"{retrieveQuantityText}\" -> index {indexOfRetrieveQuantity}");
 
                     if (contextMenu != null)
                     {
-                        if (item->Quantity == 1 || item->ItemId <= 19)
+                        // A single item (and crystals/shards, ItemId <= 19) is retrieved outright; a larger
+                        // stack makes the game raise the quantity dialog, which the caller then fills in.
+                        var index = item->Quantity == 1 || item->ItemId <= 19
+                            ? indexOfRetrieveAll
+                            : indexOfRetrieveQuantity >= 0 ? indexOfRetrieveQuantity : indexOfRetrieveAll;
+
+                        if (index == -1)
                         {
-                            if (indexOfRetrieveAll == -1)
-                            {
-                                Svc.Log.Warning($"Artisan: couldn't find \"{retrieveAllText}\" in the retainer item context menu, item {ItemId} was not retrieved.");
-                                return true;
-                            }
-                            Callback.Fire(contextMenu, true, 0, indexOfRetrieveAll, 0, 0, 0);
+                            Svc.Log.Warning($"Artisan: couldn't find \"{retrieveAllText}\" in the retainer item context menu, item {ItemId} was not retrieved. " +
+                                            $"Menu had {itemCount} entries starting at EventParams[{startIndex}]: {string.Join(" | ", labels.Select(x => x ?? "<not a string>"))}");
+                            return true;
                         }
-                        else
-                        {
-                            if (indexOfRetrieveQuantity == -1)
-                            {
-                                Svc.Log.Warning($"Artisan: couldn't find \"{retrieveQuantityText}\" in the retainer item context menu, item {ItemId} was not retrieved.");
-                                return true;
-                            }
-                            Callback.Fire(contextMenu, true, 0, indexOfRetrieveQuantity, 0, 0, 0);
-                        }
+
+                        if (contextAgent->IsContextItemDisabled(index))
+                            Svc.Log.Warning($"Artisan: context menu entry {index} (\"{labels[index]}\") is disabled, retrieving item {ItemId} will probably do nothing.");
+
+                        Svc.Log.Debug($"Artisan: firing retainer context menu entry {index} (\"{labels[index]}\") for item {ItemId}");
+                        Callback.Fire(contextMenu, true, 0, index, 0, 0, 0);
                         return true;
                     }
                 }

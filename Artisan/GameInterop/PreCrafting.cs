@@ -518,18 +518,31 @@ public unsafe static class PreCrafting
 
         // Info level on purpose: the reporting user runs at LogLevel 2, where
         // Svc.Log.Debug is invisible - that is why the first round produced "no
-        // log at all". This fires once, only when something is actually wrong.
-        if (_openAttempts == 5)
+        // log at all". Fires a few times, only when something is actually wrong.
+        //
+        // Ptr()==0 alone is ambiguous: it is equally consistent with "the addon is
+        // closed so RecipeList was freed" and with "the addon is open but we cannot
+        // read it". The user reports the window visibly opening AND CLOSING in a
+        // loop with the ingredients correctly assigned, so these three facts are
+        // what separate the cases. Every value below is either a pointer CS already
+        // handed us or a Dalamud-managed addon lookup - nothing is probed.
+        if (_openAttempts is 5 or 10 or 20)
         {
+            var instance = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
             var rd = RecipeNoteRecipeData.Ptr();
+            var addonPtr = Svc.GameGui.GetAddonByName("RecipeNote", 1).Address;
+            var addonOpen = addonPtr != nint.Zero;
+            var addonVisible = addonOpen && ((AtkUnitBase*)addonPtr)->IsVisible;
+            var agent = AgentRecipeNote.Instance();
+
             Svc.Log.Information(
                 $"Artisan: recipe {recipeId} still not selected after {_openAttempts} open attempts. "
-                + $"RecipeNoteRecipeData.Ptr()={(nint)rd:X}, "
-                + (rd == null
-                    ? "pointer is NULL - the RecipeNote struct does not resolve on this client"
-                    : $"Recipes={(nint)rd->Recipes:X} SelectedIndex={rd->SelectedIndex} RecipesCount={rd->RecipesCount}")
-                + $", CurState={Crafting.CurState}. If the pointer or counts look wrong, "
-                + "GetSelectedRecipeEntry() can never confirm the selection.");
+                + $"addon RecipeNote={(addonOpen ? $"0x{addonPtr:X} visible={addonVisible}" : "NOT OPEN")}, "
+                + $"agent active={(agent != null && agent->AgentInterface.IsAgentActive())}, "
+                + $"RecipeNote.Instance()={(nint)instance:X}, "
+                + $"RecipeList={(nint)rd:X}"
+                + (rd == null ? "" : $" (Recipes={(nint)rd->Recipes:X} count={rd->RecipesCount} sel={rd->SelectedIndex})")
+                + $", CurState={Crafting.CurState}.");
         }
         return true;
     }

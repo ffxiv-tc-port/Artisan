@@ -544,6 +544,34 @@ public unsafe static class PreCrafting
         }
     }
 
+    private static bool _searchFallbackLogged;
+
+    // Fallback for the primary open call doing nothing (see the log evidence in
+    // the commit). SearchRecipeByItemId has its own unique signature in TC's
+    // binary and opens the crafting log via the item-search route. Only fires
+    // after repeated failures while the window is still closed, so a healthy
+    // client never takes this path.
+    private static void TryOpenViaSearchFallback(Recipe recipe)
+    {
+        if (_openAttempts < 3)
+            return;
+        if (Svc.GameGui.GetAddonByName("RecipeNote", 1).Address != nint.Zero)
+            return;
+        var itemId = recipe.ItemResult.RowId;
+        if (itemId == 0)
+            return;
+
+        if (!_searchFallbackLogged)
+        {
+            _searchFallbackLogged = true;
+            Svc.Log.Information(
+                $"Artisan: OpenRecipeByRecipeId has had no effect after {_openAttempts} attempts - "
+                + $"falling back to SearchRecipeByItemId({itemId}). If the crafting log opens now, "
+                + "the primary open function resolves to the wrong code on this client.");
+        }
+        AgentRecipeNote.Instance()->SearchRecipeByItemId(itemId);
+    }
+
     public static TaskResult TaskSelectRecipe(Recipe recipe)
     {
         var re = Operations.GetSelectedRecipeEntry();
@@ -558,6 +586,7 @@ public unsafe static class PreCrafting
             {
                 ReportRecipeOpenAttempt(recipe.RowId);
                 AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                TryOpenViaSearchFallback(recipe);
                 return TaskResult.Retry;
             }
 
@@ -584,6 +613,7 @@ public unsafe static class PreCrafting
         {
             ReportRecipeOpenAttempt(recipe.RowId);
             AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+            TryOpenViaSearchFallback(recipe);
         }
         return TaskResult.Retry;
     }

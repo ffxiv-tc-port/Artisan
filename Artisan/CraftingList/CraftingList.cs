@@ -193,6 +193,8 @@ namespace Artisan.CraftingLists
             return CraftingListUI.CheckForIngredients(recipe, false);
         }
 
+        private static DateTime _lastConsumableLog = DateTime.MinValue;
+
         internal static unsafe void ProcessList(NewCraftingList selectedList)
         {
             var isCrafting = Svc.Condition[ConditionFlag.Crafting];
@@ -382,6 +384,23 @@ namespace Artisan.CraftingLists
 
             if (needFood || needPot || needManual || needSquadronManual)
             {
+                // This block CLOSES the recipe window (TaskExitCraft) and then returns,
+                // so recipe selection below never runs. If a flag never clears, that is
+                // the open/close loop the user hears. Info level (their LogLevel is 2),
+                // throttled, and only while actually stuck.
+                if ((DateTime.Now - _lastConsumableLog).TotalSeconds >= 3)
+                {
+                    _lastConsumableLog = DateTime.Now;
+                    Svc.Log.Information(
+                        $"Artisan: blocked before recipe selection by consumables - "
+                        + $"food={needFood} pot={needPot} manual={needManual} squadron={needSquadronManual}. "
+                        + $"config: foodEnabled={config?.FoodEnabled} food={config?.RequiredFood} foodHQ={config?.RequiredFoodHQ}, "
+                        + $"potEnabled={config?.PotionEnabled} pot={config?.RequiredPotion} potHQ={config?.RequiredPotionHQ}, "
+                        + $"manual={config?.RequiredManual} squadron={config?.RequiredSquadronManual}. "
+                        + $"CurState={Crafting.CurState}, PreCrafting.Tasks={PreCrafting.Tasks.Count}, CLTM.IsBusy={CLTM.IsBusy}. "
+                        + "While this is true the recipe window is repeatedly closed by TaskExitCraft.");
+                }
+
                 // Same pile-up as the recipe-selection block below: the CLTM tasks only append to
                 // PreCrafting.Tasks and complete immediately, so DelayNext(100) was the only thing keeping
                 // this from re-queueing every frame. Wait for the queue to drain instead.

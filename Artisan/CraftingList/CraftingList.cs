@@ -530,16 +530,33 @@ namespace Artisan.CraftingLists
             {
                 if (setIngredients == null || Endurance.IPCOverride)
                 {
+                    var diagHandled = 0;
+                    var diag = new System.Text.StringBuilder();
+                    diag.Append($"Artisan: SetIngredients walking RecipeNote nodes "
+                                + $"(NodeCount={addon->AtkUnitBase.UldManager.NodeListCount}):");
+
                     for (int i = 0; i <= 5; i++)
                     {
                         try
                         {
                             var node = addon->AtkUnitBase.UldManager.NodeList[23 - i]->GetAsAtkComponentNode();
 
+                            // Diagnostic only - does not affect the decision below.
+                            diag.Append($" [{i}]node{23 - i}=");
+                            if (node is null)
+                                diag.Append("NULL");
+                            else if (!node->AtkResNode.IsVisible())
+                                diag.Append("hidden");
+                            else
+                                diag.Append(node->Component->UldManager.NodeList[11]->IsVisible()
+                                            ? "visible/hq-menu" : "visible/material");
+
                             if (node is null || !node->AtkResNode.IsVisible())
                             {
                                 continue;
                             }
+
+                            diagHandled++;
 
                             if (node->Component->UldManager.NodeList[11]->IsVisible())
                             {
@@ -579,6 +596,13 @@ namespace Artisan.CraftingLists
                             return false;
                         }
                     }
+
+                    if (diagHandled == 0)
+                        Svc.Log.Information(diag.ToString()
+                            + " -> NO slot handled, nothing assigned. The hardcoded node "
+                            + "indices do not match this client's RecipeNote layout.");
+                    else
+                        Svc.Log.Information(diag.ToString() + $" -> handled {diagHandled} slot(s).");
                 }
                 else
                 {

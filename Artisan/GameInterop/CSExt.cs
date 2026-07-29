@@ -90,7 +90,77 @@ public unsafe struct RecipeNoteRecipeEntry
 [StructLayout(LayoutKind.Explicit, Size = 0x3B0)]
 public unsafe struct RecipeNoteRecipeData
 {
-    public static RecipeNoteRecipeData* Ptr() => (RecipeNoteRecipeData*)RecipeNote.Instance()->RecipeList; // note: can be null
+    // 🔴 TC 7.20: RecipeNote.RecipeList is NOT at the offset FFXIVClientStructs
+    // declares for the global client.
+    //
+    // Confirmed live 2026-07-29 - `RecipeNoteRecipeData.Ptr()` returned 0 while the
+    // recipe window was open and being re-opened, which made
+    // Operations.GetSelectedRecipeEntry() permanently null. Two whole bugs came out
+    // of that single null: TaskSelectRecipe could never reach its Done check (so it
+    // re-issued OpenRecipeByRecipeId every retry - the flickering window), and
+    // Operations.RepeatActualCraft() bailed at the same check (so ListCraft burned
+    // its 10s timeout and the crafting list never started).
+    //
+    // The RecipeNote.Instance() signature itself is fine: "48 8D 0D ?? ?? ?? ?? 8B
+    // D6 85 FF" matches exactly once in TC's ffxiv_dx11.exe, so the base pointer
+    // resolves. Only the field offset has drifted.
+    //
+    // Rather than hard-code a TC-specific constant that will rot on the next patch,
+    // find it once by structure: walk the RecipeNote object and accept the first
+    // candidate that reads back as a self-consistent RecipeData. The declared
+    // offset is tried first, so on a client where CS is correct this is a no-op.
+    private static int _recipeListOffset = -1;
+
+    private static bool LooksLikeRecipeData(RecipeNoteRecipeData* rd)
+    {
+        if (rd == null || (nint)rd < 0x10000)
+            return false;
+        // Recipes must be a plausible pointer, the count sane, and the selection
+        // inside it. Random garbage passes none of these together.
+        if (rd->Recipes == null || (nint)rd->Recipes < 0x10000)
+            return false;
+        if (rd->RecipesCount <= 0 || rd->RecipesCount > 4096)
+            return false;
+        return rd->SelectedIndex < rd->RecipesCount;
+    }
+
+    public static RecipeNoteRecipeData* Ptr()
+    {
+        var instance = RecipeNote.Instance();
+        if (instance == null)
+            return null;
+
+        var basePtr = (byte*)instance;
+
+        if (_recipeListOffset >= 0)
+            return *(RecipeNoteRecipeData**)(basePtr + _recipeListOffset);
+
+        // 1. the offset FFXIVClientStructs declares (correct on the global client)
+        var declared = (RecipeNoteRecipeData*)instance->RecipeList;
+        if (LooksLikeRecipeData(declared))
+        {
+            _recipeListOffset = 0xB8;
+            return declared;
+        }
+
+        // 2. otherwise scan the object for a pointer that validates. RecipeNote is
+        //    declared Size = 0xB40; stay well inside it and keep 8-byte alignment.
+        for (var off = 0x00; off <= 0xB00; off += 8)
+        {
+            var cand = *(RecipeNoteRecipeData**)(basePtr + off);
+            if (!LooksLikeRecipeData(cand))
+                continue;
+            _recipeListOffset = off;
+            Svc.Log.Information(
+                $"Artisan: RecipeNote.RecipeList resolved at offset 0x{off:X} "
+                + $"(FFXIVClientStructs declares 0xB8). Recipes={(nint)cand->Recipes:X}, "
+                + $"count={cand->RecipesCount}, selected={cand->SelectedIndex}. "
+                + "This client's struct layout differs from the CS definition.");
+            return cand;
+        }
+
+        return null; // window not populated yet - normal while it is still opening
+    }
 
     [FieldOffset(0x000)] public RecipeNoteRecipeEntry* Recipes; // note: can be null
     [FieldOffset(0x008)] public int RecipesCount;

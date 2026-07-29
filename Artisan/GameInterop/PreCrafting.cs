@@ -545,6 +545,7 @@ public unsafe static class PreCrafting
     }
 
     private static bool _searchFallbackLogged;
+    private static DateTime _lastMismatchAction = DateTime.MinValue;
 
     // Fallback for the primary open call doing nothing (see the log evidence in
     // the commit). SearchRecipeByItemId has its own unique signature in TC's
@@ -628,9 +629,23 @@ public unsafe static class PreCrafting
             }
             else if (re != null && re->RecipeId != recipe.RowId)
             {
-                // Populated, but with a different recipe selected - select ours.
-                ReportRecipeOpenAttempt(recipe.RowId);
-                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                // Populated with the WRONG recipe. Do NOT call OpenRecipeByRecipeId
+                // again here: on TC that closes and recreates the window, which is
+                // the 500 ms open/close cycle seen in every log so far. Use the
+                // item-search entry point instead - that is the call whose actual
+                // job is selecting a recipe - and rate-limit it so a failure cannot
+                // spin at the retry cadence.
+                if ((DateTime.Now - _lastMismatchAction).TotalSeconds >= 2)
+                {
+                    _lastMismatchAction = DateTime.Now;
+                    var itemId = recipe.ItemResult.RowId;
+                    Svc.Log.Information(
+                        $"Artisan: RecipeNote is open but has recipe {re->RecipeId} selected, "
+                        + $"wanted {recipe.RowId}. OpenRecipeByRecipeId did not select it; "
+                        + $"trying SearchRecipeByItemId({itemId}).");
+                    if (itemId != 0)
+                        AgentRecipeNote.Instance()->SearchRecipeByItemId(itemId);
+                }
             }
             else if ((DateTime.Now - _lastOpenAttempt).TotalSeconds >= 5)
             {

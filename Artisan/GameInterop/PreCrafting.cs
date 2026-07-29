@@ -611,9 +611,37 @@ public unsafe static class PreCrafting
         }
         else
         {
-            ReportRecipeOpenAttempt(recipe.RowId);
-            AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
-            TryOpenViaSearchFallback(recipe);
+            // 🔴 TC: re-issuing OpenRecipeByRecipeId while the window is already
+            // open CLOSES AND RECREATES it (watcher log 19:27: lifetimes of exactly
+            // 500 ms - this task's retry delay - with a different addon pointer
+            // every cycle). The window never lives long enough to populate
+            // RecipeList, so the selection check above never passes. On global the
+            // repeat call is an idempotent re-select; here it is lethal. So: call
+            // it only while the addon is absent, and otherwise WAIT for the list
+            // to populate. Re-issue only if it populated with the wrong recipe.
+            var recipeNoteOpen = Svc.GameGui.GetAddonByName("RecipeNote", 1).Address != nint.Zero;
+            if (!recipeNoteOpen)
+            {
+                ReportRecipeOpenAttempt(recipe.RowId);
+                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                TryOpenViaSearchFallback(recipe);
+            }
+            else if (re != null && re->RecipeId != recipe.RowId)
+            {
+                // Populated, but with a different recipe selected - select ours.
+                ReportRecipeOpenAttempt(recipe.RowId);
+                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+            }
+            else if ((DateTime.Now - _lastOpenAttempt).TotalSeconds >= 5)
+            {
+                // Window open, list still populating - waiting is correct, but say
+                // so occasionally: ReportRecipeOpenAttempt only fires on OPEN calls,
+                // so a silent permanent wait would otherwise be invisible in logs.
+                _lastOpenAttempt = DateTime.Now;
+                Svc.Log.Information(
+                    $"Artisan: RecipeNote is open, waiting for its recipe list to populate "
+                    + $"(recipe {recipe.RowId}, RecipeList={(nint)RecipeNoteRecipeData.Ptr():X})");
+            }
         }
         return TaskResult.Retry;
     }

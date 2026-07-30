@@ -1754,8 +1754,15 @@ internal class RecipeSelector : ItemSelector<ListItem>
         var ItemId = Items[idx];
         var itemCount = ItemId.Quantity;
         var yield = LuminaSheets.RecipeSheet[ItemId.ID].AmountResult * itemCount;
+
+        // 顯示成品目前持有數(含雇員,走 AllaganTools 快取),避免重複製作。
+        var resultItemId = LuminaSheets.RecipeSheet[ItemId.ID].ItemResult.RowId;
+        var owned = CraftingListUI.NumberOfIngredient(resultItemId);
+        if (RetainerInfo.ATools)
+            owned += RetainerInfo.GetRetainerItemCount(resultItemId);
+
         var label =
-            $"{idx + 1}. {ItemId.ID.NameOfRecipe()} x{itemCount}{(yield != itemCount ? " (?? total)".Loc(yield) : string.Empty)}";
+            $"{idx + 1}. {ItemId.ID.NameOfRecipe()} x{itemCount}{(yield != itemCount ? " (?? total)".Loc(yield) : string.Empty)}{" [have ??]".Loc(owned)}";
         maxSize = ImGui.CalcTextSize(label).X > maxSize ? ImGui.CalcTextSize(label).X : maxSize;
 
         if (ItemId.ListItemOptions is null)

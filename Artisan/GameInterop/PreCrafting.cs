@@ -573,6 +573,10 @@ public unsafe static class PreCrafting
         AgentRecipeNote.Instance()->SearchRecipeByItemId(itemId);
     }
 
+    // 宇宙製作筆記的逐項選取進度（一幀選一項，見 TaskSelectRecipe 內的說明）
+    private static uint _cosmicSelectRecipeId = 0;
+    private static int _cosmicSelectIndex = 0;
+
     public static TaskResult TaskSelectRecipe(Recipe recipe)
     {
         var re = Operations.GetSelectedRecipeEntry();
@@ -595,20 +599,36 @@ public unsafe static class PreCrafting
             if (rd == null)
                 return TaskResult.Retry;
 
-            for (int i = 0; i < rd->RecipesCount; i++)
+            // 🔴 上游原本在「同一幀」內用 for 迴圈把每一項都 Callback.Fire 選一遍，
+            // 每次選完立刻讀 GetSelectedRecipeEntry() 比對。兩個問題：
+            //   1. 送出 callback 後遊戲要到下一個 tick 才會更新選取狀態，同幀讀到的是舊值，
+            //      所以那個比對幾乎不可能命中；
+            //   2. 因此迴圈總是跑到底，把選取「留在最後一項」——實機徵狀就是多項配方時
+            //      永遠鎖定最後一項（2026-07-31 使用者回報 + 截圖確認）。
+            // 改成一幀只選一項並回 Retry，讓遊戲有機會更新；下一次進來時方法開頭的
+            // re 檢查就會看到結果並回 Done。
+            if (_cosmicSelectRecipeId != recipe.RowId)
             {
-                try
-                {
-                    Callback.Fire(addon, false, 0, i);
-                    re = Operations.GetSelectedRecipeEntry();
-                    if (re != null && re->RecipeId == recipe.RowId)
-                        return TaskResult.Done;
-                }
-                catch (Exception ex)
-                {
-                    return TaskResult.Done;
-                }
+                _cosmicSelectRecipeId = recipe.RowId;
+                _cosmicSelectIndex = 0;
             }
+
+            if (rd->RecipesCount <= 0)
+                return TaskResult.Retry;
+
+            if (_cosmicSelectIndex >= rd->RecipesCount)
+            {
+                // 整輪都試過還沒中：從頭再來，並留下紀錄（Information，Debug 會被使用者的
+                // 記錄等級濾掉）。持續出現代表宇宙筆記的選取狀態讀不到，要換判定方式。
+                Svc.Log.Information(
+                    $"Artisan: 宇宙配方 {recipe.RowId} 掃過全部 {rd->RecipesCount} 項仍未選中，重新來過");
+                _cosmicSelectIndex = 0;
+                return TaskResult.Retry;
+            }
+
+            Callback.Fire(addon, false, 0, _cosmicSelectIndex);
+            _cosmicSelectIndex++;
+            return TaskResult.Retry;
         }
         else
         {

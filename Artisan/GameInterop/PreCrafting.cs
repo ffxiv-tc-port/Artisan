@@ -576,6 +576,63 @@ public unsafe static class PreCrafting
     // 宇宙製作筆記的逐項選取進度（一幀選一項，見 TaskSelectRecipe 內的說明）
     private static uint _cosmicSelectRecipeId = 0;
     private static int _cosmicSelectIndex = 0;
+    private static bool _cosmicStateDumped = false;
+
+    /// <summary>
+    /// 把 WKSRecipeNotebook 的 AtkValues 與節點文字傾印一次。
+    /// 實機證實 GetSelectedRecipeEntry()（讀 RecipeNote.RecipeList）反映不了宇宙筆記的
+    /// 選取狀態，所以要另找可判定的來源。AtkValues 比節點索引可靠：它有 AtkValuesCount
+    /// 可以做邊界、而且是型別化的，不必猜 UI 佈局。
+    /// </summary>
+    private static unsafe void DumpCosmicStateOnce(AtkUnitBase* addon, Recipe recipe)
+    {
+        if (_cosmicStateDumped || addon == null)
+            return;
+        _cosmicStateDumped = true;
+
+        var itemId = recipe.ItemResult.RowId;
+        var itemName = recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? "?";
+        Svc.Log.Information(
+            $"Artisan: 宇宙筆記狀態傾印 — 目標 recipe={recipe.RowId} item={itemId} \"{itemName}\"");
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"Artisan: AtkValues (count={addon->AtkValuesCount}):");
+        for (var i = 0; i < addon->AtkValuesCount; i++)
+        {
+            var v = &addon->AtkValues[i];
+            switch (v->Type)
+            {
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int:
+                    sb.Append($" [{i}]i={v->Int}"); break;
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt:
+                    sb.Append($" [{i}]u={v->UInt}"); break;
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool:
+                    sb.Append($" [{i}]b={v->Byte != 0}"); break;
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String:
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString:
+                    sb.Append($" [{i}]s=\"{v->String.ExtractText()}\""); break;
+                default:
+                    sb.Append($" [{i}]{v->Type}"); break;
+            }
+        }
+        Svc.Log.Information(sb.ToString());
+
+        var nb = new System.Text.StringBuilder();
+        nb.Append($"Artisan: 節點文字 (NodeListCount={addon->UldManager.NodeListCount}):");
+        for (var i = 0; i < addon->UldManager.NodeListCount; i++)
+        {
+            var n = addon->UldManager.NodeList[i];
+            if (n == null || n->Type != NodeType.Text)
+                continue;
+            var t = n->GetAsAtkTextNode();
+            if (t == null)
+                continue;
+            var text = t->NodeText.ExtractText();
+            if (!string.IsNullOrWhiteSpace(text))
+                nb.Append($" [{i}]=\"{text}\"");
+        }
+        Svc.Log.Information(nb.ToString());
+    }
 
     public static TaskResult TaskSelectRecipe(Recipe recipe)
     {
@@ -618,10 +675,14 @@ public unsafe static class PreCrafting
 
             if (_cosmicSelectIndex >= rd->RecipesCount)
             {
-                // 整輪都試過還沒中：從頭再來，並留下紀錄（Information，Debug 會被使用者的
-                // 記錄等級濾掉）。持續出現代表宇宙筆記的選取狀態讀不到，要換判定方式。
+                // 整輪都試過還沒中。實機證實會一直走到這裡：GetSelectedRecipeEntry() 讀的是
+                // RecipeNote.Instance()->RecipeList，那是「一般製作手帳」的清單，反映不了
+                // 宇宙筆記的選取狀態，所以這個比對永遠不會成立。
+                // 在這裡把宇宙筆記的節點清單傾印一次，用實測找出可以拿來判定選取的節點
+                // （例如顯示配方名稱的文字節點），取代讀不到的 RecipeList。
                 Svc.Log.Information(
                     $"Artisan: 宇宙配方 {recipe.RowId} 掃過全部 {rd->RecipesCount} 項仍未選中，重新來過");
+                DumpCosmicStateOnce(addon, recipe);
                 _cosmicSelectIndex = 0;
                 return TaskResult.Retry;
             }

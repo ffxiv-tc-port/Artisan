@@ -528,6 +528,9 @@ namespace Artisan.CraftingLists
             return count;
         }
 
+        // 只在第一次進入宇宙製作分支時傾印一次節點清單，避免每幀洗版。
+        private static bool _cosmicNodesDumped = false;
+
         public static unsafe bool SetIngredients(EnduranceIngredients[]? setIngredients = null)
         {
             var recipe = Operations.GetSelectedRecipeEntry();
@@ -564,6 +567,35 @@ namespace Artisan.CraftingLists
                         $"Artisan: WKSRecipeNotebook 節點 17/18 不是 AtkComponentButton "
                         + $"(type17={hqNode->Type}, type18={nqNode->Type}),無法指派宇宙製作的素材");
                     return false;
+                }
+
+                // 實機驗證(2026-07-31):上面三道檢查全數通過、點擊也確實送出，但素材依然
+                // 沒有被指派 —— 也就是節點 17/18 在台服是「別的按鈕」(從畫面看比較像
+                // 普通/優質的分頁，不是指派用的核取方塊)。上游寫死的索引在這裡對不上。
+                // 先把節點清單傾印出來(只印一次)，用實測取代猜測再決定正確索引。
+                if (!_cosmicNodesDumped)
+                {
+                    _cosmicNodesDumped = true;
+                    var dump = new System.Text.StringBuilder();
+                    dump.Append($"Artisan: WKSRecipeNotebook 節點傾印 (NodeListCount={cosmicAddon->UldManager.NodeListCount}):");
+                    for (var i = 0; i < cosmicAddon->UldManager.NodeListCount; i++)
+                    {
+                        var n = cosmicAddon->UldManager.NodeList[i];
+                        if (n == null) { dump.Append($" [{i}]=null"); continue; }
+                        dump.Append($" [{i}]type={n->Type}");
+                        if (n->Type == NodeType.Text)
+                        {
+                            var t = n->GetAsAtkTextNode();
+                            if (t != null) dump.Append($",text=\"{t->NodeText}\"");
+                        }
+                        else if ((ushort)n->Type >= 1000)
+                        {
+                            var c = n->GetAsAtkComponentNode();
+                            if (c != null && c->Component != null)
+                                dump.Append($",comp={c->Component->UldManager.NodeListCount}nodes");
+                        }
+                    }
+                    Svc.Log.Information(dump.ToString());
                 }
 
                 Svc.Log.Information("Artisan: 指派宇宙製作素材(點擊 NQ/HQ 全選按鈕)");

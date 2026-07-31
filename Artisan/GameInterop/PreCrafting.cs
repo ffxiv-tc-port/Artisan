@@ -574,8 +574,10 @@ public unsafe static class PreCrafting
     }
 
     private static bool _cosmicStateDumped = false;
-    // 宇宙筆記已開啟時重新下 OpenRecipeByRecipeId 的節流（見 TaskSelectRecipe）
-    private static DateTime _lastCosmicSelectAttempt = DateTime.MinValue;
+    // 宇宙筆記逐項選取的游標（一幀送一個 callback，見 TaskSelectRecipe）
+    private static int _cosmicSelectIndex;
+    // 宇宙任務的配方清單很短（實測 2～3 項）；純粹是繞回重試的上限，不是清單長度。
+    private const int MaxCosmicRecipeEntries = 20;
 
     /// <summary>
     /// 把 WKSRecipeNotebook 的 AtkValues 與節點文字傾印一次。
@@ -651,30 +653,60 @@ public unsafe static class PreCrafting
                 return TaskResult.Retry;
             }
 
-            // 🔴 不要用 Callback.Fire 逐項選。實機（2026-07-31）證實那條路走不通：
+            // 宇宙筆記的選取判定：用 addon 自己的 AtkValues，不要用 GetSelectedRecipeEntry()。
             //
-            //   上游原本在同一幀內把清單每一項都 Callback.Fire 一遍再比對；我先改成一幀
-            //   選一項之後，畫面確實會依序在配方之間切換 —— 但 GetSelectedRecipeEntry()
-            //   永遠不會等於目標配方，於是無限在兩個配方之間跳（使用者回報：停用 ICE 沒用，
-            //   停用 Artisan 才會停，證明迴圈在這裡）。
+            // 走過的兩條死路（都是實機證實的，不要再試）：
+            //  1. Callback.Fire 逐項選 + GetSelectedRecipeEntry() 比對 → 畫面會依序切換，
+            //     但比對永遠不成立、無限在配方之間跳。原因是 GetSelectedRecipeEntry() 讀的是
+            //     RecipeNote.Instance()->RecipeList，那份資料只有 OpenRecipeByRecipeId 會填，
+            //     Callback.Fire 只動畫面上的選取。
+            //  2. 視窗已開時改用 OpenRecipeByRecipeId → 台服會把視窗「關閉重建」，於是每
+            //     500ms 閃一次、使用者根本看不到視窗，只聽得到開關音效。
             //
-            //   原因：GetSelectedRecipeEntry() 讀的是 RecipeNote.Instance()->RecipeList，
-            //   那份資料是 OpenRecipeByRecipeId 才會填的，Callback.Fire 只動畫面上的選取。
-            //   兩階段製作第一階段之所以會成功，正是因為那時視窗還沒開、走的是上面
-            //   addon == null 那條 OpenRecipeByRecipeId 的路。
-            //
-            // 所以視窗已開但選取對不上時，一樣用 OpenRecipeByRecipeId（節流）。
-            // 就算它在台服會把視窗關掉重建（一般製作手帳有這個行為），下一幀就會落到
-            // addon == null 那條分支 —— 也就是第一階段已經證實可行的那條路，會自己收斂。
-            var nowCosmic = DateTime.Now;
-            if ((nowCosmic - _lastCosmicSelectAttempt).TotalMilliseconds >= 500)
+            // 正解：用 Callback.Fire 選（那個是有效的），改成讀 AtkValues 驗證。
+            // 2026-07-31 兩次實機傾印比對得出的佈局：
+            //   AtkValues[45] = 當前選取的 item id（收藏品會是 id + 500000，例如 548368）
+            //   AtkValues[46] = 當前選取的品項名稱
+            const int SelectedItemIdValue = 45;
+            const int SelectedItemNameValue = 46;
+            const uint CollectableItemIdOffset = 500000;
+
+            if (addon->AtkValuesCount <= SelectedItemNameValue)
             {
-                _lastCosmicSelectAttempt = nowCosmic;
-                ReportRecipeOpenAttempt(recipe.RowId);
-                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                // 佈局與取樣時不同，不要瞎猜；留下紀錄讓下次能重新取樣。
+                DumpCosmicStateOnce(addon, recipe);
+                return TaskResult.Retry;
+            }
+
+            var targetItemId = recipe.ItemResult.RowId;
+            var targetItemName = recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? string.Empty;
+
+            var selectedId = addon->AtkValues[SelectedItemIdValue].UInt;
+            var selectedName = addon->AtkValues[SelectedItemNameValue].Type
+                is FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
+                or FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString
+                ? addon->AtkValues[SelectedItemNameValue].String.ExtractText()
+                : string.Empty;
+
+            var idMatches = selectedId == targetItemId || selectedId == targetItemId + CollectableItemIdOffset;
+            var nameMatches = targetItemName.Length > 0 && selectedName == targetItemName;
+
+            if (idMatches || nameMatches)
+            {
+                Svc.Log.Information($"Artisan: 宇宙配方 {recipe.RowId}（{targetItemName}）已選中");
+                _cosmicSelectIndex = 0;
+                return TaskResult.Done;
+            }
+
+            // 還沒選中：一幀送一個選取 callback，讓遊戲有機會更新後再驗。
+            if (_cosmicSelectIndex >= MaxCosmicRecipeEntries)
+            {
+                _cosmicSelectIndex = 0;
                 DumpCosmicStateOnce(addon, recipe);
             }
 
+            Callback.Fire(addon, false, 0, _cosmicSelectIndex);
+            _cosmicSelectIndex++;
             return TaskResult.Retry;
         }
         else

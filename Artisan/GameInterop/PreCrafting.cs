@@ -11,6 +11,7 @@ using ECommons.Automation;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.Logging;
+using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -573,6 +574,66 @@ public unsafe static class PreCrafting
         AgentRecipeNote.Instance()->SearchRecipeByItemId(itemId);
     }
 
+    // 🔴 宇宙筆記關掉之後怎麼開回來（2026-07-31 實機 log 定案）
+    //
+    // 觸發條件是「宇宙製作連做、下一輪要補消耗品」：前一次製作結束後角色停在
+    // IdleBetween（人還在宇宙筆記裡），StartCrafting 於是排入 TaskExitCraft，
+    // 那個 task 會把 WKSRecipeNotebook 關掉，角色才吃得下食物
+    //（log 裡 PreparingToCraft=False 之後才 Using food，所以關窗是必要的）。
+    //
+    // 壞掉的是重開。原本這裡呼叫 OpenRecipeByRecipeId / SearchRecipeByItemId ——
+    // 那是「一般製作手帳」的入口，宇宙配方根本不在裡面：
+    //   19:50:27~35  addon RecipeNote=NOT OPEN, agent active=False（開不起來）
+    //   19:55:57     偶爾真的把一般手帳開起來 → 遊戲回「尚未習得所選配方，無法查看」
+    //                連五次 → 觸發 Artisan 自己的錯誤上限，整個製作模式被關掉
+    // 使用者的回報就是這個：關窗吃完東西後看不到視窗、只聽得到開窗音效。
+    //
+    // 對照組（19:20，同一版、同一個食物）沒有 "Closing recipe menu" 這行 ——
+    // 因為那次是剛接新任務、不在 IdleBetween，沒關窗就沒事。
+    //
+    // 正解是走玩家自己會走的路：任務資訊面板上的「宇宙製作筆記」按鈕
+    //（WKSMissionInfomation 的 button 27）。點的是真的 UI 按鈕。
+    // ⚠️ 不要改成自己拼一個原生入口 —— CS 目前沒有 AgentWKSRecipeNotebook
+    //（只有 WKSHud / WKSMission / WKSMissionInfomation / WKSAnnounce）。
+    private static DateTime _cosmicWaitSince = DateTime.MinValue;
+    private static DateTime _lastCosmicReopen = DateTime.MinValue;
+    // 點按鈕之間留時間讓視窗真的開起來，不要用重試節奏猛點。
+    private const int CosmicReopenIntervalSeconds = 2;
+    // 等不到就中止，把控制權還給呼叫端（ICE 有自己的任務流程會重新處理），
+    // 而不是留在這裡空轉直到錯誤上限把製作模式關掉。
+    private const int CosmicReopenGiveUpSeconds = 30;
+
+    private static TaskResult ReopenCosmicNotebook(Recipe recipe)
+    {
+        var now = DateTime.Now;
+        if (_cosmicWaitSince == DateTime.MinValue)
+            _cosmicWaitSince = now;
+
+        if (now - _cosmicWaitSince > TimeSpan.FromSeconds(CosmicReopenGiveUpSeconds))
+        {
+            _cosmicWaitSince = DateTime.MinValue;
+            DuoLog.Error(
+                $"Artisan：宇宙筆記已關閉，等了 {CosmicReopenGiveUpSeconds} 秒仍開不回來，"
+                + $"無法選取宇宙配方 {recipe.RowId}。已中止這次製作。");
+            return TaskResult.Abort;
+        }
+
+        if (now - _lastCosmicReopen < TimeSpan.FromSeconds(CosmicReopenIntervalSeconds))
+            return TaskResult.Retry;
+
+        if (TryGetAddonMaster<AddonMaster.WKSMissionInfomation>("WKSMissionInfomation", out var mission)
+            && mission.IsAddonReady)
+        {
+            _lastCosmicReopen = now;
+            Svc.Log.Information(
+                $"Artisan：宇宙筆記已關閉（多半是剛才為了使用消耗品而離開製作），"
+                + $"點任務資訊面板的「宇宙製作筆記」按鈕重新開啟以選取配方 {recipe.RowId}。");
+            mission.CosmoCraftingLog();
+        }
+
+        return TaskResult.Retry;
+    }
+
     private static bool _cosmicStateDumped = false;
     // 宇宙筆記逐項選取的游標（一幀送一個 callback，見 TaskSelectRecipe）
     private static int _cosmicSelectIndex;
@@ -646,12 +707,9 @@ public unsafe static class PreCrafting
             var addon = Crafting.GetCosmicAddon();
 
             if (addon == null)
-            {
-                ReportRecipeOpenAttempt(recipe.RowId);
-                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
-                TryOpenViaSearchFallback(recipe);
-                return TaskResult.Retry;
-            }
+                return ReopenCosmicNotebook(recipe);
+
+            _cosmicWaitSince = DateTime.MinValue;
 
             // 宇宙筆記的選取判定：用 addon 自己的 AtkValues，不要用 GetSelectedRecipeEntry()。
             //

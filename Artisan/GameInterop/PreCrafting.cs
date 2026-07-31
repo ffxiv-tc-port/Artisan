@@ -573,10 +573,9 @@ public unsafe static class PreCrafting
         AgentRecipeNote.Instance()->SearchRecipeByItemId(itemId);
     }
 
-    // 宇宙製作筆記的逐項選取進度（一幀選一項，見 TaskSelectRecipe 內的說明）
-    private static uint _cosmicSelectRecipeId = 0;
-    private static int _cosmicSelectIndex = 0;
     private static bool _cosmicStateDumped = false;
+    // 宇宙筆記已開啟時重新下 OpenRecipeByRecipeId 的節流（見 TaskSelectRecipe）
+    private static DateTime _lastCosmicSelectAttempt = DateTime.MinValue;
 
     /// <summary>
     /// 把 WKSRecipeNotebook 的 AtkValues 與節點文字傾印一次。
@@ -652,43 +651,30 @@ public unsafe static class PreCrafting
                 return TaskResult.Retry;
             }
 
-            var rd = RecipeNoteRecipeData.Ptr();
-            if (rd == null)
-                return TaskResult.Retry;
-
-            // 🔴 上游原本在「同一幀」內用 for 迴圈把每一項都 Callback.Fire 選一遍，
-            // 每次選完立刻讀 GetSelectedRecipeEntry() 比對。兩個問題：
-            //   1. 送出 callback 後遊戲要到下一個 tick 才會更新選取狀態，同幀讀到的是舊值，
-            //      所以那個比對幾乎不可能命中；
-            //   2. 因此迴圈總是跑到底，把選取「留在最後一項」——實機徵狀就是多項配方時
-            //      永遠鎖定最後一項（2026-07-31 使用者回報 + 截圖確認）。
-            // 改成一幀只選一項並回 Retry，讓遊戲有機會更新；下一次進來時方法開頭的
-            // re 檢查就會看到結果並回 Done。
-            if (_cosmicSelectRecipeId != recipe.RowId)
+            // 🔴 不要用 Callback.Fire 逐項選。實機（2026-07-31）證實那條路走不通：
+            //
+            //   上游原本在同一幀內把清單每一項都 Callback.Fire 一遍再比對；我先改成一幀
+            //   選一項之後，畫面確實會依序在配方之間切換 —— 但 GetSelectedRecipeEntry()
+            //   永遠不會等於目標配方，於是無限在兩個配方之間跳（使用者回報：停用 ICE 沒用，
+            //   停用 Artisan 才會停，證明迴圈在這裡）。
+            //
+            //   原因：GetSelectedRecipeEntry() 讀的是 RecipeNote.Instance()->RecipeList，
+            //   那份資料是 OpenRecipeByRecipeId 才會填的，Callback.Fire 只動畫面上的選取。
+            //   兩階段製作第一階段之所以會成功，正是因為那時視窗還沒開、走的是上面
+            //   addon == null 那條 OpenRecipeByRecipeId 的路。
+            //
+            // 所以視窗已開但選取對不上時，一樣用 OpenRecipeByRecipeId（節流）。
+            // 就算它在台服會把視窗關掉重建（一般製作手帳有這個行為），下一幀就會落到
+            // addon == null 那條分支 —— 也就是第一階段已經證實可行的那條路，會自己收斂。
+            var nowCosmic = DateTime.Now;
+            if ((nowCosmic - _lastCosmicSelectAttempt).TotalMilliseconds >= 500)
             {
-                _cosmicSelectRecipeId = recipe.RowId;
-                _cosmicSelectIndex = 0;
-            }
-
-            if (rd->RecipesCount <= 0)
-                return TaskResult.Retry;
-
-            if (_cosmicSelectIndex >= rd->RecipesCount)
-            {
-                // 整輪都試過還沒中。實機證實會一直走到這裡：GetSelectedRecipeEntry() 讀的是
-                // RecipeNote.Instance()->RecipeList，那是「一般製作手帳」的清單，反映不了
-                // 宇宙筆記的選取狀態，所以這個比對永遠不會成立。
-                // 在這裡把宇宙筆記的節點清單傾印一次，用實測找出可以拿來判定選取的節點
-                // （例如顯示配方名稱的文字節點），取代讀不到的 RecipeList。
-                Svc.Log.Information(
-                    $"Artisan: 宇宙配方 {recipe.RowId} 掃過全部 {rd->RecipesCount} 項仍未選中，重新來過");
+                _lastCosmicSelectAttempt = nowCosmic;
+                ReportRecipeOpenAttempt(recipe.RowId);
+                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
                 DumpCosmicStateOnce(addon, recipe);
-                _cosmicSelectIndex = 0;
-                return TaskResult.Retry;
             }
 
-            Callback.Fire(addon, false, 0, _cosmicSelectIndex);
-            _cosmicSelectIndex++;
             return TaskResult.Retry;
         }
         else

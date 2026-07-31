@@ -280,9 +280,18 @@ public unsafe static class PreCrafting
             if (int.TryParse(addon->SelectedRecipeQuantityCraftableFromMaterialsInInventory->NodeText.ToString(), out int output))
                 return output;
         }
-        if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmic) && cosmic->UldManager.NodeList[24] != null)
+        // ⚠️ 這裡原本只驗 `NodeList[24] != null` 就直接索引。當初的稽核把它判為良性，理由是
+        // 「WKSRecipeNotebook 是 7.21+ 宇宙探索的 addon，TC 沒有，TryGet 永遠回 false」——
+        // 2026-07-31 的實機 log 證實台服 7.20 就有這個 addon 而且天天在用，那個前提已經不成立。
+        // 少了 NodeListCount 上界檢查就是越界讀原生陣列，而 AVE 是攔不到的。
+        // 節點型別也要驗：GetAsAtkTextNode() 對非文字節點會回 null。
+        const int CraftableQuantityNodeId = 24;
+        if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmic)
+            && cosmic->UldManager.NodeListCount > CraftableQuantityNodeId)
         {
-            if (int.TryParse(cosmic->UldManager.NodeList[24]->GetAsAtkTextNode()->NodeText.ToString(), out int output))
+            var node = cosmic->UldManager.NodeList[CraftableQuantityNodeId];
+            var textNode = node == null ? null : node->GetAsAtkTextNode();
+            if (textNode != null && int.TryParse(textNode->NodeText.ToString(), out int output))
                 return output;
         }
         return -1;

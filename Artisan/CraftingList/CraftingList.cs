@@ -537,9 +537,36 @@ namespace Artisan.CraftingLists
             if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmicAddon) &&
                 cosmicAddon->IsVisible)
             {
-                var hqBtn = cosmicAddon->UldManager.NodeList[17]->GetAsAtkComponentButton();
-                var nqBtn = cosmicAddon->UldManager.NodeList[18]->GetAsAtkComponentButton();
+                // 上游寫死節點索引 17/18 且完全沒有檢查。NodeList 的長度恰為 NodeListCount,
+                // 超出就是讀陣列後方的堆積垃圾再當 AtkResNode* 解參考 —— 那是攔不到的 AVE。
+                // 失敗形式要是「材料沒選、製作不開始」,而不是把遊戲弄崩。
+                if (cosmicAddon->UldManager.NodeListCount <= 18)
+                {
+                    Svc.Log.Information(
+                        $"Artisan: WKSRecipeNotebook NodeListCount={cosmicAddon->UldManager.NodeListCount} "
+                        + "(需要 > 18),無法指派宇宙製作的素材");
+                    return false;
+                }
 
+                var hqNode = cosmicAddon->UldManager.NodeList[17];
+                var nqNode = cosmicAddon->UldManager.NodeList[18];
+                if (hqNode == null || nqNode == null)
+                {
+                    Svc.Log.Information("Artisan: WKSRecipeNotebook 素材按鈕節點是 null,無法指派宇宙製作的素材");
+                    return false;
+                }
+
+                var hqBtn = hqNode->GetAsAtkComponentButton();
+                var nqBtn = nqNode->GetAsAtkComponentButton();
+                if (hqBtn == null || nqBtn == null)
+                {
+                    Svc.Log.Information(
+                        $"Artisan: WKSRecipeNotebook 節點 17/18 不是 AtkComponentButton "
+                        + $"(type17={hqNode->Type}, type18={nqNode->Type}),無法指派宇宙製作的素材");
+                    return false;
+                }
+
+                Svc.Log.Information("Artisan: 指派宇宙製作素材(點擊 NQ/HQ 全選按鈕)");
                 nqBtn->ClickAddonButton(cosmicAddon);
                 hqBtn->ClickAddonButton(cosmicAddon);
 

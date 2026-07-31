@@ -97,10 +97,22 @@ namespace Artisan
             if (addonPtr == null)
                 return;
 
-            if (addonPtr->UldManager.NodeListCount >= 5)
+            // 守衛數字必須 >= 本區塊用到的最大索引 + 1(這裡用到 [6] 與 [24],所以是 25)。
+            // 原本寫 >= 5:UldManager.NodeList 的長度恰為 NodeListCount,count 落在 5..24 時
+            // NodeList[24] 讀到的是陣列尾端之外的堆積垃圾,再當成 AtkResNode* 解參考 →
+            // 攔不到的 AccessViolation(corrupted-state exception,try/catch 無效)。
+            // 另加 IsAddonReady:GetAddonByName 在 addon 還在建構時就會回傳指標。
+            if (GenericHelpers.IsAddonReady(addonPtr) && addonPtr->UldManager.NodeListCount >= 25)
             {
                 //var node = addonPtr->UldManager.NodeList[1]->GetAsAtkComponentNode()->Component->UldManager.NodeList[4];
                 var node = addonPtr->UldManager.NodeList[6];
+                var countNode = addonPtr->UldManager.NodeList[24];
+                if (node == null || countNode == null)
+                    return;
+
+                var countTextNode = countNode->GetAsAtkTextNode();
+                if (countTextNode == null)
+                    return;
 
                 var position = AtkResNodeFunctions.GetNodePosition(node);
                 var scale = AtkResNodeFunctions.GetNodeScale(node);
@@ -108,7 +120,8 @@ namespace Artisan
                 var center = new Vector2((position.X + size.X) / 2, (position.Y - size.Y) / 2);
                 //position += ImGuiHelpers.MainViewport.Pos;
                 var textHeight = ImGui.CalcTextSize("Craft X Times:");
-                var craftableCount = addonPtr->UldManager.NodeList[24]->GetAsAtkTextNode()->NodeText.ToString() == "" ? 0 : Convert.ToInt32(addonPtr->UldManager.NodeList[24]->GetAsAtkTextNode()->NodeText.ToString().GetNumbers());
+                var countText = countTextNode->NodeText.ToString();
+                var craftableCount = countText == "" ? 0 : Convert.ToInt32(countText.GetNumbers());
 
                 if (craftableCount == 0) return;
 
@@ -882,10 +895,21 @@ namespace Artisan
             if (addonPtr == null)
                 return;
 
-            if (addonPtr->UldManager.NodeListCount >= 5)
+            // 守衛數字必須 >= 本區塊用到的最大索引 + 1(這裡用到 [8] 與 [35],所以是 36)。
+            // 原本寫 >= 5,同上一處的 bug class:count 落在 5..35 時 NodeList[35] 會讀到
+            // 陣列尾端之外約 240 bytes 的堆積垃圾,當成 AtkResNode* 解參考 → 攔不到的 AVE。
+            // 對照:本檔 :574 的 `NodeListCount < 38` 配 NodeList[37] 才是正確寫法。
+            if (GenericHelpers.IsAddonReady(addonPtr) && addonPtr->UldManager.NodeListCount >= 36)
             {
                 //var node = addonPtr->UldManager.NodeList[1]->GetAsAtkComponentNode()->Component->UldManager.NodeList[4];
                 var node = addonPtr->UldManager.NodeList[8];
+                var countNode = addonPtr->UldManager.NodeList[35];
+                if (node == null || countNode == null)
+                    return;
+
+                var countTextNode = countNode->GetAsAtkTextNode();
+                if (countTextNode == null)
+                    return;
 
                 var position = AtkResNodeFunctions.GetNodePosition(node);
                 var scale = AtkResNodeFunctions.GetNodeScale(node);
@@ -893,7 +917,8 @@ namespace Artisan
                 var center = new Vector2((position.X + size.X) / 2, (position.Y - size.Y) / 2);
                 //position += ImGuiHelpers.MainViewport.Pos;
                 var textHeight = ImGui.CalcTextSize("Craft X Times:".Loc());
-                var craftableCount = addonPtr->UldManager.NodeList[35]->GetAsAtkTextNode()->NodeText.ToString() == "" ? 0 : Convert.ToInt32(addonPtr->UldManager.NodeList[35]->GetAsAtkTextNode()->NodeText.ToString().GetNumbers());
+                var countText = countTextNode->NodeText.ToString();
+                var craftableCount = countText == "" ? 0 : Convert.ToInt32(countText.GetNumbers());
 
                 if (craftableCount == 0) return;
 

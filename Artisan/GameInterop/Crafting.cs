@@ -580,7 +580,11 @@ public static unsafe class Crafting
         ret.TrainedPerfectionAvailable = ActionManagerEx.CanUseSkill(Skills.TrainedPerfection);
         ret.QuickInnoAvailable = ActionManagerEx.CanUseSkill(Skills.QuickInnovation);
         ret.QuickInnoLeft = !craft.Specialist ? 0 : ActionManagerEx.CanUseSkill(Skills.QuickInnovation) ? 1 : predictedStep?.QuickInnoLeft ?? 0;
-        ret.ExpedienceLeft = GetStatus(Buffs.Expedience)?.Param ?? 0;
+        // Expedience is a one-use proc; the only consumer treats ExpedienceLeft as a
+        // >0 / ==0 binary check. On the TC client the status's Param can read back 0
+        // while the buff is still present, so presence of the status (not its Param)
+        // is the reliable signal here.
+        ret.ExpedienceLeft = GetStatus(Buffs.Expedience) != null ? 1 : 0;
         ret.PrevActionFailed = predictedStep?.PrevActionFailed ?? false;
         ret.PrevComboAction = predictedStep?.PrevComboAction ?? Skills.None;
         ret.MaterialMiracleCharges = MaterialMiracleCharges();

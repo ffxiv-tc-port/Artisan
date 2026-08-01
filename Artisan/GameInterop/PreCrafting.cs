@@ -707,11 +707,29 @@ public unsafe static class PreCrafting
 
     public static TaskResult TaskSelectRecipe(Recipe recipe)
     {
+        // 🔴 宇宙配方(Number == 0)絕對不能用 GetSelectedRecipeEntry() 當「已經選好了」的
+        // 判據。它讀的是 RecipeNote.Instance()->RecipeList —— 一般製作手帳的清單,只有
+        // OpenRecipeByRecipeId 會填;宇宙筆記的選取是 Callback.Fire 做的,完全不會更新
+        // 那份資料(底下宇宙分支那段「走過的兩條死路」註解講的就是同一件事)。所以這裡
+        // 拿到的是**上一次一般製作留下的陳舊值**,一旦它剛好等於這次要的 recipe,整個
+        // 宇宙選取流程就被跳過,接著 TaskStartCraft 直接對 WKSRecipeNotebook 送 callback 6 ——
+        // 那會製作**宇宙筆記當下選著的**配方,不是我們要的那個。
+        //
+        // 實機證據(2026-08-01 dalamud.log,ICE 跑宇宙任務):
+        //   16:06:40 ICE 要 36323 → 有「宇宙配方 36323 已選中」→ 實際做 36323 ✅
+        //   16:07:35 ICE 要 36322 → **沒有**「已選中」那行 → 實際做 36323 ❌
+        //   16:14:10 ICE 要 36322 → **沒有**「已選中」那行 → 實際做 36323 ❌
+        // 兩次做錯的都落在「早退沒跑選取流程」那一組,而跑過選取流程的沒有一次做錯。
+        // 對使用者的表徵就是任務目標「宇宙球粒隕石錠 2/1、宇宙月精金塊 0/1」。
+        //
+        // 一般配方維持原行為(那條路徑的 RecipeList 是有效的)。
+        var isCosmic = recipe.Number == 0;
         var re = Operations.GetSelectedRecipeEntry();
-        if ((re != null && re->RecipeId == recipe.RowId) || (Crafting.CurState is not Crafting.State.IdleBetween and not Crafting.State.IdleNormal))
+        if ((!isCosmic && re != null && re->RecipeId == recipe.RowId)
+            || (Crafting.CurState is not Crafting.State.IdleBetween and not Crafting.State.IdleNormal))
             return TaskResult.Done;
 
-        if (recipe.Number == 0)
+        if (isCosmic)
         {
             var addon = Crafting.GetCosmicAddon();
 

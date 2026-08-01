@@ -4,9 +4,6 @@
 [submodule "PunishLib"]
 	path = PunishLib
 	url = https://github.com/ffxiv-tc-port/PunishLib.git
-[submodule "ClickLib"]
-	path = ClickLib
-	url = https://github.com/ffxiv-tc-port/ClickLib.git
 [submodule "OtterGui"]
 	path = OtterGui
 	url = https://github.com/ffxiv-tc-port/OtterGui.git

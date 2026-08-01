@@ -117,14 +117,16 @@ namespace Artisan.CraftingLists
         public static Dictionary<uint, int> ListMaterials(this NewCraftingList list)
         {
             var output = new Dictionary<uint, int>();
-            foreach (var item in list.Recipes)
+            // This runs on a background thread (called from IngredientHelpers.GenerateList
+            // while the list editor keeps drawing), and the list editor can add/remove/skip
+            // recipes on list.Recipes concurrently. Iterate a snapshot so a structural change
+            // to the live List<T> can't throw "Collection was modified" mid-enumeration here,
+            // and don't mutate config objects or call P.Config.Save() from this thread
+            // (ListItemOptions already defaults to a non-null instance; ?. covers the rare
+            // legacy-null case without writing back).
+            foreach (var item in list.Recipes.ToArray())
             {
-                if (item.ListItemOptions == null)
-                {
-                    item.ListItemOptions = new ListItemOptions();
-                    P.Config.Save();
-                }
-                if (item.ListItemOptions.Skipping || item.Quantity == 0) continue;
+                if (item.ListItemOptions?.Skipping == true || item.Quantity == 0) continue;
                 Recipe r = LuminaSheets.RecipeSheet[item.ID];
                 CraftingListHelpers.AddRecipeIngredientsToList(r, ref output, false, list);
             }

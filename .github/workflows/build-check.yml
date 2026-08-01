@@ -2,34 +2,20 @@ name: Build Check
 
 on:
   push:
+    branches:
+      - 'tc-7.20'
     tags-ignore:
       - 'v*'
   workflow_dispatch:
 permissions:
   contents: write
 jobs:
-  gate:
-    runs-on: ubuntu-latest
-    outputs:
-      proceed: ${{ steps.check.outputs.proceed }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check if VersionPrefix changed from baseline
-        id: check
-        shell: bash
-        run: |
-          PREFIX=$(grep -oP '(?<=<VersionPrefix>)[^<]+' Artisan/Artisan.csproj)
-          echo "Current VersionPrefix: $PREFIX (baseline: 7.15.0)"
-          if [ "$PREFIX" = "7.15.0" ]; then
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-          fi
-
   build:
-    needs: gate
-    if: needs.gate.outputs.proceed == 'true'
     runs-on: windows-latest
+    env:
+      # 與 release.yml 完全一致 —— 兩個 workflow 的 NuGet 路徑與快取鍵必須對得上，
+      # 否則各存各的等於白做。
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget-packages
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,6 +24,16 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 9.x
+      # 🔑 快取按 ref 隔離：發版跑在 refs/tags/v*，每次都是新 tag、永遠命中不到自己。
+      # 但「預設分支建立的快取所有 ref 都讀得到」，所以這裡（跑在 tc-7.20）存的快取
+      # 才是發版時真正能命中的那一份。路徑與鍵刻意與 release.yml 逐字相同。
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.nuget-packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json', '**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
       - name: Download Dalamud (pinned TC-compatible build)
         shell: pwsh
         run: |

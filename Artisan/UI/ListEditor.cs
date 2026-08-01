@@ -46,6 +46,11 @@ internal class ListEditor : Window, IDisposable
     private CancellationTokenSource source = new CancellationTokenSource();
     private CancellationToken token;
 
+    // Guards against a superseded background regeneration (see RefreshTable/
+    // GenerateTableAsync) still assigning Table/IngredientHelper after a newer one
+    // has already started.
+    private int tableGeneration;
+
     public bool Processing = false;
 
     internal List<uint> jobs = new();
@@ -118,39 +123,75 @@ internal class ListEditor : Window, IDisposable
         if (P.Config.DefaultColourValidation) ColourValidation = true;
     }
 
-    public async Task GenerateTableAsync(CancellationTokenSource source)
+    public async Task GenerateTableAsync(CancellationTokenSource generationSource, int generation)
     {
-        Table?.Dispose();
-        var list = await IngredientHelper.GenerateList(SelectedList, source);
-        if (list is null)
+        // Use a helper instance scoped to this generation attempt rather than the shared
+        // IngredientHelper field directly: if an older regeneration is still running when a
+        // newer one starts (RefreshTable only cancels, it can't interrupt a Task already past
+        // its next cancellation check), both would otherwise mutate the same IngredientHelpers
+        // object's CurrentIngredient/MaxIngredient/HelperList concurrently from two threads.
+        // Only publish this instance to the field if we're still the current generation, so the
+        // progress bar (read from IngredientHelper in DrawTotalIngredientsTable) reflects the
+        // in-flight generation, not a superseded one.
+        var helper = new IngredientHelpers();
+        if (generation == Volatile.Read(ref tableGeneration))
+            IngredientHelper = helper;
+
+        var list = await helper.GenerateList(SelectedList, generationSource);
+        if (list is null ||
+            generationSource.IsCancellationRequested ||
+            generation != Volatile.Read(ref tableGeneration))
         {
             Svc.Log.Debug($"Table list empty, aborting.");
             return;
         }
 
-        Table = new IngredientTable(list);
+        var table = new IngredientTable(list);
+        if (generationSource.IsCancellationRequested ||
+            generation != Volatile.Read(ref tableGeneration))
+        {
+            // A newer regeneration started while this one was building its table; discard
+            // this result instead of overwriting whatever the newer generation produces.
+            table.Dispose();
+            return;
+        }
+
+        Table = table;
     }
 
     public void RefreshTable(object? sender, bool e)
     {
-        token = source.Token;
+        // The list editor can trigger a new regeneration (add/remove/skip a recipe) while a
+        // previous one is still running in the background. Tag each attempt with an
+        // Interlocked-incremented generation number so a superseded GenerateTableAsync call
+        // discards its result (checked via Volatile.Read against tableGeneration) instead of
+        // racing the newer one to assign Table/IngredientHelper.
+        var oldSource = source;
+        var oldTask = RegenerateTask;
+        source = new CancellationTokenSource();
+        var generationSource = source;
+        token = generationSource.Token;
+        var generation = Interlocked.Increment(ref tableGeneration);
+
+        oldSource.Cancel();
+        if (oldTask?.IsCompleted != false)
+            oldSource.Dispose();
+        else
+            // The old task may still be reading oldSource's token; don't dispose out from
+            // under it, defer disposal until it actually finishes.
+            _ = oldTask.ContinueWith(
+                _ => oldSource.Dispose(),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+
+        Table?.Dispose();
         Table = null;
         P.UniversalsisClient.PlayerWorld = Svc.ClientState.LocalPlayer?.CurrentWorld.RowId;
-        if (RegenerateTask == null || RegenerateTask.IsCompleted)
-        {
-            Svc.Log.Debug($"Starting regeneration");
-            RegenerateTask = Task.Run(() => GenerateTableAsync(source), token);
-        }
-        else
-        {
-            Svc.Log.Debug($"Stopping and restarting regeneration");
-            if (source != null)
-                source.Cancel();
-
-            source = new();
-            token = source.Token;
-            RegenerateTask = Task.Run(() => GenerateTableAsync(source), token);
-        }
+        Svc.Log.Debug($"Starting ingredient table regeneration {generation}");
+        RegenerateTask = Task.Run(
+            () => GenerateTableAsync(generationSource, generation),
+            token);
     }
 
     public override void PreDraw()
@@ -1155,7 +1196,7 @@ internal class ListEditor : Window, IDisposable
     }
     private void DrawTotalIngredientsTable()
     {
-        if (Table == null && RegenerateTask.IsCompleted)
+        if (Table == null && RegenerateTask?.IsCompleted == true)
         {
             if (ImGui.Button("Something went wrong creating the table. Try again?".Loc()))
             {

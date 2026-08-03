@@ -45,6 +45,27 @@ namespace Artisan.Autocraft
             }
         }
 
+        /// <summary>換區與剛登入的短暫視窗內背包容器還沒載入，InventoryManager 的各種計數會
+        /// 整片回 0 —— 「還沒讀到」與「真的沒有」在呼叫端完全同形，分不出來。
+        /// 🔴 只拿它當「讀到 0 之後要做破壞性動作」的閘門，讀不到就這一幀不下結論、下一輪重來。
+        /// ⚠️ 刻意不折進 <see cref="CanRepairAny"/>／<see cref="HasDarkMatterOrBetter"/>：
+        /// 那會讓「讀不到」變成「假設有暗物質」，是寬鬆方向，會讓流程拿著空氣去修理。</summary>
+        internal static bool IsInventoryStateReadable()
+        {
+            if (!ECommons.GameHelpers.Player.Available) return false;
+            if (Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BetweenAreas]
+                || Svc.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.BetweenAreas51]) return false;
+            var im = InventoryManager.Instance();
+            if (im == null) return false;
+            InventoryType[] types = [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4];
+            foreach (var t in types)
+            {
+                var inv = im->GetInventoryContainer(t);
+                if (inv == null || inv->Items == null || inv->Size <= 0) return false;
+            }
+            return true;
+        }
+
         internal static bool HasDarkMatterOrBetter(uint darkMatterID)
         {
             var repairResources = Svc.Data.Excel.GetSheet<ItemRepairResource>();
@@ -243,6 +264,21 @@ namespace Artisan.Autocraft
                 {
                     ActionManagerEx.UseRepair();
                 }
+                _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(1000));
+                return false;
+            }
+
+            // 🔴 走到這裡代表上面每一條「能修理」的路都判 false，接下來是破壞性結論：
+            // 關掉持久模式／暫停製作清單，兩者都要使用者手動回去重開。
+            // 但那些判斷全都建立在背包讀數上 —— HasDarkMatterOrBetter 走
+            // GetInventoryItemCount，NPC 修理那條走金幣讀數 —— 而換區與剛登入的短暫視窗內
+            // 這些讀數會一起假性歸零（ICE 實機事故同形狀：使用者身上有 999 個餌，
+            // BetweenAreas 那一毫秒讀到 0 就中止流程，觸發源還是完全不相干的機甲行動傳送）。
+            // 「這個功能不會切區域」是錯的假設，所以讀不到就不下這個結論：
+            // 回 false 讓呼叫端照既有的延後路徑重試（Endurance/CraftingList 對 false 的處理
+            // 就是離開製作並下一輪再來），下一輪讀得到時該關還是會關。
+            if (!IsInventoryStateReadable())
+            {
                 _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(1000));
                 return false;
             }

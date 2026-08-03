@@ -399,7 +399,17 @@ public unsafe static class PreCrafting
         var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu").Address;
         if (contextMenu != null)
         {
-            for (int i = 0; i < contextMenu->AtkValuesCount; i++)
+            // AtkValuesCount 是 ContextMenu 這個 addon 的 AtkValues 陣列長度,跟 agent 的
+            // _eventIds(FixedSizeArray84<byte>,84 格)是兩個不相干的長度。拿前者當後者的
+            // 迴圈上界,只要選單的 AtkValuesCount 超過 84 就會丟 IndexOutOfRangeException
+            // (產生器產出的是 Span<byte>,有邊界檢查,所以不會 AVE,但整段裝備流程會靜默失效)。
+            // 取兩者較小值,索引的上下界都要驗。
+            int entryCount = Math.Min(contextMenu->AtkValuesCount, ctx->EventIds.Length);
+
+            // 第 n 個選單項對應的事件編號是 7+n,所以 i<7 沒有對應的選單列;
+            // 那種情況下 i-7 會是負數,而 p2=-1 對選單的語意是「關閉」——
+            // 送出去等於在還沒找到裝備選項時就把選單關掉。
+            for (int i = 7; i < entryCount; i++)
             {
                 var firstEntryIsEquip = ctx->EventIds[i] == 25; // i'th entry will fire eventid 7+i; eventid 25 is 'equip'
                 if (firstEntryIsEquip)

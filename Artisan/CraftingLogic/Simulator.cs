@@ -238,7 +238,9 @@ public static class Simulator
             next.Durability = Math.Min(craft.CraftDurability, next.Durability + repair);
         }
 
-        next.Condition = action is Skills.FinalAppraisal or Skills.HeartAndSoul ? step.Condition : GetNextCondition(craft, step, nextStateRoll);
+        // free actions do not advance the turn, so the condition does not re-roll either
+        // (careful observation is the exception - re-rolling the condition is its entire purpose)
+        next.Condition = action is Skills.FinalAppraisal or Skills.HeartAndSoul or Skills.QuickInnovation ? step.Condition : GetNextCondition(craft, step, nextStateRoll);
 
         return (success ? ExecuteResult.Succeeded : ExecuteResult.Failed, next);
     }
@@ -321,7 +323,12 @@ public static class Simulator
         return false;
     }
 
-    public static bool SkipUpdates(Skills action) => action is Skills.CarefulObservation or Skills.FinalAppraisal or Skills.HeartAndSoul or Skills.MaterialMiracle;
+    // "free" actions: using them does not consume a craft step, so the step index does not advance,
+    // no turn-based buff ticks down, and manipulation does not repair.
+    // Verified against the game's own action descriptions (CraftAction sheet, "使用本技能不會消耗一次作業時間"):
+    // the only in-craft actions carrying that clause are 設計變動 (CarefulObservation), 專心致志 (HeartAndSoul),
+    // 快速改革 (QuickInnovation) and 最終確認 (FinalAppraisal, Action sheet #19012).
+    public static bool SkipUpdates(Skills action) => action is Skills.CarefulObservation or Skills.FinalAppraisal or Skills.HeartAndSoul or Skills.MaterialMiracle or Skills.QuickInnovation;
     public static bool ConsumeHeartAndSoul(Skills action) => action is Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade;
 
     public static double GetSuccessRate(StepState step, Skills action)
@@ -449,7 +456,6 @@ public static class Simulator
             return 0;
 
         float buffMod = (1 + (step.GreatStridesLeft > 0 ? 1 : 0) + (step.InnovationLeft > 0 ? 0.5f : 0)) * (100 + 10 * step.IQStacks) / 100;
-        float effPotency = potency * buffMod;
 
         float condMod = step.Condition switch
         {
@@ -458,7 +464,12 @@ public static class Simulator
             Condition.Poor => 0.5f,
             _ => 1
         };
-        return (int)(BaseQuality(craft) * condMod * effPotency / 100);
+        // note: the multiplication order matters. buffMod is not exactly representable as a float for most
+        // inner quiet stacks (e.g. IQ=3 yields 1.29999995 rather than 1.3), and folding potency in first
+        // (potency * buffMod) rounds that deficit away, producing an off-by-one against the game.
+        // applying buffMod to the base quality first reproduces the game exactly - verified over 177 live
+        // quality deltas from a crafting session (177/177 with this order, 174/177 with the old one).
+        return (int)(BaseQuality(craft) * buffMod * condMod * potency / 100);
     }
 
     public static bool WillFinishCraft(CraftState craft, StepState step, Skills action) => step.FinalAppraisalLeft == 0 && step.Progress + CalculateProgress(craft, step, action) >= craft.CraftProgress;

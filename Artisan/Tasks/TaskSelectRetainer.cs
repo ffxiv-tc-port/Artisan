@@ -247,10 +247,21 @@ internal unsafe static class RetainerHandlers
 
         foreach (var inv in inventories)
         {
-            //Svc.Log.Debug($"RETAINER PAGE {inv} WITH SIZE {InventoryManager.Instance()->GetInventoryContainer(inv)->Size}");
-            for (int i = 0; i < InventoryManager.Instance()->GetInventoryContainer(inv)->Size; i++)
+            // 容器指標提到迴圈外：原本每次迭代都呼叫兩次 GetInventoryContainer（條件式一次、取格子一次）。
+            // 迴圈內唯二會回到遊戲的呼叫（OpenForItemSlot / Callback.Fire）後面都緊接著 return，
+            // 沒有任何一輪會在遊戲可能重配容器之後繼續跑，所以提出來不會拿到失效指標。
+            var container = InventoryManager.Instance()->GetInventoryContainer(inv);
+            // 讀不到就跳過這一頁，當成「這一頁裡沒有這個道具」，最壞情況是回 false 讓呼叫端重試。
+            // 反方向極危險：Items 尚未配置時 GetInventorySlot(i) 會回小偏移假指標，
+            // 假的 ItemId 若剛好對上就會用那個 i 去 OpenForItemSlot，對錯的格子按下「取回」。
+            if (container == null || container->Items == null)
+                continue;
+            //Svc.Log.Debug($"RETAINER PAGE {inv} WITH SIZE {container->Size}");
+            for (int i = 0; i < container->Size; i++)
             {
-                var item = InventoryManager.Instance()->GetInventoryContainer(inv)->GetInventorySlot(i);
+                var item = container->GetInventorySlot(i);
+                if (item == null)
+                    continue;
                 //Svc.Log.Debug($"ITEM {item->ItemId.NameOfItem()} IN {item->Slot}");
                 if (item->ItemId == ItemId && ((lookingForHQ && item->Flags == InventoryItem.ItemFlags.HighQuality) || (!lookingForHQ)))
                 {

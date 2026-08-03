@@ -516,7 +516,9 @@ namespace Artisan.UI
             ImGui.TextUnformatted($"Total stats: {stats.Craftsmanship}/{stats.Control}/{stats.CP}/{stats.SplendorCosmic}/{stats.Specialist}");
 
             var inventory = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
-            if (inventory == null)
+            // 同 CharacterStats.GetBaseStatsEquipped：== null 只擋了一半，
+            // Items 尚未配置時下面的 inventory->Items + i 會是小偏移假指標。
+            if (inventory == null || inventory->Items == null)
                 return;
 
             for (int i = 0; i < inventory->Size; ++i)

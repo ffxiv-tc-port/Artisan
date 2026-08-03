@@ -394,11 +394,18 @@ namespace Artisan.CraftingLists
                     foreach (var inv in inventories)
                     {
                         var container = invManager->GetInventoryContainer(inv);
+                        // 讀不到就跳過這一頁。這個迴圈只會「加上去」，少加＝少報，
+                        // 呼叫端一律是「持有量 >= 需求量?」的閘門，少報會讓流程判定素材不足而不開工，
+                        // 多報則會讓它拿著不存在的素材去製作。
+                        // ⚠️ 外層的 try/catch 雖然接得住 NRE，但它是整個函式回 0，
+                        //    連前面 GetInventoryItemCount 已經算好的 NQ/HQ 也一起丟掉。
+                        if (container == null || container->Items == null)
+                            continue;
                         for (int i = 0; i < container->Size; i++)
                         {
                             var item = container->GetInventorySlot(i);
 
-                            if (item->ItemId == ingredient)
+                            if (item != null && item->ItemId == ingredient)
                                 invNumberNQ++;
                         }
                     }

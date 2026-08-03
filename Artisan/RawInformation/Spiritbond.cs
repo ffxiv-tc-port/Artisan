@@ -11,29 +11,47 @@ namespace Artisan.RawInformation
 {
     public unsafe static class Spiritbond
     {
-        public static ushort Weapon { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[0].SpiritbondOrCollectability; }
+        /// <summary>已裝備欄位的精魂值安全讀取。讀不到一律回 0。
+        /// 擋三件事：
+        /// (a) 換區／剛登入時 <c>GetInventoryContainer</c> 直接回 null，<c>-&gt;Items</c>（偏移 0x08）會炸；
+        /// (b) 容器已存在但 <c>Items</c> 尚未配置 —— 此時 <c>Size</c> 可能已非 0，
+        ///     而 <c>Items[slot]</c> 會從「null + slot * 0x48」這個小偏移假位址讀出垃圾精魂值；
+        /// (c) 容器只載入一半、<c>Size</c> 還沒到 13 —— 原本的寫法對 slot 完全不設防。
+        /// ⚠️ 回 0 是刻意的收斂方向：唯一的決策型消費者是 <see cref="IsSpiritbondReadyAny"/> 的
+        ///    <c>== 10000</c> 比較，0 會讓它回 false，也就是「沒有東西可以抽魔晶石」而少做事。
+        ///    回一個垃圾值則可能剛好命中 10000，把流程推去開精製介面對空氣操作。
+        ///    0 與「該欄位真的沒裝備」同值，語意上沒有損失（空欄位本來就讀 0）。</summary>
+        private static ushort GetEquippedSpiritbond(int slot)
+        {
+            var equipment = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
+            if (equipment == null || equipment->Items == null) return 0;
+            if (slot < 0 || slot >= equipment->Size) return 0;
+            return equipment->Items[slot].SpiritbondOrCollectability;
+        }
 
-        public static ushort Offhand { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[1].SpiritbondOrCollectability; }
+        public static ushort Weapon { get => GetEquippedSpiritbond(0); }
 
-        public static ushort Helm { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[2].SpiritbondOrCollectability; }
+        public static ushort Offhand { get => GetEquippedSpiritbond(1); }
 
-        public static ushort Body { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[3].SpiritbondOrCollectability; }
+        public static ushort Helm { get => GetEquippedSpiritbond(2); }
 
-        public static ushort Hands { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[4].SpiritbondOrCollectability; }
+        public static ushort Body { get => GetEquippedSpiritbond(3); }
 
-        public static ushort Legs { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[6].SpiritbondOrCollectability; }
+        public static ushort Hands { get => GetEquippedSpiritbond(4); }
 
-        public static ushort Feet { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[7].SpiritbondOrCollectability; }
+        public static ushort Legs { get => GetEquippedSpiritbond(6); }
 
-        public static ushort Earring { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[8].SpiritbondOrCollectability; }
+        public static ushort Feet { get => GetEquippedSpiritbond(7); }
 
-        public static ushort Neck { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[9].SpiritbondOrCollectability; }
+        public static ushort Earring { get => GetEquippedSpiritbond(8); }
 
-        public static ushort Wrist { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[10].SpiritbondOrCollectability; }
+        public static ushort Neck { get => GetEquippedSpiritbond(9); }
 
-        public static ushort Ring1 { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[11].SpiritbondOrCollectability; }
+        public static ushort Wrist { get => GetEquippedSpiritbond(10); }
 
-        public static ushort Ring2 { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[12].SpiritbondOrCollectability; }
+        public static ushort Ring1 { get => GetEquippedSpiritbond(11); }
+
+        public static ushort Ring2 { get => GetEquippedSpiritbond(12); }
 
         public static bool IsSpiritbondReadyAny()
         {

@@ -875,9 +875,16 @@ public unsafe static class PreCrafting
         foreach (var inv in inventories)
         {
             var cont = InventoryManager.Instance()->GetInventoryContainer(inv);
+            // 讀不到的容器直接跳過，當成「這一頁裡沒有」。刻意不整個中止：
+            // 其他頁讀得到的話還是能找到道具，而找不到時呼叫端 TaskEquipItem 會做破壞性動作
+            // （關持久模式＋暫停清單），能少走一次就少走一次。
+            // 反方向（拿假指標算出 slot）會讓 OpenForItemSlot 對錯的格子操作而裝上別的道具。
+            if (cont == null || cont->Items == null)
+                continue;
             for (int i = 0; i < cont->Size; ++i)
             {
-                if (cont->GetInventorySlot(i)->ItemId == ItemId)
+                var slot = cont->GetInventorySlot(i);
+                if (slot != null && slot->ItemId == ItemId)
                 {
                     return (inv, i);
                 }

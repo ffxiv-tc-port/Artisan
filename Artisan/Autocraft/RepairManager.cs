@@ -80,10 +80,30 @@ namespace Artisan.Autocraft
             return false;
         }
 
+        /// <summary>已裝備容器的安全取得。兩種「讀不到」都回 null：
+        /// (a) 換區／剛登入時 <c>GetInventoryContainer</c> 本身就回 null，
+        ///     此時 <c>equipment-&gt;Size</c>（偏移 0x14）會直接炸在呼叫端；
+        /// (b) 容器物件已存在但 <c>Items</c>（偏移 0x08）尚未配置 —— 這時 <c>Size</c> 可能已非 0，
+        ///     而 <c>GetInventorySlot(i)</c> 回的是 <c>Items + i * sizeof(InventoryItem)</c>，
+        ///     也就是「非 null 但其實是小偏移」的假指標，會直接通過呼叫端的 <c>item != null</c>。
+        /// ⚠️ 拿到 null 的呼叫端各自回「少做事」方向的值，不要回中性值 ——
+        /// 讀不到不等於沒事，但寧可少修一輪，也不要拿空氣去做破壞性決定。</summary>
+        private static InventoryContainer* GetEquippedContainer()
+        {
+            var equipment = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
+            return equipment != null && equipment->Items != null ? equipment : null;
+        }
+
         internal static int GetNPCRepairPrice()
         {
             var output = 0;
-            var equipment = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
+            var equipment = GetEquippedContainer();
+            // 讀不到時回 int.MaxValue 而不是 0：唯一的決策型呼叫端是
+            // 「持有金幣 >= 修理價」這個閘門，回 0 會被讀成「免費」而放行去跟 NPC 互動；
+            // 回 MaxValue 則必定不放行（金幣上限 999,999,999 遠小於它）。
+            // ⚠️ 這個值也會被設定頁的 help marker 顯示出來，但那只是換區瞬間的暫態，
+            //    比起誤觸發 NPC 修理互動，顯示一個怪數字是可接受的取捨。
+            if (equipment == null) return int.MaxValue;
             for (var i = 0; i < equipment->Size; i++)
             {
                 var item = equipment->GetInventorySlot(i);
@@ -106,13 +126,20 @@ namespace Artisan.Autocraft
         internal static int GetMinEquippedPercent()
         {
             ushort ret = ushort.MaxValue;
-            var equipment = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
-            for (var i = 0; i < equipment->Size; i++)
+            var equipment = GetEquippedContainer();
+            // 讀不到時整段跳過迴圈，落到與「身上一件裝備都沒有」完全相同的回傳值（219）。
+            // 刻意不另外寫一個 return 常數：那會在日後有人改下面的算式時靜默分岔。
+            // 219 遠高於任何 repairPercent（0-100），所以收斂方向是「裝備沒事、不要去修」，
+            // 同時避開 CraftingProcessor.OnCraftStarted 的 `== 0` →「你的裝備已損壞」誤判。
+            if (equipment != null)
             {
-                var item = equipment->GetInventorySlot(i);
-                if (item != null && item->ItemId > 0)
+                for (var i = 0; i < equipment->Size; i++)
                 {
-                    if (item->Condition < ret) ret = item->Condition;
+                    var item = equipment->GetInventorySlot(i);
+                    if (item != null && item->ItemId > 0)
+                    {
+                        if (item->Condition < ret) ret = item->Condition;
+                    }
                 }
             }
             return (int)Math.Ceiling((double)ret / 300);
@@ -120,7 +147,12 @@ namespace Artisan.Autocraft
 
         internal static bool CanRepairAny(int repairPercent = 0)
         {
-            var equipment = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
+            var equipment = GetEquippedContainer();
+            // 讀不到時回 false，與既有的「掃完整排都沒有可修的」同值 —— 收斂方向是「沒東西可修」。
+            // ⚠️ 這裡刻意不去分辨「讀不到」與「真的沒有」：破壞性後果（關閉持久模式／暫停清單）
+            //    由 ProcessRepair 尾端的 IsInventoryStateReadable 閘門負責擋。
+            //    兩者是不同的軸 —— 這裡擋的是解參考，那裡擋的是誤判。
+            if (equipment == null) return false;
             for (var i = 0; i < equipment->Size; i++)
             {
                 var item = equipment->GetInventorySlot(i);

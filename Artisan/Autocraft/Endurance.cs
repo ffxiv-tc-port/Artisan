@@ -257,6 +257,79 @@ namespace Artisan.Autocraft
         {
             Svc.Toasts.ErrorToast += Toasts_ErrorToast;
             Svc.Toasts.ErrorToast += CheckNonMaxQuantityModeFinished;
+            Svc.Toasts.ErrorToast += CheckCraftBlockingError;
+        }
+
+        // 遊戲端「材料不足，無法開始製作」的三兄弟（台服 7.20 LogMessage 實查）：
+        //   1144 素材不足，無法進行製作作業。
+        //   1145 水晶不足，無法進行製作作業。
+        //   1146 素材與水晶不足，無法進行製作作業。
+        // 這三個都是**終局條件**，不是可重試條件 —— 背包裡沒有的東西，再送一次製作指令
+        // 也不會生出來。
+        //
+        // ⚠️ 刻意不含 1147「素材還沒有選擇完畢」：那個在一般製作流程裡有機會在指派途中
+        //    短暫出現（是「還沒選完」不是「沒有」），當成終局條件會誤停正常的製作。
+        //    它原本就由 CheckNonMaxQuantityModeFinished 處理，維持不動。
+        private static readonly uint[] CraftBlockingLogMessages = [1144, 1145, 1146];
+
+        // 🔴 為什麼需要這個：原本這三則訊息只有兩條處理路徑，兩條都不夠。
+        //    (a) CheckNonMaxQuantityModeFinished 被 !P.Config.MaxQuantityMode 擋著，
+        //        開著 Max Quantity 模式時完全不會執行；
+        //    (b) Toasts_ErrorToast 的通用斷路器要「10 秒內 5 次」才會動作，而且只是把耐力
+        //        關掉、不留下任何說明。
+        //    2026-08-03 實機：Artisan 每次都只印一行 Debug「Endurance toggled off」就安靜了，
+        //    ICE 那頭看到「Artisan 不忙了」立刻重下同一個指令 —— 靜默無限迴圈。
+        //    現在改成收到就停、並且用 Information 級把「哪個配方、遊戲說了什麼」寫進 log
+        //    （使用者跑 LogLevel 2，Debug 收不到）。
+        private static void CheckCraftBlockingError(ref SeString message, ref bool isHandled)
+        {
+            if (!Enable && !CraftingListUI.Processing)
+                return;
+
+            var text = message.ExtractText();
+            var sheet = Svc.Data?.GetExcelSheet<LogMessage>();
+            if (sheet is null || string.IsNullOrEmpty(text))
+                return;
+
+            uint matched = 0;
+            foreach (var id in CraftBlockingLogMessages)
+            {
+                if (sheet.TryGetRow(id, out var row) && row.Text.ExtractText() == text)
+                {
+                    matched = id;
+                    break;
+                }
+            }
+
+            if (matched == 0)
+                return;
+
+            var itemName = "?";
+            try
+            {
+                if (LuminaSheets.RecipeSheet is not null
+                    && LuminaSheets.RecipeSheet.TryGetValue(RecipeID, out var r))
+                    itemName = r.ItemResult.ValueNullable?.Name.ExtractText() ?? "?";
+            }
+            catch
+            {
+                // 名稱只是說明文字，查不到不該讓斷路器本身失敗。
+            }
+
+            Svc.Log.Information(
+                $"Artisan: game reported \"{text}\" (LogMessage {matched}) for recipe {RecipeID} ({itemName}). "
+                + "This is terminal - retrying cannot change the outcome, so crafting is being stopped.");
+            DuoLog.Error($"Artisan: {text} [recipe {RecipeID} - {itemName}]");
+
+            Errors.Clear();
+            if (enable)
+                ToggleEndurance(false);
+            if (CraftingListUI.Processing)
+                CraftingListFunctions.Paused = true;
+
+            PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), default));
+            P.TM.Abort();
+            CraftingListFunctions.CLTM.Abort();
         }
 
         private static bool enable = false;

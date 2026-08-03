@@ -533,6 +533,93 @@ namespace Artisan.CraftingLists
         // 只在第一次進入宇宙製作分支時傾印一次節點清單，避免每幀洗版。
         private static bool _cosmicNodesDumped = false;
 
+        // WKSRecipeNotebook 的 NQ／HQ 全選按鈕 —— 用**節點 ID**指定，不是節點清單索引。
+        //
+        // 2026-08-03 由台服 7.20 的 ui/uld/WKSRecipeNotebook.uld 離線解出（Lumina UldFile），
+        // 不是猜的。根 widget 共 54 個節點，與實機 NodeListCount=54 完全對得起來：
+        //   Node 38  Res            (0,152) 192x20   ← 素材列標題那一排
+        //   Node 39  Component 1004 (100,-8) 44x28   ← NQ 全選按鈕
+        //   Node 40  Component 1004 (148,-8) 44x28   ← HQ 全選按鈕
+        //   Node 41  Text           (0,2)   86x13    ← 「素材」
+        //   Node 42  Res            (0,164) 368x154  ← 素材列容器
+        //   Node 43/44/45 Component 1028 368x62 ×3   ← 三個素材列
+        //   Node 50  Component 1005 (228,315) 140x32 ← 製作按鈕
+        // ULD 元件表裡 1004 的 Type 是 **Button**（1028 是 Custom、1029 是 TreeList）。
+        //
+        // ⚠️ 實機節點傾印印出來的 type=1004／1028／1029 **不是** 1000 + ComponentType，
+        //    而是**該 ULD 檔自己的元件編號**（遊戲載入 ULD 時把這個值原樣搬進 AtkResNode.Type）。
+        //    兩者長得很像所以很容易誤讀 —— 決定性的反例是 1028/1029：我們的 CS
+        //    ComponentType 只到 Portrait=25，而 ULD 說 1028 的 Type 是 Custom(0)、
+        //    1029 是 TreeList(12)。若真是 1000+ComponentType，它們會是 1000 和 1012。
+        //    （曾據此推論「17/18 是 RadioButton＝普通/優質分頁鈕」，那是錯的。）
+        //
+        // 上游寫死的 NodeList[17]/[18] 在台服其實**指對了**（就是節點 39/40），
+        // 但索引會隨版本漂移而 ID 不會，而且查 ID 失敗是回 null（可偵測），
+        // 索引錯掉則是安靜地點到別的東西。ECommons 的 AddonMaster.WKSRecipeNotebook
+        // 也是用 GetComponentButtonById(39)/(40)，兩邊獨立指向同一組 ID。
+        private const uint CosmicNQButtonNodeId = 39;
+        private const uint CosmicHQButtonNodeId = 40;
+
+        /// <summary>
+        /// 在 addon 的節點清單裡用節點 ID 找節點。
+        /// </summary>
+        /// <remarks>
+        /// 刻意不用 <c>AtkUnitBase.GetComponentButtonById</c>：那是 <c>[MemberFunction]</c>，
+        /// 要靠特徵碼掃描解位址，台服對不上時的失敗形式是原生層的問題。
+        /// 這裡只讀 <c>NodeList</c> 與 <c>NodeId</c> 兩個純欄位，邊界是 <c>NodeListCount</c>，
+        /// 完全不呼叫遊戲函式 —— 假設不成立時最差就是回 null。
+        /// </remarks>
+        private static unsafe AtkResNode* FindNodeById(AtkUnitBase* addon, uint nodeId)
+        {
+            if (addon == null)
+                return null;
+
+            var count = addon->UldManager.NodeListCount;
+            for (var i = 0; i < count; i++)
+            {
+                var n = addon->UldManager.NodeList[i];
+                if (n != null && n->NodeId == nodeId)
+                    return n;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 把 WKSRecipeNotebook 的節點清單傾印一次（只在按 ID 找不到按鈕時才會用到）。
+        /// </summary>
+        /// <remarks>
+        /// 與上一版傾印的差別：**這次會印 NodeId**。上一版只印索引與 type，結果就是
+        /// 拿到 log 也沒辦法直接對到 ULD 的節點編號，還得再繞一圈。
+        /// 只讀 NodeList／NodeId／Type 三個純欄位，邊界一律是 NodeListCount。
+        /// </remarks>
+        private static unsafe void DumpCosmicNodeList(AtkUnitBase* addon)
+        {
+            if (addon == null)
+                return;
+
+            var count = addon->UldManager.NodeListCount;
+            var dump = new System.Text.StringBuilder();
+            dump.Append($"Artisan: WKSRecipeNotebook 節點傾印 (NodeListCount={count}):");
+            for (var i = 0; i < count; i++)
+            {
+                var n = addon->UldManager.NodeList[i];
+                if (n == null) { dump.Append($" [{i}]=null"); continue; }
+                dump.Append($" [{i}]id={n->NodeId},type={n->Type}");
+                if (n->Type == NodeType.Text)
+                {
+                    var t = n->GetAsAtkTextNode();
+                    if (t != null) dump.Append($",text=\"{t->NodeText}\"");
+                }
+                else if ((ushort)n->Type >= 1000)
+                {
+                    var c = n->GetAsAtkComponentNode();
+                    if (c != null && c->Component != null)
+                        dump.Append($",comp={c->Component->UldManager.NodeListCount}nodes");
+                }
+            }
+            Svc.Log.Information(dump.ToString());
+        }
+
         public static unsafe bool SetIngredients(EnduranceIngredients[]? setIngredients = null)
         {
             var recipe = Operations.GetSelectedRecipeEntry();
@@ -542,62 +629,40 @@ namespace Artisan.CraftingLists
             if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmicAddon) &&
                 cosmicAddon->IsVisible)
             {
-                // 上游寫死節點索引 17/18 且完全沒有檢查。NodeList 的長度恰為 NodeListCount,
-                // 超出就是讀陣列後方的堆積垃圾再當 AtkResNode* 解參考 —— 那是攔不到的 AVE。
-                // 失敗形式要是「材料沒選、製作不開始」,而不是把遊戲弄崩。
-                if (cosmicAddon->UldManager.NodeListCount <= 18)
+                // 用節點 ID 取按鈕（見上方 ULD 註解）。上游是寫死 NodeList[17]/[18]，
+                // 索引超出 NodeListCount 就是讀陣列後方的堆積垃圾再當 AtkResNode* 解參考
+                // —— 那是攔不到的 AVE。用 ID 查則是「找不到就回 null」。
+                var nqNode = FindNodeById(cosmicAddon, CosmicNQButtonNodeId);
+                var hqNode = FindNodeById(cosmicAddon, CosmicHQButtonNodeId);
+                if (nqNode == null || hqNode == null)
                 {
-                    Svc.Log.Information(
-                        $"Artisan: WKSRecipeNotebook NodeListCount={cosmicAddon->UldManager.NodeListCount} "
-                        + "(需要 > 18),無法指派宇宙製作的素材");
-                    return false;
-                }
-
-                var hqNode = cosmicAddon->UldManager.NodeList[17];
-                var nqNode = cosmicAddon->UldManager.NodeList[18];
-                if (hqNode == null || nqNode == null)
-                {
-                    Svc.Log.Information("Artisan: WKSRecipeNotebook 素材按鈕節點是 null,無法指派宇宙製作的素材");
-                    return false;
-                }
-
-                var hqBtn = hqNode->GetAsAtkComponentButton();
-                var nqBtn = nqNode->GetAsAtkComponentButton();
-                if (hqBtn == null || nqBtn == null)
-                {
-                    Svc.Log.Information(
-                        $"Artisan: WKSRecipeNotebook 節點 17/18 不是 AtkComponentButton "
-                        + $"(type17={hqNode->Type}, type18={nqNode->Type}),無法指派宇宙製作的素材");
-                    return false;
-                }
-
-                // 實機驗證(2026-07-31):上面三道檢查全數通過、點擊也確實送出，但素材依然
-                // 沒有被指派 —— 也就是節點 17/18 在台服是「別的按鈕」(從畫面看比較像
-                // 普通/優質的分頁，不是指派用的核取方塊)。上游寫死的索引在這裡對不上。
-                // 先把節點清單傾印出來(只印一次)，用實測取代猜測再決定正確索引。
-                if (!_cosmicNodesDumped)
-                {
-                    _cosmicNodesDumped = true;
-                    var dump = new System.Text.StringBuilder();
-                    dump.Append($"Artisan: WKSRecipeNotebook 節點傾印 (NodeListCount={cosmicAddon->UldManager.NodeListCount}):");
-                    for (var i = 0; i < cosmicAddon->UldManager.NodeListCount; i++)
+                    // 只印一次，避免每幀洗版；含節點 ID 是為了下次 ULD 真的改版時能立刻定位。
+                    if (!_cosmicNodesDumped)
                     {
-                        var n = cosmicAddon->UldManager.NodeList[i];
-                        if (n == null) { dump.Append($" [{i}]=null"); continue; }
-                        dump.Append($" [{i}]type={n->Type}");
-                        if (n->Type == NodeType.Text)
-                        {
-                            var t = n->GetAsAtkTextNode();
-                            if (t != null) dump.Append($",text=\"{t->NodeText}\"");
-                        }
-                        else if ((ushort)n->Type >= 1000)
-                        {
-                            var c = n->GetAsAtkComponentNode();
-                            if (c != null && c->Component != null)
-                                dump.Append($",comp={c->Component->UldManager.NodeListCount}nodes");
-                        }
+                        _cosmicNodesDumped = true;
+                        DumpCosmicNodeList(cosmicAddon);
                     }
-                    Svc.Log.Information(dump.ToString());
+                    Svc.Log.Information(
+                        $"Artisan: WKSRecipeNotebook 找不到素材全選按鈕節點 "
+                        + $"(ID {CosmicNQButtonNodeId}/{CosmicHQButtonNodeId}，"
+                        + $"NodeListCount={cosmicAddon->UldManager.NodeListCount})，無法指派宇宙製作的素材");
+                    return false;
+                }
+
+                var nqBtn = nqNode->GetAsAtkComponentButton();
+                var hqBtn = hqNode->GetAsAtkComponentButton();
+                if (nqBtn == null || hqBtn == null)
+                {
+                    if (!_cosmicNodesDumped)
+                    {
+                        _cosmicNodesDumped = true;
+                        DumpCosmicNodeList(cosmicAddon);
+                    }
+                    Svc.Log.Information(
+                        $"Artisan: WKSRecipeNotebook 節點 {CosmicNQButtonNodeId}/{CosmicHQButtonNodeId} "
+                        + $"不是 AtkComponentButton (typeNQ={nqNode->Type}, typeHQ={hqNode->Type})，"
+                        + "無法指派宇宙製作的素材");
+                    return false;
                 }
 
                 Svc.Log.Information("Artisan: 指派宇宙製作素材(點擊 NQ/HQ 全選按鈕)");

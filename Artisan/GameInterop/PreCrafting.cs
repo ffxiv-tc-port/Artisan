@@ -21,6 +21,7 @@ using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using static ECommons.GenericHelpers;
+using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 
 namespace Artisan.GameInterop;
 
@@ -644,10 +645,102 @@ public unsafe static class PreCrafting
     }
 
     private static bool _cosmicStateDumped = false;
-    // 宇宙筆記逐項選取的游標（一幀送一個 callback，見 TaskSelectRecipe）
-    private static int _cosmicSelectIndex;
-    // 宇宙任務的配方清單很短（實測 2～3 項）；純粹是繞回重試的上限，不是清單長度。
-    private const int MaxCosmicRecipeEntries = 20;
+
+    // ── WKSRecipeNotebook 的 AtkValues 佈局 ─────────────────────────────────────
+    // 2026-08-03 由台服 ffxiv_dx11.exe 反組譯確立（不是取樣猜的；取樣結果只用來對答案）。
+    //
+    // 重新整理常式 RVA 0xF879F0：
+    //   0xF87A22-0xF87A40  入口把 96（0x60）個 AtkValue 的型別與資料欄位「全部歸零」
+    //   0xF87A85           項目數 = GetCount()（0x9EE400：*(g+0xB8) 的 [8]）
+    //   0xF87B10-0xF87C38  for (i = 0; i < 項目數; i++) 只填「存在的」那幾項
+    //   0xF8865C-0xF8866D  把整組 96 個交給 addon（r8d = r13d = 0x60、r9 = 值陣列）
+    // 兩個直接可用的結論：
+    //   * addon->AtkValuesCount == 96
+    //   * 🔑 索引 >= 實際項目數的欄位型別必定是 Undefined(0)。整組每次重填，
+    //     不會殘留上一次的值 —— 所以「型別不是 Undefined」就是「這一項真的存在」的證明。
+    //
+    // 逐項欄位（迴圈本體，i < 項目數）：
+    //   [9  + 5*i] UInt   成品 item id（收藏品為 id + 500000，見 0xF87B55 lea ecx,[rdi+0x7A120]）
+    //   [35 + 2*i] String 成品名稱
+    // 選取狀態（0xF87C84 起，跟逐項用的是同一組來源欄位）：
+    //   [45] UInt   目前選取的 item id（收藏品同樣 +500000）
+    //   [46] String 目前選取的品項名稱
+    //
+    // ⚠️ 上限 5 不是估的：整數區 8..32（每項 5 格）與字串區 35..44（每項 2 格）之間
+    //    就只塞得下 5 項，第 6 項會直接覆寫到 [45]/[46]。這是遊戲二進位裡寫死的容量。
+    private const int CosmicEntryItemIdBase = 9;
+    private const int CosmicEntryItemIdStride = 5;
+    private const int CosmicEntryNameBase = 35;
+    private const int CosmicEntryNameStride = 2;
+    private const int CosmicMaxRecipeEntries = 5;
+    private const int CosmicSelectedItemIdValue = 45;
+    private const int CosmicSelectedItemNameValue = 46;
+    private const uint CollectableItemIdOffset = 500000;
+
+    // 選取階段的節流與放棄計時（不要用每幀猛送 callback 的節奏）
+    private static DateTime _cosmicSelectSince = DateTime.MinValue;
+    private static DateTime _lastCosmicSelect = DateTime.MinValue;
+    private const double CosmicSelectIntervalSeconds = 0.5;
+    private const int CosmicSelectGiveUpSeconds = 15;
+
+    private static void ResetCosmicSelectState()
+    {
+        _cosmicSelectSince = DateTime.MinValue;
+        _lastCosmicSelect = DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// 在宇宙筆記的清單裡找出目標配方所在的項目索引；找不到回 -1。
+    ///
+    /// 🔴 呼叫端收到 -1 時必須「什麼都不送」。
+    /// 送出清單長度以外的索引不是無害的：遊戲的 case 0 處理常式（RVA 0xF875EF）會把
+    /// 收到的整數原封不動存進 agent+4（完全不做邊界檢查），接著重新整理常式用
+    /// 0x9EE3C0 算 entryBase + index * 0x400 取出「項目」——那同樣沒有邊界檢查——
+    /// 於是拿到界外指標，再從 +0x338 讀出的 char* 是 0，最後 Utf8String::SetString
+    /// （0x6053C0）對 nullptr 跑內聯 strlen，在位址 0 觸發 C0000005。
+    /// 這就是 2026-08-03 19:26 那次崩潰的完整成因。
+    /// ⚠️ 那是原生層的存取違規，受管理端的 try/catch 與 HookSafety 一律攔不到。
+    /// </summary>
+    private static unsafe int FindCosmicRecipeEntry(AtkUnitBase* addon, uint targetItemId, string targetItemName)
+    {
+        int valueCount = addon->AtkValuesCount;
+
+        // 先用成品 id 對。型別是 Undefined 代表這一格這次重新整理沒被填過 => 該項不存在。
+        for (var i = 0; i < CosmicMaxRecipeEntries; i++)
+        {
+            var idx = CosmicEntryItemIdBase + i * CosmicEntryItemIdStride;
+            if (idx >= valueCount)
+                break;
+
+            var v = &addon->AtkValues[idx];
+            if (v->Type is not (AtkValueType.UInt or AtkValueType.Int))
+                continue;
+
+            var id = v->UInt;
+            if (id != 0 && (id == targetItemId || id == targetItemId + CollectableItemIdOffset))
+                return i;
+        }
+
+        // id 對不上才退而用名稱對（同樣只認這次真的被填過的格子）。
+        if (targetItemName.Length == 0)
+            return -1;
+
+        for (var i = 0; i < CosmicMaxRecipeEntries; i++)
+        {
+            var idx = CosmicEntryNameBase + i * CosmicEntryNameStride;
+            if (idx >= valueCount)
+                break;
+
+            var v = &addon->AtkValues[idx];
+            if (v->Type is not (AtkValueType.String or AtkValueType.ManagedString))
+                continue;
+
+            if (v->String.ExtractText() == targetItemName)
+                return i;
+        }
+
+        return -1;
+    }
 
     /// <summary>
     /// 把 WKSRecipeNotebook 的 AtkValues 與節點文字傾印一次。
@@ -727,7 +820,12 @@ public unsafe static class PreCrafting
         var re = Operations.GetSelectedRecipeEntry();
         if ((!isCosmic && re != null && re->RecipeId == recipe.RowId)
             || (Crafting.CurState is not Crafting.State.IdleBetween and not Crafting.State.IdleNormal))
+        {
+            // 這個早退是每次製作實際結束的那一次呼叫，選取階段的計時器要在這裡歸零，
+            // 否則下一次製作會帶著上一次的舊時間戳進來、一進選取階段就立刻逾時中止。
+            ResetCosmicSelectState();
             return TaskResult.Done;
+        }
 
         if (isCosmic)
         {
@@ -749,14 +847,15 @@ public unsafe static class PreCrafting
             //     500ms 閃一次、使用者根本看不到視窗，只聽得到開關音效。
             //
             // 正解：用 Callback.Fire 選（那個是有效的），改成讀 AtkValues 驗證。
-            // 2026-07-31 兩次實機傾印比對得出的佈局：
-            //   AtkValues[45] = 當前選取的 item id（收藏品會是 id + 500000，例如 548368）
-            //   AtkValues[46] = 當前選取的品項名稱
-            const int SelectedItemIdValue = 45;
-            const int SelectedItemNameValue = 46;
-            const uint CollectableItemIdOffset = 500000;
-
-            if (addon->AtkValuesCount <= SelectedItemNameValue)
+            //
+            // 🔴 第三條死路（2026-08-03 實機崩潰，C0000005）：
+            //    「從 0 一路遞增送索引直到選中」。清單只有 2～3 項，索引 3 以後全部越界，
+            //    而遊戲對這個索引完全不做邊界檢查（見 FindCosmicRecipeEntry 的註解）。
+            //    現在改成：先從 AtkValues 認出目標在第幾項，只送那一個；認不出來就不送。
+            //
+            // 佈局常數見上面 CosmicEntry* 那一段（反組譯確立，且與 2026-07-31 的兩次
+            // 實機傾印一致 —— [45]/[46] 與 +500000 三者都對上了）。
+            if (addon->AtkValuesCount <= CosmicSelectedItemNameValue)
             {
                 // 佈局與取樣時不同，不要瞎猜；留下紀錄讓下次能重新取樣。
                 DumpCosmicStateOnce(addon, recipe);
@@ -766,11 +865,10 @@ public unsafe static class PreCrafting
             var targetItemId = recipe.ItemResult.RowId;
             var targetItemName = recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? string.Empty;
 
-            var selectedId = addon->AtkValues[SelectedItemIdValue].UInt;
-            var selectedName = addon->AtkValues[SelectedItemNameValue].Type
-                is FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
-                or FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString
-                ? addon->AtkValues[SelectedItemNameValue].String.ExtractText()
+            var selectedId = addon->AtkValues[CosmicSelectedItemIdValue].UInt;
+            var selectedName = addon->AtkValues[CosmicSelectedItemNameValue].Type
+                is AtkValueType.String or AtkValueType.ManagedString
+                ? addon->AtkValues[CosmicSelectedItemNameValue].String.ExtractText()
                 : string.Empty;
 
             var idMatches = selectedId == targetItemId || selectedId == targetItemId + CollectableItemIdOffset;
@@ -779,19 +877,50 @@ public unsafe static class PreCrafting
             if (idMatches || nameMatches)
             {
                 Svc.Log.Information($"Artisan: 宇宙配方 {recipe.RowId}（{targetItemName}）已選中");
-                _cosmicSelectIndex = 0;
+                ResetCosmicSelectState();
                 return TaskResult.Done;
             }
 
-            // 還沒選中：一幀送一個選取 callback，讓遊戲有機會更新後再驗。
-            if (_cosmicSelectIndex >= MaxCosmicRecipeEntries)
+            // 還沒選中：先認出目標在清單的第幾項，只送那一個索引。
+            var now = DateTime.Now;
+            if (_cosmicSelectSince == DateTime.MinValue)
+                _cosmicSelectSince = now;
+
+            var entry = FindCosmicRecipeEntry(addon, targetItemId, targetItemName);
+            if (entry < 0)
             {
-                _cosmicSelectIndex = 0;
-                DumpCosmicStateOnce(addon, recipe);
+                // 🔴 認不出來就什麼都不送。清單可能還在填，先等；等過頭就中止。
+                // 絕對不要退回「猜一個索引送送看」——那正是這次崩潰的成因。
+                if (now - _cosmicSelectSince > TimeSpan.FromSeconds(CosmicSelectGiveUpSeconds))
+                {
+                    DumpCosmicStateOnce(addon, recipe);
+                    ResetCosmicSelectState();
+                    DuoLog.Error(
+                        $"Artisan：宇宙筆記的配方清單裡找不到配方 {recipe.RowId}"
+                        + $"（{targetItemName}，item {targetItemId}），等了 {CosmicSelectGiveUpSeconds} 秒。"
+                        + $"已中止這次製作（沒有送出任何選取指令）。");
+                    return TaskResult.Abort;
+                }
+                return TaskResult.Retry;
             }
 
-            Callback.Fire(addon, false, 0, _cosmicSelectIndex);
-            _cosmicSelectIndex++;
+            if (now - _cosmicSelectSince > TimeSpan.FromSeconds(CosmicSelectGiveUpSeconds))
+            {
+                DumpCosmicStateOnce(addon, recipe);
+                ResetCosmicSelectState();
+                DuoLog.Error(
+                    $"Artisan：宇宙筆記第 {entry} 項就是配方 {recipe.RowId}（{targetItemName}），"
+                    + $"但送出選取後等了 {CosmicSelectGiveUpSeconds} 秒仍未生效。已中止這次製作。");
+                return TaskResult.Abort;
+            }
+
+            if (now - _lastCosmicSelect < TimeSpan.FromSeconds(CosmicSelectIntervalSeconds))
+                return TaskResult.Retry;
+
+            _lastCosmicSelect = now;
+            Svc.Log.Information(
+                $"Artisan: 宇宙配方 {recipe.RowId}（{targetItemName}）在清單第 {entry} 項，送出選取。");
+            Callback.Fire(addon, false, 0, entry);
             return TaskResult.Retry;
         }
         else

@@ -45,7 +45,9 @@ public struct SolverRef
     }
 
     public Solver? Clone() => _solver?.Clone();
-    public bool IsType<T>() where T : Solver => _solver is T;
+    // note: look through OpportunisticSolver - callers care about what is actually driving the craft,
+    // and a raphael macro wrapped for condition awareness is still a macro
+    public bool IsType<T>() where T : Solver => _solver is T || (_solver is Solvers.OpportunisticSolver o && o.Inner is T);
 
     public static implicit operator bool(SolverRef x) => x._solver != null;
 }

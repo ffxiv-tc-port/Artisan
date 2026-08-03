@@ -30,7 +30,10 @@ namespace Artisan.CraftingLogic.Solvers
             var key = RaphaelCache.GetKey(craft);
             if (RaphaelCache.HasSolution(craft, out var output))
             {
-                return new MacroSolver(output!, craft);
+                // a macro plays back a fixed action list and cannot react to good/excellent/poor showing up;
+                // wrap it so we can deviate opportunistically, but only when the simulator says the deviation
+                // still finishes the craft with strictly better quality than the untouched plan
+                return new OpportunisticSolver(new MacroSolver(output!, craft));
             }
             return craft.CraftExpert ? new ExpertSolver() : new StandardSolver(false);
         }
@@ -391,6 +394,7 @@ namespace Artisan.CraftingLogic.Solvers
         public int MaximumThreads = 0;
         public bool GenerateOnExperts = false;
         public int TimeOutMins = 1;
+        public bool OpportunisticDeviation = true;
 
         public bool Draw()
         {
@@ -429,6 +433,9 @@ namespace Artisan.CraftingLogic.Solvers
                 changed |= ImGui.Checkbox("Apply to all valid crafts".Loc(), ref AutoSwitchOnAll);
                 ImGui.Unindent();
             }
+
+            changed |= ImGui.Checkbox("依製作狀態機會性偏離解算結果", ref OpportunisticDeviation);
+            ImGuiComponents.HelpMarker("Raphael 產生的是固定步驟,本身看不到「高品質／最高品質／低品質」。開啟後,遇到這些狀態時會先用模擬器把候選動作連同剩下的巨集整段跑完,只有在「仍然完成製作」且「最終品質確實更高」時才偏離,否則照原計畫走。不會動用能工巧匠圖紙。");
 
             changed |= ImGui.SliderInt("Timeout solution generation".Loc(), ref TimeOutMins, 1, 15);
 

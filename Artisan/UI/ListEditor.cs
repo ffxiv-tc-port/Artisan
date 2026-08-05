@@ -1315,7 +1315,9 @@ internal class ListEditor : Window, IDisposable
                 ImGui.Text(" - Combination of Retainer & Inventory has all required items".Loc());
             }
 
-            ImGui.PushStyleColor(ImGuiCol.Button, ImGuiColors.ParsedBlue);
+            // TankBlue, not ParsedBlue: IngredientTable's name column paints this row with ImGuiColors.TankBlue,
+            // so the legend swatch was a visibly different blue from the rows it is supposed to explain.
+            ImGui.PushStyleColor(ImGuiCol.Button, ImGuiColors.TankBlue);
             ImGui.BeginDisabled(true);
             ImGui.Button("", new Vector2(23, 23));
             ImGui.EndDisabled();
@@ -1323,6 +1325,7 @@ internal class ListEditor : Window, IDisposable
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() - 7);
             ImGui.Text(" - Combination of Inventory & Craftable has all required items.".Loc());
+            ImGuiComponents.HelpMarker("This is a per-item visual estimate only. Several items on the list can be planning to use the same raw materials, so this colour is deliberately not used to reduce the Remaining or shopping quantities.".Loc());
         }
 
 

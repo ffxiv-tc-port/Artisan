@@ -4,6 +4,7 @@ using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using ECommons.Logging;
 using System;
 using System.Collections.Generic;
@@ -91,6 +92,20 @@ public static class CraftingProcessor
         if (s != null)
             return s.Value;
 
+        // The recipe has a solver explicitly assigned, but that definition currently offers no matching
+        // flavour at all (its Flavours() yielded nothing). Falling straight through to MaxBy(Priority)
+        // swaps in the standard solver without telling anyone. Gate that behind the setting, keeping the
+        // Def pointing at the real definition so CreateSolver() on this Desc still cannot null-deref.
+        var configuredType = recipeConfig?.SolverType ?? "";
+        if (configuredType.Length > 0 && !P.Config.RaphaelSolverConfig.AllowFallbackToStandard)
+        {
+            var configuredDef = SolverDefinitions.Find(x => x.GetType().FullName == configuredType);
+            if (configuredDef != null)
+                return new ISolverDefinition.Desc(configuredDef, recipeConfig?.SolverFlavour ?? 0, 0,
+                    "(assigned solver unavailable)".Loc(),
+                    "The solver assigned to this recipe is not available right now.".Loc());
+        }
+
         var s2 = GetAvailableSolversForRecipe(craft, false);
         if (s2.Count() > 0)
             return s2.MaxBy(x => x.Priority);
@@ -127,6 +142,15 @@ public static class CraftingProcessor
                 return;
             }
             _activeSolver = autoSolver.CreateSolver(craft);
+            if (_activeSolver == null)
+            {
+                // GetSolverForRecipe returns default when nothing at all is available, and CreateSolver on a
+                // default Desc returns null. Everything below dereferences _activeSolver unconditionally, so
+                // without this the craft starts and then throws NRE out of the framework update.
+                SolverFailed?.Invoke(recipe, "No solver is available for this craft.".Loc());
+                ActiveSolver = new("");
+                return;
+            }
             ActiveSolver = new(autoSolver.Name, _activeSolver);
         }
 

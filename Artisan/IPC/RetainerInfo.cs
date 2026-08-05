@@ -219,6 +219,44 @@ namespace Artisan.IPC
             }
             return 0;
         }
+        /// <summary>
+        /// Refreshes the cached quantities of a single item on a single retainer. This is what the extraction
+        /// loop actually needs: <see cref="GetRetainerItemCount"/> re-walks all ten retainers and issues 8-15
+        /// AllaganTools IPC calls for each of them, and the extraction path then only ever reads back the entry
+        /// for the retainer whose window is currently open.
+        /// </summary>
+        private static void RefreshRetainerItem(uint ItemId, ulong retainerId)
+        {
+            if (!ATools || retainerId == 0) return;
+            if (!Svc.ClientState.IsLoggedIn || Svc.Condition[ConditionFlag.OnFreeTrial]) return;
+
+            try
+            {
+                if (!RetainerData.TryGetValue(retainerId, out var ret))
+                {
+                    ret = new Dictionary<uint, ItemInfo>();
+                    RetainerData[retainerId] = ret;
+                }
+
+                var quantity = GetRetainerInventoryItem(ItemId, retainerId);
+                var hq = GetRetainerInventoryItem(ItemId, retainerId, true);
+                if (ret.TryGetValue(ItemId, out var info))
+                {
+                    info.ItemId = ItemId;
+                    info.Quantity = quantity;
+                    info.HQQuantity = hq;
+                }
+                else
+                {
+                    ret[ItemId] = new ItemInfo(ItemId, quantity, hq);
+                }
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Warning($"[Artisan][Restock] Could not refresh item {ItemId} on retainer {retainerId}: {ex.Message}");
+            }
+        }
+
         public static unsafe int GetRetainerItemCount(uint ItemId, bool tryCache = true, bool hqOnly = false)
         {
 
@@ -241,14 +279,22 @@ namespace Artisan.IPC
                         }
                     }
 
+                    // Resolved once instead of rebuilding the same filtered array inside all ten iterations
+                    // below - this method is called once per material when a list is restocked, so the old
+                    // Where().Select().ToArray()[i] allocated ten arrays per material for no reason.
+                    var configuredRetainerIds = P.Config.RetainerIDs
+                        .Where(x => x.Value == Svc.ClientState.LocalContentId)
+                        .Select(x => x.Key)
+                        .ToArray();
+
                     for (int i = 0; i < 10; i++)
                     {
                         ulong retainerId = 0;
                         var retainer = RetainerManager.Instance()->GetRetainerBySortedIndex((uint)i);
 
-                        if (P.Config.RetainerIDs.Count(x => x.Value == Svc.ClientState.LocalContentId) > i)
+                        if (configuredRetainerIds.Length > i)
                         {
-                            retainerId = P.Config.RetainerIDs.Where(x => x.Value == Svc.ClientState.LocalContentId).Select(x => x.Key).ToArray()[i];
+                            retainerId = configuredRetainerIds[i];
                         }
                         else
                         {
@@ -339,7 +385,8 @@ namespace Artisan.IPC
         {
             if (RetainerData.SelectMany(x => x.Value).Any(x => x.Value.ItemId == ItemId && x.Value.Quantity > 0))
             {
-                TM.Enqueue(() => Svc.Framework.Update += Tick);
+                Svc.Log.Information($"[Artisan][Restock] Single-item restock starting: item {ItemId} x{howManyToGet}.");
+                TM.Enqueue(() => BeginRestockChain());
                 TM.Enqueue(() => AutoRetainerIPC.Suppress());
                 TM.EnqueueBell();
                 TM.DelayNext("BellInteracted", 200);
@@ -395,12 +442,15 @@ namespace Artisan.IPC
                 TM.DelayNextImmediate("WaitOnNumericPopup", 200);
                 TM.EnqueueImmediate(() =>
                 {
-                    var value = Math.Min(howManyToGet, (int)firstFoundQuantity);
-                    if (value == 0) return true;
-                    Svc.Log.Debug($"Min withdrawing: {value}, found {firstFoundQuantity}");
+                    if (Math.Min(howManyToGet, (int)firstFoundQuantity) == 0) return true;
+
+                    var freeSlots = GetFreeInventorySlots();
+                    var value = WithdrawalQuantity(howManyToGet, (int)firstFoundQuantity, freeSlots);
+                    Svc.Log.Information($"[Artisan][Restock] item {ItemId}: withdrawing {value} of the {firstFoundQuantity} in this stack " +
+                                        $"(still needed {howManyToGet}, free bag slots {(freeSlots < 0 ? "unknown" : freeSlots.ToString())}).");
                     if (firstFoundQuantity == 1)
                     {
-                        howManyToGet -= (int)firstFoundQuantity;
+                        howManyToGet = Math.Max(0, howManyToGet - (int)firstFoundQuantity);
                         TM.EnqueueImmediate(() =>
                         {
                             ExtractSingular(ItemId, howManyToGet, retainerKey);
@@ -409,7 +459,9 @@ namespace Artisan.IPC
                     }
                     if (RetainerHandlers.InputNumericValue(value))
                     {
-                        howManyToGet -= value;
+                        // Clamp for the same reason as ExtractItem: a whole-stack withdrawal can overshoot,
+                        // and howManyToGet is compared against 0 to end the recursion.
+                        howManyToGet = Math.Max(0, howManyToGet - value);
 
                         TM.EnqueueImmediate(() =>
                         {
@@ -431,6 +483,12 @@ namespace Artisan.IPC
         {
             Dictionary<int, int> requiredItems = new();
             Dictionary<uint, int> materialList = new();
+
+            // The loops below call GetRetainerItemCount once per material, and each of those walks all ten
+            // retainers over AllaganTools IPC. That happens synchronously on the framework thread before any
+            // retainer window is even opened, so a long list stalls here with nothing visible happening.
+            // Timed at Information level because that is the log level users actually run.
+            var planStartedAt = Environment.TickCount64;
 
             Svc.Log.Debug($"Making material list");
 
@@ -478,7 +536,10 @@ namespace Artisan.IPC
             if (RetainerData.SelectMany(x => x.Value).Any(x => requiredItems.Any(y => y.Key == x.Value.ItemId)))
             {
                 Svc.Log.Debug($"Processing Retainer Data");
-                TM.Enqueue(() => Svc.Framework.Update += Tick);
+                Svc.Log.Information($"[Artisan][Restock] List restock starting: {requiredItems.Count(x => x.Value > 0)} item(s) short, " +
+                                    $"planning visits to {RetainerData.Count(r => r.Value.Values.Any(x => requiredItems.Any(y => y.Value > 0 && y.Key == x.ItemId && x.Quantity > 0)))} retainer(s). " +
+                                    $"Cache preparation took {Environment.TickCount64 - planStartedAt}ms.");
+                TM.Enqueue(() => BeginRestockChain());
                 TM.Enqueue(() => AutoRetainerIPC.Suppress());
                 TM.EnqueueBell();
                 TM.DelayNext("BellInteracted", 200);
@@ -518,6 +579,26 @@ namespace Artisan.IPC
 
         private static unsafe void Tick(IFramework framework)
         {
+            // Watchdog. The restock chain ends with tasks that unlock YesAlready, un-suppress AutoRetainer and
+            // detach this handler - but TaskManager.Abort() (fired explicitly on early completion, and by any
+            // task enqueued with abortOnTimeout: true) clears the whole queue, so those trailing tasks can
+            // simply never run. Before the suppress fix that was invisible because Suppress() was a no-op;
+            // now it would leave AutoRetainer permanently suppressed with no message anywhere. Once the queue
+            // is genuinely empty there is nothing left to wait for, so close everything out here instead.
+            if (!TM.IsBusy)
+            {
+                Svc.Framework.Update -= Tick;
+                if (AutoRetainerIPC.ReEnable || RestockStartedAt != 0)
+                {
+                    Svc.Log.Information($"[Artisan][Restock] Chain finished or was aborted after " +
+                                        $"{(RestockStartedAt == 0 ? 0 : Environment.TickCount64 - RestockStartedAt)}ms; releasing YesAlready/AutoRetainer.");
+                }
+                RestockStartedAt = 0;
+                YesAlready.Unlock();
+                AutoRetainerIPC.Unsuppress();
+                return;
+            }
+
             if (Svc.Condition[ConditionFlag.OccupiedSummoningBell])
             {
                 if (TryGetAddonByName<AddonTalk>("Talk", out var addon) && addon->AtkUnitBase.IsVisible)
@@ -527,12 +608,78 @@ namespace Artisan.IPC
             }
         }
 
+        /// <summary>Tick count at which the current restock chain started, 0 when idle. Diagnostics only.</summary>
+        private static long RestockStartedAt = 0;
+
+        /// <summary>
+        /// Attaches <see cref="Tick"/> exactly once. <c>Svc.Framework.Update += Tick</c> was previously enqueued
+        /// at the head of every restock chain while the matching <c>-=</c> lived at the tail, so an aborted chain
+        /// left a subscription behind and the next restock added a second one.
+        /// </summary>
+        private static void BeginRestockChain()
+        {
+            Svc.Framework.Update -= Tick;
+            Svc.Framework.Update += Tick;
+            RestockStartedAt = Environment.TickCount64;
+        }
+
+        /// <summary>
+        /// Free slots across the four player bags, or -1 when the inventory cannot be read right now.
+        /// <para/>
+        /// ⚠️ Deliberately distinguishes "unreadable" from "zero": the containers are genuinely unreadable while
+        /// zoning, and a plain 0 there would read as "bag is full" and silently switch the withdrawal back to
+        /// exact quantities forever. Callers must treat -1 as "don't know" rather than as a small number.
+        /// </summary>
+        private static unsafe int GetFreeInventorySlots()
+        {
+            if (!Svc.ClientState.IsLoggedIn) return -1;
+            if (Svc.Condition[ConditionFlag.BetweenAreas] || Svc.Condition[ConditionFlag.BetweenAreas51]) return -1;
+
+            var mgr = InventoryManager.Instance();
+            if (mgr == null) return -1;
+
+            InventoryType[] bags = [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4];
+            var slots = 0;
+            foreach (var bag in bags)
+            {
+                var inv = mgr->GetInventoryContainer(bag);
+                if (inv == null || inv->Items == null || inv->Size <= 0) return -1;
+                for (var i = 0; i < inv->Size; i++)
+                    if (inv->GetInventorySlot(i)->ItemId == 0)
+                        slots++;
+            }
+            return slots;
+        }
+
+        /// <summary>
+        /// How many items to pull out of a retainer stack holding <paramref name="stackQuantity"/>
+        /// when <paramref name="stillNeeded"/> are still wanted.
+        /// <para/>
+        /// Takes the whole stack rather than the exact amount, so a restock does not leave a 3-item remainder
+        /// on the retainer that the next list has to come back for. Retrieving a full stack can need one more
+        /// bag slot than a partial one would (a 999 stack landing on top of an existing partial stack splits),
+        /// so this only does it while the bag is known to have room to spare; when the free-slot count is
+        /// unknown (-1) or tight it falls back to the exact quantity, which is the old behaviour.
+        /// </summary>
+        private static int WithdrawalQuantity(int stillNeeded, int stackQuantity, int freeSlots)
+        {
+            var exact = Math.Min(stillNeeded, stackQuantity);
+            if (stackQuantity <= exact)
+                return exact; // already the whole stack
+            return freeSlots >= FreeSlotsNeededForFullStack ? stackQuantity : exact;
+        }
+
+        private const int FreeSlotsNeededForFullStack = 2;
+
         private static bool ExtractItem(Dictionary<int, int> requiredItems, KeyValuePair<int, int> item, ulong key)
         {
             if (requiredItems[item.Key] != 0)
             {
                 _InventoryChanged = false;
-                TM.EnqueueImmediate(() => GetRetainerItemCount((uint)item.Key));
+                // Was GetRetainerItemCount(), which walks all ten retainers and fires 8-15 AllaganTools IPC
+                // calls per retainer - up to ~150 round trips - on every single recursion, even though the only
+                // value read afterwards is RetainerData[key] for the retainer whose window is open right now.
+                TM.EnqueueImmediate(() => RefreshRetainerItem((uint)item.Key, key));
                 bool lookingForHQ = RetainerData[key].Values.Any(x => x.ItemId == item.Key && x.HQQuantity > 0);
                 Svc.Log.Debug($"HQ?: {lookingForHQ}");
                 TM.DelayNextImmediate("WaitOnRetainerInventory", 500);
@@ -540,13 +687,20 @@ namespace Artisan.IPC
                 TM.DelayNextImmediate("WaitOnNumericPopup", 200);
                 TM.EnqueueImmediate(() =>
                 {
-                    var value = Math.Min(requiredItems[item.Key], (int)firstFoundQuantity);
-                    if (value == 0) return true;
-                    Svc.Log.Debug($"Min withdrawing: {value}, found {firstFoundQuantity}/{requiredItems[item.Key]}");
-                    if (firstFoundQuantity == 1) { requiredItems[item.Key] -= (int)firstFoundQuantity; return true; }
+                    var stillNeeded = requiredItems[item.Key];
+                    if (Math.Min(stillNeeded, (int)firstFoundQuantity) == 0) return true;
+
+                    var freeSlots = GetFreeInventorySlots();
+                    var value = WithdrawalQuantity(stillNeeded, (int)firstFoundQuantity, freeSlots);
+                    Svc.Log.Information($"[Artisan][Restock] item {item.Key}: withdrawing {value} of the {firstFoundQuantity} in this stack " +
+                                        $"(still needed {stillNeeded}, free bag slots {(freeSlots < 0 ? "unknown" : freeSlots.ToString())}).");
+
+                    if (firstFoundQuantity == 1) { requiredItems[item.Key] = Math.Max(0, stillNeeded - (int)firstFoundQuantity); return true; }
                     if (RetainerHandlers.InputNumericValue(value))
                     {
-                        requiredItems[item.Key] -= value;
+                        // Clamp: taking the whole stack can exceed what was still needed, and a negative
+                        // remainder would never compare equal to 0 and would keep the recursion going forever.
+                        requiredItems[item.Key] = Math.Max(0, stillNeeded - value);
                         TM.EnqueueImmediate(() => _InventoryChanged);
                         TM.EnqueueImmediate(() =>
                         {

@@ -41,7 +41,20 @@ namespace Artisan.CraftingLogic.Solvers
         public IEnumerable<ISolverDefinition.Desc> Flavours(CraftState craft)
         {
             if (RaphaelCache.HasSolution(craft, out var solution))
+            {
                 yield return new(this, 3, 0, "Raphael Recipe Solver".Loc());
+            }
+            else if (!P.Config.RaphaelSolverConfig.AllowFallbackToStandard)
+            {
+                // Yielding an *unsupported* flavour rather than nothing at all: GetAvailableSolversForRecipe
+                // still filters this out of every picker (it passes returnUnsupported: false), but FindSolver
+                // now returns it for a recipe explicitly assigned to Raphael, so CraftingProcessor raises
+                // SolverFailed with this reason instead of silently starting on the standard solver.
+                yield return new(this, 3, 0, "Raphael Recipe Solver".Loc(),
+                    RaphaelCache.DescribeIgnoredSolution(craft) is { Length: > 0 } why
+                        ? "No Raphael solution matches your current stats: ??".Loc(why)
+                        : "No Raphael solution has been generated for this recipe.".Loc());
+            }
         }
     }
 
@@ -257,6 +270,69 @@ namespace Artisan.CraftingLogic.Solvers
             return false;
         }
 
+        /// <summary>
+        /// HasSolution throws a cached solution away the moment a single stat dimension misses - craftsmanship
+        /// has to be EXACTLY equal, while control/CP only have to be greater-or-equal. Swapping a piece of gear
+        /// or letting food/a potion expire is therefore enough to make a perfectly good solution stop counting,
+        /// and because Flavours() then yields nothing, the Raphael option disappears from the UI entirely and
+        /// the craft quietly falls back to the standard solver.
+        /// <para/>
+        /// This finds the closest cache entry that was generated for this same recipe (level, progress, quality
+        /// and durability all match) but was rejected on stats, and describes what disqualified it. Returns an
+        /// empty string when there is genuinely nothing cached for this recipe, so callers can tell
+        /// "no solution exists" apart from "a solution exists and is being ignored".
+        /// </summary>
+        public static string DescribeIgnoredSolution(CraftState craft)
+        {
+            var best = "";
+            var bestDistance = long.MaxValue;
+
+            foreach (var solution in P.Config.RaphaelSolverCacheV3)
+            {
+                if (solution.Value.Steps.Count == 0) continue;
+
+                var k = KeyParts(solution.Key);
+                if (k.Level != craft.CraftLevel || k.Prog != craft.CraftProgress ||
+                    k.Qual != craft.CraftQualityMax || k.Dur != craft.CraftDurability)
+                    continue;
+
+                var reasons = new List<string>();
+                long distance = 0;
+
+                if (k.Crafts != craft.StatCraftsmanship)
+                {
+                    reasons.Add("Craftsmanship must match exactly: solution ??, you have ??".Loc(k.Crafts, craft.StatCraftsmanship));
+                    distance += Math.Abs(k.Crafts - craft.StatCraftsmanship);
+                }
+                if (k.Control > craft.StatControl)
+                {
+                    reasons.Add("Control is ?? short: solution needs ??, you have ??".Loc(k.Control - craft.StatControl, k.Control, craft.StatControl));
+                    distance += k.Control - craft.StatControl;
+                }
+                if (k.CP > craft.StatCP)
+                {
+                    reasons.Add("CP is ?? short: solution needs ??, you have ??".Loc(k.CP - craft.StatCP, k.CP, craft.StatCP));
+                    distance += k.CP - craft.StatCP;
+                }
+                if (k.Initial != craft.InitialQuality)
+                {
+                    reasons.Add("Starting quality must match exactly: solution ??, this craft ??".Loc(k.Initial, craft.InitialQuality));
+                    distance += Math.Abs(k.Initial - craft.InitialQuality);
+                }
+
+                // No reasons means HasSolution would have accepted it, so it is not being ignored at all.
+                if (reasons.Count == 0) continue;
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = string.Join("\n", reasons);
+                }
+            }
+
+            return best;
+        }
+
         public static bool InProgress(CraftState craft) => Tasks.TryGetValue(GetKey(craft), out var _);
 
         public static bool InProgressAny() => Tasks.Any();
@@ -316,6 +392,16 @@ namespace Artisan.CraftingLogic.Solvers
                 }
                 else
                 {
+                    // "A solution exists but is being ignored" has to be visible on the row itself - drawing
+                    // nothing here is what made this look like "Raphael never solved this recipe". The row says
+                    // THAT it is being ignored; the tooltip carries which stat is off and by how much.
+                    var ignored = DescribeIgnoredSolution(craft);
+                    if (ignored.Length > 0)
+                    {
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, "A Raphael solution exists but does not match your current stats - not used.".Loc());
+                        ImGuiEx.Tooltip(ignored + "\n\n" + "Rebuild the solution with your current gear, or restore the stats it was generated for.".Loc());
+                    }
+
                     if (liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
                     {
                         if (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts))
@@ -395,6 +481,11 @@ namespace Artisan.CraftingLogic.Solvers
         public bool GenerateOnExperts = false;
         public int TimeOutMins = 1;
         public bool OpportunisticDeviation = true;
+        // Default true == the behaviour Artisan has always had: when the solver a recipe is assigned to
+        // cannot produce a usable flavour (Raphael with no matching cached solution, a deleted macro, ...)
+        // the craft silently runs on whatever solver has the highest priority, i.e. the standard solver.
+        // Turning this off makes that case raise SolverFailed instead, so the craft stops and says why.
+        public bool AllowFallbackToStandard = true;
 
         public bool Draw()
         {
@@ -436,6 +527,9 @@ namespace Artisan.CraftingLogic.Solvers
 
             changed |= ImGui.Checkbox("依製作狀態機會性偏離解算結果", ref OpportunisticDeviation);
             ImGuiComponents.HelpMarker("Raphael 產生的是固定步驟,本身看不到「高品質／最高品質／低品質」。開啟後,遇到這些狀態時會先用模擬器把候選動作連同剩下的巨集整段跑完,只有在「仍然完成製作」且「最終品質確實更高」時才偏離,否則照原計畫走。不會動用能工巧匠圖紙。");
+
+            changed |= ImGui.Checkbox("Allow automatic fallback to the standard solver".Loc(), ref AllowFallbackToStandard);
+            ImGuiComponents.HelpMarker("When the solver a recipe is assigned to cannot be used right now - Raphael with no cached solution matching your current stats, an assigned macro that was deleted - Artisan quietly starts the craft on the standard solver instead. Turn this off to make it stop and tell you which solver was unavailable rather than silently crafting with a different one.".Loc());
 
             changed |= ImGui.SliderInt("Timeout solution generation".Loc(), ref TimeOutMins, 1, 15);
 

@@ -329,13 +329,16 @@ internal static class CraftingListContextMenu
         }
 
         CraftingListHelpers.TidyUpList(CraftingListUI.selectedList);
-        foreach (var w in P.ws.Windows)
+        // Matched on the literal window title "List Editor###<id>" before. That couples this refresh to an
+        // untranslated window caption - the moment the title is localised the string stops matching and the
+        // editor silently never refreshes after a context-menu add. It also cast every window in the list with
+        // `as`, which would NRE on any non-ListEditor window that happened to match. Select by type and id.
+        foreach (var editor in P.ws.Windows
+                     .OfType<ListEditor>()
+                     .Where(x => x.SelectedList.ID == CraftingListUI.selectedList.ID))
         {
-            if (w.WindowName == $"List Editor###{CraftingListUI.selectedList.ID}")
-            {
-                (w as ListEditor).RecipeSelector.ReplaceItems(CraftingListUI.selectedList.Recipes);
-                (w as ListEditor).RefreshTable(null, true);
-            }
+            editor.RecipeSelector.ReplaceItems(CraftingListUI.selectedList.Recipes);
+            editor.RefreshTable(null, true);
         }
 
         P.Config.Save();

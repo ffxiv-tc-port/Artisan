@@ -4,6 +4,7 @@ using Artisan.GameInterop.CSExt;
 using Artisan.RawInformation.Character;
 using Dalamud.Interface.Colors;
 using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using Lumina.Excel.Sheets;
 using System;
 using System.ComponentModel;
@@ -300,21 +301,35 @@ public static class Simulator
     {
         if (!CanUseAction(craft, step, action))
         {
+            // Externalised through the normal .Loc() path (LanguageChineseTraditional.ini) instead of the
+            // hardcoded zh-TW literals that used to live here, so these read the same way as the rest of the UI.
+            // Three of those literals also named the wrong action - see the .ini for the corrected wording:
+            //   TrainedPerfection is 工匠的絕技 (CraftAction #100475); 工匠的神技 is TrainedFinesse (#100435).
+            //   HastyTouch is 倉促 (#100355), not 倉促製作.
+            //   MaterialMiracle is 奇蹟之材 (Action #41269), not 素材奇蹟.
             reason = action switch
             {
-                Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade => "當前狀態不是良好/絕佳，或未啟用專心致志",
-                Skills.PrudentSynthesis or Skills.PrudentTouch => "你擁有儉約狀態",
-                Skills.MuscleMemory or Skills.Reflect => "你不在製作的第一步",
-                Skills.TrainedFinesse => "你的內靜層數不足10層",
-                Skills.ByregotsBlessing => "你的內靜層數為0",
-                Skills.TrainedEye => craft.CraftExpert ? "該配方為專家配方" : step.Index != 1 ? "你不在製作的第一步" : "配方等級未比你當前等級低10級或以上",
-                Skills.Manipulation => "你尚未解鎖掌握",
-                Skills.CarefulObservation => craft.Specialist ? Crafting.DelineationCount() == 0 ? "你的能工巧匠圖紙已用盡。" : $"你已使用設計變動3次" : "你不是專家",
-                Skills.HeartAndSoul => craft.Specialist ? Crafting.DelineationCount() == 0 ? "你的能工巧匠圖紙已用盡。" : "本次製作已無法再次使用專心致志" : "你不是專家",
-                Skills.TrainedPerfection => "你已使用過工匠的神技",
-                Skills.DaringTouch => "倉促製作未成功",
-                Skills.QuickInnovation => !craft.Specialist ? "你不是專家" : Crafting.DelineationCount() == 0 ? "你的能工巧匠圖紙已用盡。" : step.QuickInnoLeft == 0 ? "本次製作已無法再次使用快速改革" : step.InnovationLeft > 0 ? "你已有改革狀態" : "",
-                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "本次製作無法使用素材奇蹟" : step.MaterialMiracleActive ? "你已啟用素材奇蹟" : step.MaterialMiracleCharges == 0 ? "你已沒有剩餘的素材奇蹟次數" : ""
+                Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade => "Condition is not Good/Excellent or Heart and Soul is not active".Loc(),
+                Skills.PrudentSynthesis or Skills.PrudentTouch => "You have a Waste Not buff".Loc(),
+                Skills.MuscleMemory or Skills.Reflect => "You are not on the first step of the craft".Loc(),
+                Skills.TrainedFinesse => "You have less than 10 Inner Quiet stacks".Loc(),
+                Skills.ByregotsBlessing => "You have 0 Inner Quiet stacks".Loc(),
+                Skills.TrainedEye => craft.CraftExpert ? "Craft is expert".Loc() : step.Index != 1 ? "You are not on the first step of the craft".Loc() : "Craft is not 10 or more levels lower than your current level".Loc(),
+                Skills.Manipulation => "You haven't unlocked Manipulation".Loc(),
+                Skills.CarefulObservation => craft.Specialist ? Crafting.DelineationCount() == 0 ? "You have run out of Delineations.".Loc() : "You already used Careful Observation 3 times".Loc() : "You are not a specialist".Loc(),
+                Skills.HeartAndSoul => craft.Specialist ? Crafting.DelineationCount() == 0 ? "You have run out of Delineations.".Loc() : "You don't have Heart & Soul available anymore for this craft".Loc() : "You are not a specialist".Loc(),
+                Skills.TrainedPerfection => "You have already used Trained Perfection".Loc(),
+                Skills.DaringTouch => "Hasty Touch did not succeed".Loc(),
+                Skills.QuickInnovation => !craft.Specialist ? "You are not a specialist".Loc() : Crafting.DelineationCount() == 0 ? "You have run out of Delineations.".Loc() : step.QuickInnoLeft == 0 ? "You don't have Quick Innovation available anymore for this craft".Loc() : step.InnovationLeft > 0 ? "You have an Innovation buff".Loc() : "",
+                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "This craft cannot use Material Miracle".Loc() : step.MaterialMiracleActive ? "You already have Material Miracle active".Loc() : step.MaterialMiracleCharges == 0 ? "You have no more Material Miracle charges".Loc() : "",
+                // CanUseAction also returns false for "level too low" and "not enough CP", which can happen for
+                // ANY action, not just the ones enumerated above. Without this arm the switch expression throws
+                // SwitchExpressionException out of the OnCraftStarted/OnCraftAdvanced event handlers.
+                _ => step.RemainingCP < GetCPCost(step, action)
+                        ? "You have not enough CP.".Loc()
+                        : craft.StatLevel < MinLevel(action)
+                            ? "Your level is too low for this action".Loc()
+                            : "",
             };
 
             return true;

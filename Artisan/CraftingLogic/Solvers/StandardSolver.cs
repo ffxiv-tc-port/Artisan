@@ -60,7 +60,10 @@ namespace Artisan.CraftingLogic.Solvers
 
             }
 
-            if ((rec.Action is not Skills.MastersMend or Skills.ImmaculateMend) &&
+            // 🔴 原本寫成 `is not Skills.MastersMend or Skills.ImmaculateMend`,C# 解析成
+            //    `(not MastersMend) or (ImmaculateMend)` —— 除了 MastersMend 恆真,
+            //    比爾格祝福因此可以蓋掉剛選定的精修。意圖是「兩個修理技都不是」(對照 72 行的正面寫法)。
+            if ((rec.Action is not Skills.MastersMend and not Skills.ImmaculateMend) &&
                 step.Quality < craft.CraftQualityMax &&
                 Simulator.CanUseAction(craft, step, Skills.ByregotsBlessing) &&
                 step.RemainingCP - Simulator.GetCPCost(step, rec.Action) < Simulator.GetCPCost(step, Skills.ByregotsBlessing) &&

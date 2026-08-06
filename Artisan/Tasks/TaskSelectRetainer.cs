@@ -8,6 +8,7 @@ using ECommons.Automation;
 using ECommons.Automation.LegacyTaskManager;
 using ECommons.DalamudServices;
 using ECommons.Events;
+using ECommons.Throttlers;
 using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -38,18 +39,77 @@ internal unsafe static class RetainerListHandlers
 {
     internal static bool? SelectRetainerByID(ulong id)
     {
-        string retainerName = "";
-        for (uint i = 0; i < 10; i++)
+        var retainerName = ResolveRetainerName(id);
+        if (string.IsNullOrEmpty(retainerName))
         {
-            var retainer = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance()->GetRetainerBySortedIndex(i);
-            if (retainer == null) continue;
-
-            if (retainer->RetainerId == id)
-                retainerName = retainer->NameString;
-
+            // 🔴 Returns false ("not done, ask me again") rather than throwing. This task runs 200ms after the
+            // summoning bell is touched, and the client has usually not received the retainer list by then.
+            // SelectRetainerByName below is already written to be retried until the RetainerList addon is
+            // ready - that is what its bool? result is for - but throwing here jumped straight past it, and
+            // ECommons' TaskManager answers an exception by logging the message, dropping the task and
+            // carrying on with the rest of the queue. The whole restock then ran with no retainer ever
+            // selected: the retainer window never opened, so every later step quietly did nothing while
+            // looking like it was working.
+            ReportRetainerUnresolved(id);
+            return false;
         }
 
         return SelectRetainerByName(retainerName);
+    }
+
+    /// <summary>
+    /// Turns a retainer id into its name, or "" when the client cannot answer yet.
+    /// <para/>
+    /// 🔴 Deliberately walks the raw <c>Retainers</c> array rather than calling
+    /// <c>GetRetainerBySortedIndex</c>. That helper indexes through the display-order table at +0x2D0 and
+    /// returns <c>&amp;Retainers[displayOrder[i]]</c>, so for as long as that table is still zeroed - it is
+    /// only filled in once the retainer list has actually loaded - every sorted index resolves to retainer 0
+    /// and a lookup for any other retainer silently finds nothing. AutoRetainer's own GameRetainerManager
+    /// guards against the same table being unpopulated. The raw array needs no such table.
+    /// </summary>
+    private static string ResolveRetainerName(ulong id)
+    {
+        if (id == 0) return "";
+
+        var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+        if (manager == null) return "";
+
+        for (var i = 0; i < manager->Retainers.Length; i++)
+        {
+            var retainer = manager->Retainers[i];
+            if (retainer.RetainerId == id)
+                return retainer.NameString;
+        }
+
+        return "";
+    }
+
+    /// <summary>
+    /// Says why a retainer id could not be turned into a name. Information level because that is the level
+    /// users actually run at, and because this is otherwise completely invisible - the only symptom is
+    /// "restocking did nothing". Throttled per id, since the caller polls this.
+    /// </summary>
+    private static void ReportRetainerUnresolved(ulong id)
+    {
+        if (!EzThrottler.Throttle($"ArtisanResolveRetainer{id}", 3000)) return;
+
+        var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+        if (manager == null)
+        {
+            Svc.Log.Information($"[Artisan][Restock] Retainer {id} cannot be resolved: RetainerManager is not available yet. Waiting.");
+            return;
+        }
+
+        var loaded = new List<ulong>();
+        for (var i = 0; i < manager->Retainers.Length; i++)
+        {
+            var retainer = manager->Retainers[i];
+            if (retainer.RetainerId != 0) loaded.Add(retainer.RetainerId);
+        }
+
+        Svc.Log.Information($"[Artisan][Restock] Retainer {id} is not in the client's retainer list yet " +
+                            $"(IsReady={manager->IsReady}, {loaded.Count} loaded: {(loaded.Count == 0 ? "none" : string.Join(", ", loaded))}). " +
+                            $"Waiting for the list to arrive rather than skipping this retainer.");
     }
 
 

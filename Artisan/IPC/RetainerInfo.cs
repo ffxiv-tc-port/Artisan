@@ -641,6 +641,9 @@ namespace Artisan.IPC
             Svc.Framework.Update -= Tick;
             Svc.Framework.Update += Tick;
             RestockStartedAt = Environment.TickCount64;
+            // Re-arms the direct retrieval path, so a stand-down caused by one run does not carry into the
+            // next one - the retainer window not being open is a per-run condition, not a permanent one.
+            RetainerDirectFetch.BeginRound();
         }
 
         /// <summary>

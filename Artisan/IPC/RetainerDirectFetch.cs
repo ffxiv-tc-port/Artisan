@@ -52,6 +52,22 @@ namespace Artisan.IPC
         /// <summary>Hard ceiling for one item on one retainer, however well it is going.</summary>
         private const int OverallDeadlineMs = 60000;
 
+        /// <summary>
+        /// Much shorter deadline for the one case that is not "the server is being slow": every single query
+        /// answered "cannot look at the retainer's storage" and no command has ever gone out. That is a
+        /// standing condition - almost always no retainer window is open - not a transient one, so waiting out
+        /// <see cref="NoProgressMs"/> buys nothing. Generous enough to cover a window that is merely slow to
+        /// open; the old UI path gives itself 500ms plus retries for the same thing.
+        /// </summary>
+        private const int UnavailableGiveUpMs = 3000;
+
+        /// <summary>
+        /// How many items in a row may fail that way before the direct path stands down for the rest of the
+        /// restock. Two rather than one on purpose: a single slow-opening retainer window should cost one
+        /// item's fallback, not the whole round's accelerator.
+        /// </summary>
+        private const int SuspendAfterUnavailableItems = 2;
+
         /// <summary>How long to wait before asking again after AutoRetainer failed to answer.</summary>
         private const int ProbeBackoffMs = 15000;
 
@@ -63,6 +79,32 @@ namespace Artisan.IPC
         private static bool _available;
         private static long _nextProbeAt;
         private static bool _loggedUnavailable;
+        private static bool _suspendedForRound;
+        private static int _consecutiveUnavailableItems;
+
+        /// <summary>
+        /// Stands the direct path down for the remainder of the current restock, so the items still to come
+        /// go straight to the retainer-window path instead of each discovering the same thing on its own
+        /// clock. Without this a 60-item list pays the per-item deadline sixty times over.
+        /// <para/>
+        /// ⚠️ Only the accelerator is suspended. The retainer-window path is untouched and remains the thing
+        /// that actually fetches the materials.
+        /// </summary>
+        private static void SuspendForRound(string why)
+        {
+            if (_suspendedForRound) return;
+            _suspendedForRound = true;
+            Svc.Log.Information($"[Artisan][Restock] Direct retainer retrieval is standing down for the rest of this restock: {why}. " +
+                                $"The remaining items go straight to the retainer-window path rather than each waiting out its own timeout.");
+        }
+
+        /// <summary>Re-arms the direct path at the head of every restock chain, so a suspension only ever
+        /// lasts for the run that caused it.</summary>
+        internal static void BeginRound()
+        {
+            _suspendedForRound = false;
+            _consecutiveUnavailableItems = 0;
+        }
 
         /// <summary>
         /// Whether AutoRetainer is present and exposes a retrieve API this code understands. Re-probed on a
@@ -74,6 +116,9 @@ namespace Artisan.IPC
             get
             {
                 if (!P.Config.UseDirectRetainerRetrieval) return false;
+                // Checked before the cached capability flag: a round that has proved the command path cannot
+                // run must fall through to the window path immediately, with no IPC and no waiting.
+                if (_suspendedForRound) return false;
                 if (_available) return true;
                 if (Environment.TickCount64 < _nextProbeAt) return false;
                 _nextProbeAt = Environment.TickCount64 + ProbeBackoffMs;
@@ -199,6 +244,13 @@ namespace Artisan.IPC
             private int QuantityCommanded;
             private bool Finished;
 
+            /// <summary>How many times AutoRetainer answered "cannot look at the retainer's storage".</summary>
+            private int UnavailableAnswers;
+
+            /// <summary>Set the moment any answer other than "unavailable" comes back, which proves the
+            /// retainer's storage really is readable. Until then the short deadline applies.</summary>
+            private bool SawReadableRetainer;
+
             /// <summary>Set when this item still needs the retainer-window path - either because nothing was
             /// retrieved and it is not clear the retainer is empty, or because the item lives somewhere the
             /// command path deliberately does not touch. The caller must run the old path when this is set,
@@ -258,6 +310,7 @@ namespace Artisan.IPC
                 switch (result.Value)
                 {
                     case > 0:
+                        SawReadableRetainer = true;
                         CommandsFired++;
                         QuantityCommanded += result.Value;
                         Svc.Log.Information($"[Artisan][Restock][direct] item {ItemId}: retrieve command #{CommandsFired} fired at a slot of {result.Value} " +
@@ -268,13 +321,19 @@ namespace Artisan.IPC
 
                     case ResultNotPresent:
                         // Proved absent, not merely unreadable - nothing more to get here.
+                        SawReadableRetainer = true;
                         return Finish("retainer holds no more of it", false);
 
                     case ResultCommandInFlight:
+                        // The item is there and a command is on its way; the storage was clearly readable.
+                        SawReadableRetainer = true;
+                        return false;
+
                     case ResultRetainerUnavailable:
-                        // Both are "ask again shortly": a command is still on its way, or the retainer's
-                        // storage has not finished loading. The no-progress deadline is what stops these
-                        // from looping forever.
+                        // "Could not look" - which is not "not there". Kept separate from the in-flight case
+                        // above so the short deadline can tell a retainer that is merely still loading from
+                        // one whose window was never opened at all.
+                        UnavailableAnswers++;
                         return false;
 
                     case ResultInventoryFull:
@@ -301,6 +360,16 @@ namespace Artisan.IPC
 
             private bool CheckDeadlines(long now)
             {
+                // Every answer so far has been "cannot look", and nothing was ever sent. Deliberately requires
+                // at least one such answer rather than just an absence of progress, so that an item held up by
+                // unreadable *player* bags (zoning) is not mistaken for an unusable retainer.
+                if (UnavailableAnswers > 0 && !SawReadableRetainer && CommandsFired == 0 && now - StartedAt > UnavailableGiveUpMs)
+                {
+                    if (++_consecutiveUnavailableItems >= SuspendAfterUnavailableItems)
+                        SuspendForRound($"{_consecutiveUnavailableItems} items in a row found the retainer's storage unreadable, which normally means no retainer window is open");
+                    return Finish($"the retainer's storage stayed unreadable for {UnavailableGiveUpMs}ms and nothing could be sent", true);
+                }
+
                 if (now - LastProgressAt > NoProgressMs)
                     return Finish($"nothing arrived for {NoProgressMs}ms", true);
                 if (now - StartedAt > OverallDeadlineMs)
@@ -311,6 +380,9 @@ namespace Artisan.IPC
             private bool Finish(string reason, bool fallBackToUi)
             {
                 Finished = true;
+                // Any item that got a real answer clears the streak: the run of unreadable items has to be
+                // consecutive before the whole round stands down.
+                if (SawReadableRetainer) _consecutiveUnavailableItems = 0;
                 // Only ask for the slow path when it could still achieve something. Falling back after the
                 // wanted amount already arrived would just make the retainer window dance for nothing.
                 FallBackToUi = fallBackToUi && Gained < Wanted;
@@ -321,6 +393,9 @@ namespace Artisan.IPC
                 var stillOnRetainer = Gained < Wanted ? RetainerQuantity(ItemId, HqOnly) : 0;
                 Svc.Log.Information($"[Artisan][Restock][direct] item {ItemId} done: {reason}. " +
                                     $"{CommandsFired} command(s) covering {QuantityCommanded}, {Gained} of {Wanted} arrived, {elapsed}ms" +
+                                    // Named outright rather than left to be inferred from "0 commands": these
+                                    // two say completely different things about whose fault it is.
+                                    $"{(UnavailableAnswers > 0 ? $", {UnavailableAnswers} \"retainer storage unreadable\" answer(s)" : "")}" +
                                     $"{(CommandsFired > 0 ? $" ({elapsed / CommandsFired}ms per command)" : "")}." +
                                     $"{(Gained < Wanted ? $" Retainer still holds {(stillOnRetainer < 0 ? "?" : stillOnRetainer.ToString())}." : "")}" +
                                     $"{(FallBackToUi ? " Handing the remainder to the retainer-window path." : "")}");

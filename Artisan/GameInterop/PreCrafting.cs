@@ -76,26 +76,71 @@ public unsafe static class PreCrafting
         return _cosmicCallback.Original(a1, a2, a3, a4, a5);
     }
 
+    // 這支 detour 內部例外/異常參數的節流計時器(Environment.TickCount64 的絕對值)。
+    // ⚠️ 刻意**不用** Artisan.Autocraft.Throttler —— 那是全外掛共用的單一節流窗,
+    //    拿它記 log 會把製作動作的節流窗一起吃掉。
+    private static long _nextDetourErrorLogTick;
+
+    /// <summary>
+    /// detour 內部出狀況時的節流記錄。**Information 級是刻意的** —— 使用者跑 LogLevel 2,
+    /// Debug/Verbose 收不到,而這正是我們要使用者回報的東西。
+    /// </summary>
+    private static void LogDetourIssue(string message, Exception? ex = null)
+    {
+        if (Environment.TickCount64 < _nextDetourErrorLogTick)
+            return;
+        _nextDetourErrorLogTick = Environment.TickCount64 + 10000;
+        Svc.Log.Information(ex, $"[Artisan] {message}(10 秒內不重複記錄)");
+    }
+
     private static void* CallbackDetour(AtkUnitBase* atkUnitBase, int valueCount, AtkValue* atkValues, byte updateVisibility)
     {
-        var name = atkUnitBase->NameString.TrimEnd();
-        if (name.Length >= 11 && name.Substring(0, 11) == "SelectYesno")
+        // fail-closed:我們自己的判讀全部包進 try。無論成功或擲例外,
+        // **一定照樣呼叫 Original 並回傳它的結果** —— 這是掛在全域 FireCallback 上的 hook,
+        // 吞掉 Original 等於讓遊戲裡**每一個視窗**的回呼都失效。
+        // ⚠️ 這裡攔得到的是**受管理例外**(NRE、特徵碼未解析的 InvalidOperationException 等)。
+        // 懸空指標造成的 AccessViolationException 是 corrupted-state exception,**攔不到**。
+        try
         {
-            var result = atkValues[0];
-            if (result.Int == 1)
+            // 🔴 這支 detour 掛的是**全域** FireCallback:遊戲裡任何視窗的任何回呼都會經過這裡,
+            //    參數完全由呼叫端決定,不能假設它一定是我們在等的那個換裝確認框。
+            if (atkUnitBase != null)
             {
-                Svc.Log.Debug($"Select no, clearing tasks");
-                Endurance.ToggleEndurance(false);
-                if (CraftingListUI.Processing)
+                var name = atkUnitBase->NameString.TrimEnd();
+                if (name.Length >= 11 && name.Substring(0, 11) == "SelectYesno")
                 {
-                    CraftingListFunctions.Paused = true;
+                    // 🔴 valueCount 是 atkValues 唯一的上界來源,而且**邊界檢查不等於判空** ——
+                    //    越界讀到的是堆積上的垃圾(可能是任何值),不會是 null,判空完全擋不住。
+                    if (valueCount > 0 && atkValues != null)
+                    {
+                        var result = atkValues[0];
+                        if (result.Int == 1)
+                        {
+                            Svc.Log.Debug($"Select no, clearing tasks");
+                            Endurance.ToggleEndurance(false);
+                            if (CraftingListUI.Processing)
+                            {
+                                CraftingListFunctions.Paused = true;
+                            }
+                            Tasks.Clear();
+                        }
+                    }
+                    else
+                    {
+                        // 沒有可讀的回呼值就**不猜**使用者按了哪一邊 —— 寧可少做一次「取消」的判定,
+                        // 也不拿越界讀到的垃圾當按鈕結果。停用 hook 的行為與改寫前一致。
+                        LogDetourIssue($"SelectYesno 回呼沒有可讀的值(valueCount={valueCount}、atkValues={(nint)atkValues:X}),這次不判定按鈕結果");
+                    }
+
+                    _gearsetCallback.Disable();
                 }
-                Tasks.Clear();
             }
-
-            _gearsetCallback.Disable();
-
         }
+        catch (Exception ex)
+        {
+            LogDetourIssue("PreCrafting.CallbackDetour 內部發生例外,已略過這一次判讀,遊戲回呼照常轉交", ex);
+        }
+
         return _gearsetCallback.Original(atkUnitBase, valueCount, atkValues, updateVisibility);
     }
 

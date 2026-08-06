@@ -637,8 +637,52 @@ public static unsafe class Crafting
 
     private static Dalamud.Game.ClientState.Statuses.Status? GetStatus(uint statusID) => Svc.ClientState.LocalPlayer?.StatusList.FirstOrDefault(s => s.StatusId == statusID);
 
+    // 這支 detour 內部例外的節流計時器(Environment.TickCount64 的絕對值)。
+    // ⚠️ 刻意**不用** Artisan.Autocraft.Throttler —— 那是全外掛共用的單一節流窗,
+    //    拿它記 log 會把製作動作的節流窗一起吃掉。
+    private static long _nextDetourErrorLogTick;
+
+    /// <summary>
+    /// detour 內部出受管理例外時的節流記錄。**Information 級是刻意的** —— 使用者跑 LogLevel 2,
+    /// Debug/Verbose 收不到,而這正是我們要使用者回報的東西。
+    /// </summary>
+    private static void LogDetourException(string what, Exception ex)
+    {
+        if (Environment.TickCount64 < _nextDetourErrorLogTick)
+            return;
+        _nextDetourErrorLogTick = Environment.TickCount64 + 10000;
+        Svc.Log.Information(ex, $"[Artisan] {what} detour 內部發生例外,已略過這一次的狀態解讀,遊戲流程照常轉交(10 秒內不重複記錄)");
+    }
+
     private static void CraftingEventHandlerUpdateDetour(CraftingEventHandler* self, nint a2, nint a3, CraftingEventHandler.OperationId* payload)
     {
+        // fail-closed:我們自己的解讀邏輯全部包進 try。無論成功或擲例外,
+        // **一定照樣呼叫 Original 並讓遊戲流程繼續** —— 吞掉 Original 等於把製作流程整個弄斷。
+        // ⚠️ 這裡攔得到的是**受管理例外**(Lumina 查表失敗擲的 ArgumentOutOfRangeException、
+        //    NullReferenceException、特徵碼未解析的 InvalidOperationException 等)。
+        //    懸空指標造成的 AccessViolationException 是 corrupted-state exception,**攔不到**。
+        try
+        {
+            HandleCraftingEvent(payload);
+        }
+        catch (Exception ex)
+        {
+            LogDetourException("CraftingEventHandlerUpdate", ex);
+        }
+
+        _craftingEventHandlerUpdateHook.Original(self, a2, a3, payload);
+        Svc.Log.Verbose("CEH hook exit");
+    }
+
+    /// <summary>
+    /// CEH 訊息的解讀邏輯。**這裡不呼叫 Original** —— 呼叫者負責,所以本函式的任何提早 return
+    /// 或擲出的例外都不會讓遊戲少收到一次原函式。
+    /// </summary>
+    private static void HandleCraftingEvent(CraftingEventHandler.OperationId* payload)
+    {
+        if (payload == null)
+            return;
+
         Svc.Log.Verbose($"CEH hook: {*payload}");
         switch (*payload)
         {
@@ -658,7 +702,10 @@ public static unsafe class Crafting
                 Svc.Log.Debug($"Starting craft: recipe #{startPayload->RecipeId}, initial quality {startPayload->StartingQuality}, u8={startPayload->u8}");
                 if (CurRecipe != null)
                     Svc.Log.Error($"Unexpected non-null recipe when receiving {*payload} message");
-                CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRow(startPayload->RecipeId);
+                // 🔴 一定要用 GetRowOrDefault:Lumina 的 GetRow(uint) 對不存在的列**擲
+                //    ArgumentOutOfRangeException,永遠不回 null**(`?.` 只擋 sheet 為 null)。
+                //    用 GetRow 的話下面那個 null 檢查對「列不存在」是死碼。
+                CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRowOrDefault(startPayload->RecipeId);
                 if (CurRecipe == null)
                     Svc.Log.Error($"Failed to find recipe #{startPayload->RecipeId}");
 
@@ -701,7 +748,7 @@ public static unsafe class Crafting
                 if (CurState is not State.WaitAction or State.InProgress)
                 {
                     Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message"); //Probably an invalid state, so most data will not be set causing CTD
-                    _craftingEventHandlerUpdateHook.Original(self, a2, a3, payload);
+                    // 只跳過我們的解讀;Original 由呼叫端統一呼叫,行為與改寫前相同。
                     return;
                 }
                 if (_predictedNextStep != null)
@@ -763,7 +810,8 @@ public static unsafe class Crafting
                 Svc.Log.Debug($"Starting quicksynth: recipe #{quickSynthPayload->RecipeId}, count {quickSynthPayload->MaxCount}");
                 if (CurRecipe != null)
                     Svc.Log.Error($"Unexpected non-null recipe when receiving {*payload} message");
-                CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRow(quickSynthPayload->RecipeId);
+                // 🔴 同上:GetRow 對不存在的列擲例外,GetRowOrDefault 才回 null。
+                CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRowOrDefault(quickSynthPayload->RecipeId);
                 if (CurRecipe == null)
                     Svc.Log.Error($"Failed to find recipe #{quickSynthPayload->RecipeId}");
                 break;
@@ -773,7 +821,5 @@ public static unsafe class Crafting
                     Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
                 break;
         }
-        _craftingEventHandlerUpdateHook.Original(self, a2, a3, payload);
-        Svc.Log.Verbose("CEH hook exit");
     }
 }

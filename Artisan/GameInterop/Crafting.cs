@@ -69,6 +69,11 @@ public static unsafe class Crafting
     private static StepState? _predictedNextStep; // set when receiving Advance*Action messages
     private static DateTime _predictionDeadline;
 
+    // 奇蹟之材是 45 秒的**實時** buff,不是回合制的。模擬器沒有時鐘,只能用
+    // Simulator.MaterialMiracleDurationSteps 估;實機有時鐘,所以實機一律用時鐘,不用估的。
+    // Environment.TickCount64 的絕對值,0 = 目前沒有在跑。
+    private static long _materialMiracleExpiryTick;
+
     private delegate void CraftingEventHandlerUpdateDelegate(CraftingEventHandler* self, nint a2, nint a3, CraftingEventHandler.OperationId* payload);
     private static Hook<CraftingEventHandlerUpdateDelegate> _craftingEventHandlerUpdateHook;
 
@@ -271,6 +276,7 @@ public static unsafe class Crafting
         {
             _predictedNextStep = null;
             _predictionDeadline = default;
+            _materialMiracleExpiryTick = 0;
             CurRecipe = null;
             CurCraft = null;
             CurStep = null;
@@ -436,6 +442,7 @@ public static unsafe class Crafting
         Svc.Log.Debug($"Resetting");
         _predictedNextStep = null;
         _predictionDeadline = default;
+        _materialMiracleExpiryTick = 0;
         CurRecipe = null;
         P.TM.DelayNext(200);
         P.TM.Enqueue(() => CurCraft = null);
@@ -588,20 +595,44 @@ public static unsafe class Crafting
         ret.PrevActionFailed = predictedStep?.PrevActionFailed ?? false;
         ret.PrevComboAction = predictedStep?.PrevComboAction ?? Skills.None;
         ret.MaterialMiracleCharges = MaterialMiracleCharges();
+        // 🔑 buff 在不在,一律以遊戲的狀態列為準,時鐘只負責「還剩多少」。
         ret.MaterialMiracleActive = GetStatus(Buffs.MaterialMiracle) != null;
-        // 遊戲只告訴我們 buff 在不在,不告訴我們模擬器的「還剩幾步」。所以沿用預測值,
-        // 只在跟實際狀態矛盾時重新對齊(還在但估完了 → 補滿一輪;不在了 → 歸零)。
+        // 遊戲只告訴我們 buff 在不在,不告訴我們模擬器的「還剩幾步」。所以沿用預測值
+        // (預測那邊已經是真時鐘算出來的),只在沒有預測可沿用時才自己換算一次。
         // 🔑 這樣寫的重點是 StepState 是 record,`step != _predictedNextStep` 會逐欄比對 ——
         //    若這裡自己算一份跟預測不同的數字,反而會製造出新的「狀態不合」誤報。
-        // ⚠️ 重新對齊時要補「一整輪」而不是補 1 —— 補 1 的話下一步又會歸零,
-        //    只要實際 buff 還在就會每一步都對不上,反而比原本更吵。
-        ret.MaterialMiracleStepsLeft = !ret.MaterialMiracleActive
-            ? 0
-            : predictedStep is { MaterialMiracleStepsLeft: > 0 } p ? p.MaterialMiracleStepsLeft
-            : Simulator.MaterialMiracleDurationSteps;
+        //    時鐘是連續的,而這裡與 detour 的呼叫時間差了幾百毫秒,兩邊各算一次必定偶爾差一格。
+        // ⚠️ 這裡**刻意不去清 _materialMiracleExpiryTick** —— 剛用掉奇蹟之材的那幾幀狀態列
+        //    還沒更新(狀態要等下一個 StatusEffectList),此時 Active 是暫時的 false,
+        //    清掉就等於把剛設好的 45 秒丟了,之後整段 buff 都只會被估成「還剩 1 步」。
+        //    時鐘活過頭不會造成誤判:算剩餘步數的兩處都先過 Active 這一關。
+        ret.MaterialMiracleStepsLeft = predictedStep is { MaterialMiracleStepsLeft: > 0 } p && ret.MaterialMiracleActive
+            ? p.MaterialMiracleStepsLeft
+            : MaterialMiracleStepsLeftFromClock(ret.MaterialMiracleActive);
         ret.ObserveCounter = predictedStep?.ObserveCounter ?? 0;
 
         return ret;
+    }
+
+    /// <summary>
+    /// 奇蹟之材還剩幾個「模擬步數」—— 實機用 <c>Environment.TickCount64</c> 的真時鐘換算,
+    /// 而不是 <see cref="Simulator.MaterialMiracleDurationSteps"/> 那個步數估計值。
+    /// </summary>
+    /// <param name="buffActive">
+    /// 遊戲狀態列現在有沒有這個 buff。**它決定「有沒有」,時鐘只決定「還剩多少」**:
+    /// 遊戲說沒了就回 0;遊戲說還在就至少回 1(即使我們的時鐘已經跑完,或是根本沒有時鐘 ——
+    /// 例如製作到一半才載入外掛,buff 已經在身上了)。
+    /// </param>
+    private static int MaterialMiracleStepsLeftFromClock(bool buffActive)
+    {
+        if (!buffActive)
+            return 0;
+        if (_materialMiracleExpiryTick == 0)
+            return 1; // 沒有起算點:只知道還在,不知道剩多久 —— 給最保守的 1 步
+        var remainingMs = _materialMiracleExpiryTick - Environment.TickCount64;
+        if (remainingMs <= 0)
+            return 1; // 時鐘跑完了但遊戲說還在 —— 以遊戲為準
+        return Math.Max(1, (int)Math.Ceiling(remainingMs / 1000.0 / Simulator.MaterialMiracleSecondsPerStep));
     }
 
     private static Dalamud.Game.ClientState.Statuses.Status? GetStatus(uint statusID) => Svc.ClientState.LocalPlayer?.StatusList.FirstOrDefault(s => s.StatusId == statusID);
@@ -681,11 +712,23 @@ public static unsafe class Crafting
                 var advancePayload = (CraftingEventHandler.AdvanceStep*)payload;
                 bool complete = advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.CompleteSuccess) || advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.CompleteFail);
                 Svc.Log.Debug($"AdvanceActionComplete: {complete}");
-                _predictedNextStep = Simulator.Execute(CurCraft!, CurStep!, advancePayload->LastActionId == (uint)Skills.MaterialMiracle ? Skills.MaterialMiracle : SkillActionMap.ActionToSkill(advancePayload->LastActionId), advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.LastActionSucceeded) ? 0 : 1, 1).Item2;
+                var usedMaterialMiracle = advancePayload->LastActionId == (uint)Skills.MaterialMiracle;
+                _predictedNextStep = Simulator.Execute(CurCraft!, CurStep!, usedMaterialMiracle ? Skills.MaterialMiracle : SkillActionMap.ActionToSkill(advancePayload->LastActionId), advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.LastActionSucceeded) ? 0 : 1, 1).Item2;
                 _predictedNextStep.Condition = (Condition)(advancePayload->ConditionPlus1 - 1);
                 // fix up predicted state to match what game sends
                 if (complete)
                     _predictedNextStep.Index = CurStep.Index; // step is not advanced for final actions
+                // 奇蹟之材:模擬器剛剛用「步數估計」算了一份,這裡用真時鐘覆蓋掉。
+                // ⚠️ 起算點是 Advance 訊息抵達的瞬間,比伺服器真正套用 buff 晚了一個延遲,
+                //    所以我們的時鐘一定「比遊戲晚收」—— 因此 mmActive 一律先問狀態列,
+                //    遊戲說沒了就是沒了,時鐘活過頭也翻不了案。
+                // ⚠️ 唯一的例外是剛用掉的那一步:狀態列還沒更新(狀態要等下一個 StatusEffectList
+                //    才會到),所以「這一步就是奇蹟之材」本身要當成 active,不能只看狀態列。
+                if (usedMaterialMiracle)
+                    _materialMiracleExpiryTick = Environment.TickCount64 + (long)(Simulator.MaterialMiracleDurationSeconds * 1000);
+                var mmActive = usedMaterialMiracle || GetStatus(Buffs.MaterialMiracle) != null;
+                _predictedNextStep.MaterialMiracleStepsLeft = MaterialMiracleStepsLeftFromClock(mmActive);
+                _predictedNextStep.MaterialMiracleActive = _predictedNextStep.MaterialMiracleStepsLeft > 0;
                 _predictedNextStep.Progress = Math.Min(_predictedNextStep.Progress, CurCraft.CraftProgress);
                 _predictedNextStep.Quality = Math.Min(_predictedNextStep.Quality, CurCraft.CraftQualityMax);
                 _predictedNextStep.Durability = Math.Max(_predictedNextStep.Durability, 0);

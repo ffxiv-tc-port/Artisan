@@ -81,9 +81,10 @@ public record class StepState
     public Skills PrevComboAction;
     public uint MaterialMiracleCharges;
     public bool MaterialMiracleActive;
-    // 奇蹟之材是**實時**(45 秒)而不是回合數的 buff,模擬器沒有時鐘。
-    // 這裡用「還剩幾個動作」當代理,見 Simulator.MaterialMiracleDurationSteps 的說明。
-    // 實機時這個欄位由 Crafting.BuildStepState 沿用預測值,只在跟遊戲實際狀態不合時重新對齊。
+    // 奇蹟之材是**實時**(45 秒)而不是回合數的 buff。
+    // 前瞻模擬沒有時鐘,只能用「還剩幾個動作」當代理,見 Simulator.MaterialMiracleDurationSteps。
+    // 🔑 實機有時鐘:這個欄位由 Crafting 用 Environment.TickCount64 換算後覆蓋掉模擬器的估計值,
+    //    而「有沒有」一律以遊戲狀態列為準(見 Crafting.MaterialMiracleStepsLeftFromClock)。
     public int MaterialMiracleStepsLeft;
     public int ObserveCounter;
 

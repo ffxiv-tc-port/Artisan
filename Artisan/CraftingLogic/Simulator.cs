@@ -17,16 +17,36 @@ namespace Artisan.CraftingLogic;
 public static class Simulator
 {
     /// <summary>
-    /// 奇蹟之材(Action #41269)的持續時間換算成「幾個動作」。
+    /// 奇蹟之材(Action #41269)的持續時間,單位秒。
     ///
-    /// ⚠️ 這是**估計值**,不是從資料表讀出來的:遊戲給的是 45 秒的實時 buff,而模擬器沒有時鐘。
-    /// Artisan 自己的耗時模型是「長動畫 2.5 秒、短動畫 1.25 秒」,再加上使用者設定的
-    /// AutoDelay/RecommendationDelay(預設合計約 0.5 秒),所以一步大約 2~3 秒 → 45 秒約 15 步。
-    /// 取 15 是中間值。估太長 = buff 到期那一步會對不上狀態;估太短 = 提早以為 buff 沒了。
+    /// 🔴 **唯一來源是 <see cref="Skills.MaterialMiracle"/> 那一行的註解("lasts 45s")** ——
+    /// 台服的 Action 表裡查不到技能時長欄位,這個數字**沒有辦法離線驗證**。
+    /// 全外掛只有這一處硬編,底下兩個值都由它推導。
+    /// </summary>
+    public const float MaterialMiracleDurationSeconds = 45f;
+
+    /// <summary>
+    /// 一個製作步驟平均花幾秒。實機量到的平均值約 2.19 秒
+    /// (Artisan 自己的耗時模型是「長動畫 2.5 秒、短動畫 1.25 秒」,再加使用者設定的
+    /// AutoDelay + RecommendationDelay)。
+    /// ⚠️ 這個值會隨機器效能、網路延遲與使用者的延遲設定漂移 —— 所以**實機不用它**:
+    /// 實機在 <see cref="GameInterop.Crafting"/> 記 <c>Environment.TickCount64</c> 走真時鐘,
+    /// 這裡的換算只給「沒有時鐘」的前瞻模擬用。
+    /// </summary>
+    public const float MaterialMiracleSecondsPerStep = 2.19f;
+
+    /// <summary>
+    /// 奇蹟之材換算成「幾個動作」——**只給前瞻模擬用**,實機走真時鐘。
+    ///
+    /// = ceil(45 秒 / 2.19 秒) = 21 步。
+    /// 舊值是 15(當時假設一步 2~3 秒、取中間值)。實機 log 量出來的形狀是
+    /// 「走完 15 步遊戲 buff 還在、再約 6 步才真的失效」,也就是估得太短。
+    /// 估太長 = buff 到期那一步會對不上狀態;估太短 = 提早以為 buff 沒了。
     /// 兩種都只造成「一次」狀態不合(之後 BuildStepState 會重新對齊),不會累積。
     /// 🔴 這個常數只在使用者主動開啟奇蹟之材時才有作用(兩個相關設定預設都是關的)。
     /// </summary>
-    public const int MaterialMiracleDurationSteps = 15;
+    public static readonly int MaterialMiracleDurationSteps =
+        (int)Math.Ceiling(MaterialMiracleDurationSeconds / MaterialMiracleSecondsPerStep);
 
     public enum CraftStatus
     {
@@ -233,6 +253,8 @@ public static class Simulator
         //   - 前瞻模擬裡永遠是 false → CanUseAction 允許重複使用,ExpertSolver 那條
         //     「奇蹟之材期間改用工匠的絕技＋坯料加工」的分支則永遠不會被走到
         // 反過來直接設成 true 也不對(會永遠擋住再次使用)。真正的解法是計時,所以這裡計時。
+        // 📌 這裡是**前瞻模擬**的路,沒有時鐘只能用步數估。實機那條路(Crafting.BuildStepState 與
+        //    CraftingEventHandlerUpdateDetour)會用 Environment.TickCount64 的真時鐘覆蓋掉這個估計值。
         next.MaterialMiracleStepsLeft = action == Skills.MaterialMiracle
             ? MaterialMiracleDurationSteps
             : Math.Max(0, step.MaterialMiracleStepsLeft - 1); // 實時 buff:連不佔回合的自由動作也照樣耗掉時間

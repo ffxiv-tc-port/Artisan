@@ -287,44 +287,53 @@ namespace Artisan.IPC
                         .Select(x => x.Key)
                         .ToArray();
 
+                    // GetRetainerBySortedIndex walks the display-order table at +0x2D0 and returns null
+                    // whenever that table holds a value >= 10 - which it does before the retainer list has
+                    // finished loading, and after a character switch leaves stale entries behind. The
+                    // surrounding catch cannot save us here: dereferencing null is an AccessViolation, a
+                    // corrupted-state exception that try/catch does not intercept in .NET Core.
+                    var retainerManager = RetainerManager.Instance();
+
                     for (int i = 0; i < 10; i++)
                     {
                         ulong retainerId = 0;
-                        var retainer = RetainerManager.Instance()->GetRetainerBySortedIndex((uint)i);
+                        var retainer = retainerManager is null ? null : retainerManager->GetRetainerBySortedIndex((uint)i);
 
                         if (configuredRetainerIds.Length > i)
                         {
                             retainerId = configuredRetainerIds[i];
                         }
-                        else
+                        else if (retainer is not null && retainer->Available)
                         {
-                            if (retainer->Available)
-                                retainerId = retainer->RetainerId;
+                            retainerId = retainer->RetainerId;
                         }
 
-                        if (retainer->RetainerId > 0 && !P.Config.RetainerIDs.Any(x => x.Key == retainer->RetainerId && x.Value == Svc.ClientState.LocalContentId))
+                        if (retainer is not null)
                         {
-                            if (retainer->Available)
+                            if (retainer->RetainerId > 0 && !P.Config.RetainerIDs.Any(x => x.Key == retainer->RetainerId && x.Value == Svc.ClientState.LocalContentId))
                             {
-                                P.Config.RetainerIDs.Add(retainer->RetainerId, Svc.ClientState.LocalContentId);
-                                P.Config.Save();
+                                if (retainer->Available)
+                                {
+                                    P.Config.RetainerIDs.Add(retainer->RetainerId, Svc.ClientState.LocalContentId);
+                                    P.Config.Save();
+                                }
                             }
-                        }
 
-                        if (!retainer->Available)
-                        {
-                            if (retainer->RetainerId > 0 && !P.Config.UnavailableRetainerIDs.Contains(retainer->RetainerId))
+                            if (!retainer->Available)
                             {
-                                P.Config.UnavailableRetainerIDs.Add(retainer->RetainerId);
-                                P.Config.Save();
+                                if (retainer->RetainerId > 0 && !P.Config.UnavailableRetainerIDs.Contains(retainer->RetainerId))
+                                {
+                                    P.Config.UnavailableRetainerIDs.Add(retainer->RetainerId);
+                                    P.Config.Save();
+                                }
                             }
-                        }
-                        else
-                        {
-                            if (P.Config.UnavailableRetainerIDs.Contains(retainer->RetainerId))
+                            else
                             {
-                                P.Config.UnavailableRetainerIDs.RemoveWhere(x => x == retainer->RetainerId);
-                                P.Config.Save();
+                                if (P.Config.UnavailableRetainerIDs.Contains(retainer->RetainerId))
+                                {
+                                    P.Config.UnavailableRetainerIDs.RemoveWhere(x => x == retainer->RetainerId);
+                                    P.Config.Save();
+                                }
                             }
                         }
 

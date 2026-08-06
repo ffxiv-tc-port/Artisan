@@ -16,6 +16,18 @@ namespace Artisan.CraftingLogic;
 
 public static class Simulator
 {
+    /// <summary>
+    /// 奇蹟之材(Action #41269)的持續時間換算成「幾個動作」。
+    ///
+    /// ⚠️ 這是**估計值**,不是從資料表讀出來的:遊戲給的是 45 秒的實時 buff,而模擬器沒有時鐘。
+    /// Artisan 自己的耗時模型是「長動畫 2.5 秒、短動畫 1.25 秒」,再加上使用者設定的
+    /// AutoDelay/RecommendationDelay(預設合計約 0.5 秒),所以一步大約 2~3 秒 → 45 秒約 15 步。
+    /// 取 15 是中間值。估太長 = buff 到期那一步會對不上狀態;估太短 = 提早以為 buff 沒了。
+    /// 兩種都只造成「一次」狀態不合(之後 BuildStepState 會重新對齊),不會累積。
+    /// 🔴 這個常數只在使用者主動開啟奇蹟之材時才有作用(兩個相關設定預設都是關的)。
+    /// </summary>
+    public const int MaterialMiracleDurationSteps = 15;
+
     public enum CraftStatus
     {
         [Description("製作進行中")]
@@ -215,7 +227,16 @@ public static class Simulator
         next.TrainedPerfectionActive = action == Skills.TrainedPerfection || (step.TrainedPerfectionActive && !HasDurabilityCost(action));
         next.TrainedPerfectionAvailable = step.TrainedPerfectionAvailable && action != Skills.TrainedPerfection;
         next.MaterialMiracleCharges = action == Skills.MaterialMiracle ? step.MaterialMiracleCharges - 1 : step.MaterialMiracleCharges;
-        next.MaterialMiracleActive = step.MaterialMiracleActive; //This is a timed buff, can't really use this in the simulator, just copy the real result
+        // 奇蹟之材是實時 45 秒的 buff。以前這裡直接把舊值抄過來,結果**兩個方向都錯**:
+        //   - 用掉的那一步預測仍是 false,但遊戲已經給了 buff → 每次使用都必定對不上狀態
+        //     (Crafting.Update 會等到 _predictionDeadline 才認賠,所以除了 log 還會實際拖慢製作)
+        //   - 前瞻模擬裡永遠是 false → CanUseAction 允許重複使用,ExpertSolver 那條
+        //     「奇蹟之材期間改用工匠的絕技＋坯料加工」的分支則永遠不會被走到
+        // 反過來直接設成 true 也不對(會永遠擋住再次使用)。真正的解法是計時,所以這裡計時。
+        next.MaterialMiracleStepsLeft = action == Skills.MaterialMiracle
+            ? MaterialMiracleDurationSteps
+            : Math.Max(0, step.MaterialMiracleStepsLeft - 1); // 實時 buff:連不佔回合的自由動作也照樣耗掉時間
+        next.MaterialMiracleActive = next.MaterialMiracleStepsLeft > 0;
         next.ObserveCounter = action == Skills.Observe ? step.ObserveCounter + 1 : 0;
 
         if (step.FinalAppraisalLeft > 0 && next.Progress >= craft.CraftProgress)

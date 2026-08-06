@@ -45,11 +45,19 @@ public class ExpertSolverSettings
     public bool FinisherBaitGoodByregot = true; // if true, use careful observations to try baiting good byregot
     public bool EmergencyCPBaitGood = false; // if true, we allow spending careful observations to try baiting good for tricks when we really lack cp
     public bool UseMaterialMiracle = false;
+    // 🔴 預設 false = 完全維持現行行為。開啟後每一步會先用模擬器把「照現在的設定走完」與
+    //    「先把進度做完再回頭衝品質」兩條路各跑幾次到底,選期望收穫比較高的那條。
+    //    量測結果寫在 ExpertSolver.SolveAdaptive 的註解裡。
+    public bool AdaptiveProgressPriority = false;
 
     public ExpertSolverSettings()
     {
         // 移除构造函数中的图标加载
     }
+
+    /// 給 <see cref="ExpertSolver.SolveAdaptive"/> 用:複製一份只改一個旗標的設定,
+    /// 不動使用者原本那份(那份是 P.Config 裡的實體,改了會被存檔)。
+    public ExpertSolverSettings ShallowCopy() => (ExpertSolverSettings)MemberwiseClone();
 
     public bool Draw()
     {
@@ -103,6 +111,8 @@ public class ExpertSolverSettings
         changed |= ImGui.Checkbox("Finisher: use ?? to try baiting ?? ?? for ??".Loc(Skills.CarefulObservation.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString, Skills.ByregotsBlessing.NameOfAction()), ref FinisherBaitGoodByregot);
         changed |= ImGui.Checkbox("Emergency: use ?? to try baiting ?? ?? for ?? if really low on CP".Loc(Skills.CarefulObservation.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString, Skills.TricksOfTrade.NameOfAction()), ref EmergencyCPBaitGood);
         changed |= ImGui.Checkbox("Use Material Miracle in Cosmic Exploration".Loc(), ref UseMaterialMiracle);
+        changed |= ImGui.Checkbox("Adaptively switch to finishing progress first when the craft would otherwise be lost".Loc(), ref AdaptiveProgressPriority);
+        ImGuiComponents.HelpMarker("Before each action, simulate the rest of the craft both ways - as configured, and with \"Finish progress before starting quality\" turned on - and take whichever is expected to produce more. Costs a little CPU per action and only applies to expert recipes.".Loc());
         if (ImGuiEx.ButtonCtrl("Reset Expert Solver Settings To Default".Loc()))
         {
             P.Config.ExpertSolverConfig = new();

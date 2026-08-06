@@ -589,6 +589,16 @@ public static unsafe class Crafting
         ret.PrevComboAction = predictedStep?.PrevComboAction ?? Skills.None;
         ret.MaterialMiracleCharges = MaterialMiracleCharges();
         ret.MaterialMiracleActive = GetStatus(Buffs.MaterialMiracle) != null;
+        // 遊戲只告訴我們 buff 在不在,不告訴我們模擬器的「還剩幾步」。所以沿用預測值,
+        // 只在跟實際狀態矛盾時重新對齊(還在但估完了 → 補滿一輪;不在了 → 歸零)。
+        // 🔑 這樣寫的重點是 StepState 是 record,`step != _predictedNextStep` 會逐欄比對 ——
+        //    若這裡自己算一份跟預測不同的數字,反而會製造出新的「狀態不合」誤報。
+        // ⚠️ 重新對齊時要補「一整輪」而不是補 1 —— 補 1 的話下一步又會歸零,
+        //    只要實際 buff 還在就會每一步都對不上,反而比原本更吵。
+        ret.MaterialMiracleStepsLeft = !ret.MaterialMiracleActive
+            ? 0
+            : predictedStep is { MaterialMiracleStepsLeft: > 0 } p ? p.MaterialMiracleStepsLeft
+            : Simulator.MaterialMiracleDurationSteps;
         ret.ObserveCounter = predictedStep?.ObserveCounter ?? 0;
 
         return ret;

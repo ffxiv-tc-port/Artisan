@@ -150,6 +150,14 @@ namespace Artisan.CraftingLogic.Solvers
                         Options = new()
                         {
                             SkipQualityIfMet = false,
+                            // 🔴 這兩個維持 false 是刻意的,2026-08-06 用離線量測台實測過(每格 3000 次製作,
+                            //    台服 rlvl740 一般配方 #36073 / #36062,三種能力值檔位):
+                            //      打開 Upgrade → 做出來率 100% 掉到 58~85%,期望品質 96.6 掉到 56.1
+                            //    原因是 Raphael 的解把 CP 與耐久算得剛剛好,把某一步換成
+                            //    集中加工/集中製作會改變消耗,整份計畫的預算就崩了。
+                            //    要在好/高品質狀態撿便宜,正確做法是 OpportunisticSolver ——
+                            //    它會先模擬「偏離之後剩下整段還跑不跑得完」再決定,實測 +0.5~2.8 期望品質、
+                            //    做出來率完全不變(100% → 100%)。
                             UpgradeProgressActions = false,
                             UpgradeQualityActions = false,
                             MinCP = craft.StatCP,
@@ -230,7 +238,7 @@ namespace Artisan.CraftingLogic.Solvers
             }
         }
 
-        public static (int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP) KeyParts(string key)
+        public static (int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP, bool Expert) KeyParts(string key)
         {
             var parts = key.Split('/');
 
@@ -242,8 +250,11 @@ namespace Artisan.CraftingLogic.Solvers
             int.TryParse(parts[4], out var ctrl);
             int.TryParse(parts[5].Split('-')[0], out var cp);
             int.TryParse(parts[6], out var initial);
+            // GetKey 產生的第 5 段是 "{CP}-{Expert|Standard}"。以前只取了 CP 就把後半丟掉,
+            // 於是「專家配方的解」跟「一般配方的解」在比對時完全無法區分。
+            var expert = parts[5].Split('-').Length > 1 && parts[5].Split('-')[1] == "Expert";
 
-            return (lvl, prog, qual, dur, initial, crafts, ctrl, cp);
+            return (lvl, prog, qual, dur, initial, crafts, ctrl, cp, expert);
         }
 
         public static bool HasSolution(CraftState craft, out MacroSolverSettings.Macro? raphaelSolutionConfig)
@@ -254,9 +265,15 @@ namespace Artisan.CraftingLogic.Solvers
 
                 var solKey = KeyParts(solution.Key);
 
+                // 耐久與 Expert 旗標以前**完全沒有比對** —— KeyParts 有解析出來,但這裡沒用到。
+                // 兩個配方的等級/進度/品質可以完全一樣而耐久不同(DurabilityFactor 不同就會這樣),
+                // 那種情況下拿另一個耐久的解來跑,巨集會在中途把耐久用光,而且是靜默的。
+                // Expert 同理:專家配方的狀態機完全不同,不能共用一般配方的解。
                 if (solKey.Level == craft.CraftLevel &&
                     solKey.Prog == craft.CraftProgress &&
                     solKey.Qual == craft.CraftQualityMax &&
+                    solKey.Dur == craft.CraftDurability &&
+                    solKey.Expert == craft.CraftExpert &&
                     solKey.Crafts == craft.StatCraftsmanship &&
                     solKey.Control <= craft.StatControl &&
                     solKey.Initial == craft.InitialQuality &&
@@ -318,6 +335,15 @@ namespace Artisan.CraftingLogic.Solvers
                 {
                     reasons.Add("Starting quality must match exactly: solution ??, this craft ??".Loc(k.Initial, craft.InitialQuality));
                     distance += Math.Abs(k.Initial - craft.InitialQuality);
+                }
+                if (k.Expert != craft.CraftExpert)
+                {
+                    // 沒有這條的話,「只有專家旗標不同」會走到下面的 reasons.Count == 0 而被當成
+                    // 「其實沒有被忽略」,使用者就會看到「有解但沒說為什麼」的空白提示。
+                    reasons.Add(k.Expert
+                        ? "The cached solution was generated for an expert recipe, but this one is not.".Loc()
+                        : "The cached solution was generated for a standard recipe, but this one is expert.".Loc());
+                    distance += 1;
                 }
 
                 // No reasons means HasSolution would have accepted it, so it is not being ignored at all.

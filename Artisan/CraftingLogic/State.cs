@@ -81,6 +81,10 @@ public record class StepState
     public Skills PrevComboAction;
     public uint MaterialMiracleCharges;
     public bool MaterialMiracleActive;
+    // 奇蹟之材是**實時**(45 秒)而不是回合數的 buff,模擬器沒有時鐘。
+    // 這裡用「還剩幾個動作」當代理,見 Simulator.MaterialMiracleDurationSteps 的說明。
+    // 實機時這個欄位由 Crafting.BuildStepState 沿用預測值,只在跟遊戲實際狀態不合時重新對齊。
+    public int MaterialMiracleStepsLeft;
     public int ObserveCounter;
 
     public override string ToString() => $"#{Index} {Condition}: {Progress}/{Quality}/{Durability}/{RemainingCP}; {BuffsString()}; Prev={PrevComboAction}{(PrevActionFailed ? " (failed)" : "")}";
@@ -104,7 +108,7 @@ public record class StepState
             sb.Append($", FA={FinalAppraisalLeft}");
         sb.Append($", CO={CarefulObservationLeft}, HS={(HeartAndSoulActive ? "active" : HeartAndSoulAvailable ? "avail" : "none")}");
         sb.Append($", QuickInno:{QuickInnoAvailable}/{QuickInnoLeft}/{InnovationLeft}");
-        sb.Append($", MaterialMiracleActive:{MaterialMiracleActive} / {MaterialMiracleCharges}");
+        sb.Append($", MaterialMiracleActive:{MaterialMiracleActive}({MaterialMiracleStepsLeft}) / {MaterialMiracleCharges}");
         return sb.ToString();
     }
 }

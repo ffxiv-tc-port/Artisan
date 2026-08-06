@@ -26,7 +26,12 @@ namespace Artisan.Autocraft
     {
         internal static void Repair()
         {
-            if (TryGetAddonByName<AddonRepair>("Repair", out var addon) && addon->AtkUnitBase.IsVisible && addon->RepairAllButton->IsEnabled && Throttler.Throttle(500))
+            // 🔴 AtkComponentButton.IsEnabled 解的是 OwnerNode->AtkResNode.NodeFlags，而 FFXIVClientStructs
+            // 對 OwnerNode 零空指標檢查。視窗剛開、元件還沒 setup 完或已被拆除時 OwnerNode 就是空，
+            // 直接讀這個屬性等於 AccessViolationException；AVE 是 corrupted-state exception，
+            // try/catch 與任何例外隔離包裝都攔不到，只能在讀取前擋。
+            // IsComponentEnabled 會把 button 與 OwnerNode 兩層都驗過，任一層為空回 false ⇒ 這一幀不修理。
+            if (TryGetAddonByName<AddonRepair>("Repair", out var addon) && addon->AtkUnitBase.IsVisible && IsComponentEnabled(addon->RepairAllButton) && Throttler.Throttle(500))
             {
                 new AddonMaster.Repair((IntPtr)addon).RepairAll();
             }
@@ -37,8 +42,11 @@ namespace Artisan.Autocraft
             if (TryGetAddonByName<AddonRepair>("Repair", out var r) &&
                 r->AtkUnitBase.IsVisible && TryGetAddonByName<AddonSelectYesno>("SelectYesno", out var addon) &&
                 addon->AtkUnitBase.IsVisible &&
-                addon->YesButton is not null &&
-                addon->YesButton->IsEnabled &&
+                // 原本只驗了 YesButton 本身非空，但 IsEnabled 解的是 OwnerNode（AtkComponentBase 的
+                // [0xA8]，和 [0xA0] 的 AtkResNode 是兩個不同欄位）—— 檢查了錯的欄位，看起來有守衛
+                // 其實沒擋到。IsComponentEnabled 是既有 null 檢查的超集（button != null && OwnerNode
+                // != null && IsEnabled），順帶把「讀兩次 YesButton」的 TOCTOU 也消掉。
+                IsComponentEnabled(addon->YesButton) &&
                 addon->AtkUnitBase.UldManager.NodeList[15]->IsVisible())
             {
                 new AddonMaster.SelectYesno((IntPtr)addon).Yes();
@@ -264,7 +272,18 @@ namespace Artisan.Autocraft
 
             if (TryGetAddonByName<AddonRepair>("Repair", out var repairAddon) && repairAddon->AtkUnitBase.IsVisible && repairAddon->RepairAllButton != null)
             {
-                if (!repairAddon->RepairAllButton->IsEnabled)
+                // 🔴 這裡是「否定式」判斷，不能直接套 IsComponentEnabled：那個 helper 對空指標回 false，
+                // 取反之後反而會把流程送進 UseRepair 分支 —— 等於拿「讀不到」當「按鈕已停用」用。
+                // 所以顯式判空，並把指標先取到區域變數再用（避免檢查與解參考之間重取，消 TOCTOU）；
+                // 讀不到就照既有節奏排下一次重試，這一幀不做任何動作。
+                var repairAllButton = repairAddon->RepairAllButton;
+                if (repairAllButton->OwnerNode == null)
+                {
+                    _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(1000));
+                    return false;
+                }
+
+                if (!repairAllButton->IsEnabled)
                 {
                     ActionManagerEx.UseRepair();
                     _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(1000));

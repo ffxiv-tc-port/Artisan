@@ -366,9 +366,31 @@ internal unsafe static class RetainerHandlers
         var text = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Addon>().GetRow(13530).Text.ToDalamudString().GetText();
         if (TryGetAddonByName<AtkUnitBase>("RetainerItemTransferProgress", out var addon) && IsAddonReady(addon))
         {
-            var button = (AtkComponentButton*)addon->UldManager.NodeList[2]->GetComponent();
-            var nodetext = MemoryHelper.ReadSeString(&addon->UldManager.NodeList[2]->GetComponent()->UldManager.NodeList[2]->GetAsAtkTextNode()->NodeText).GetText();
-            if (nodetext == text && addon->UldManager.NodeList[2]->IsVisible() && button->IsEnabled && RetainerInfo.GenericThrottle)
+            // 🔴 GetComponent()／GetAsAtkTextNode() 在 FFXIVClientStructs 都是 [MemberFunction] 原生呼叫，
+            // 不是受管理的 null-safe 存取器 —— 對空節點呼叫一樣是 AVE。IsEnabled 解的又是 OwnerNode
+            // （AtkComponentBase 的 [0xA8]），對 OwnerNode 零空指標檢查。
+            // AVE 是 corrupted-state exception，try/catch 攔不到，只能在呼叫／讀取前先驗。
+            // 節點與元件一律先取到區域變數再用（原本 NodeList[2] 被重取三次，是 TOCTOU）；
+            // 上界也要驗 —— NodeListCount 不足時 NodeList[2] 讀到的是陣列後方的堆積垃圾，
+            // 那不是 null，只做判空等於沒擋。任一層驗不過就這一幀不做事，下一輪重來。
+            var nodeCount = addon->UldManager.NodeListCount;
+            var nodeList = addon->UldManager.NodeList;
+            if (nodeCount <= 2 || nodeList == null) return false;
+            var progressNode = nodeList[2];
+            if (progressNode == null) return false;
+            var component = progressNode->GetComponent();
+            if (component == null) return false;
+            var innerCount = component->UldManager.NodeListCount;
+            var innerList = component->UldManager.NodeList;
+            if (innerCount <= 2 || innerList == null) return false;
+            var labelNode = innerList[2];
+            if (labelNode == null) return false;
+            var labelTextNode = labelNode->GetAsAtkTextNode();
+            if (labelTextNode == null) return false;
+
+            var button = (AtkComponentButton*)component;
+            var nodetext = MemoryHelper.ReadSeString(&labelTextNode->NodeText).GetText();
+            if (nodetext == text && progressNode->IsVisible() && IsComponentEnabled(button) && RetainerInfo.GenericThrottle)
             {
                 button->ClickAddonButton(addon);
                 return true;

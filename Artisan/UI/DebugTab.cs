@@ -412,8 +412,19 @@ namespace Artisan.UI
 
                 if (TryGetAddonByName<AtkUnitBase>("RetainerHistory", out var addon))
                 {
-                    var list = addon->UldManager.SearchNodeById(10)->GetAsAtkComponentList();
-                    ImGui.Text($"{list->ListLength}");
+                    // GetAsAtkComponentList() 是 [MemberFunction] 原生呼叫，對空節點就是 AVE；
+                    // 外層那個 try/catch 對 corrupted-state exception 完全無效，只能在呼叫前驗節點。
+                    var listNode = addon->UldManager.SearchNodeById(10);
+                    if (listNode == null)
+                    {
+                        // 讀不到就畫「?」——畫成 0 會被當成「已確認清單是空的」，那是把不知道畫成已知。
+                        ImGui.Text("?");
+                    }
+                    else
+                    {
+                        var list = listNode->GetAsAtkComponentList();
+                        ImGui.Text(list == null ? "?" : $"{list->ListLength}");
+                    }
                 }
 
             }

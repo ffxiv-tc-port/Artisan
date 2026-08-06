@@ -296,7 +296,16 @@ namespace Artisan
                     if (addon->SupplyRadioButton is null)
                         return;
 
-                    if (addon->SupplyRadioButton->UldManager.NodeList[1] != null && addon->SupplyRadioButton->UldManager.NodeList[1]->IsVisible())
+                    // 🔴 只判空是半套：UldManager.NodeList 的長度恰為 NodeListCount，索引越界讀到的是
+                    // 陣列後方的堆積垃圾（**不是 null**），再當 AtkResNode* 交給 IsVisible()
+                    //（[MemberFunction] 原生呼叫）就是攔不到的 AVE —— 外面那個 try/catch 對
+                    // corrupted-state exception 完全無效。原本這裡只驗了 != null，等於沒擋。
+                    var radioUld = addon->SupplyRadioButton->UldManager;
+                    if (radioUld.NodeList == null || radioUld.NodeListCount <= 1)
+                        return;
+
+                    var radioNode = radioUld.NodeList[1];
+                    if (radioNode != null && radioNode->IsVisible())
                         return;
 
                     var timerWindow = Svc.GameGui.GetAddonByName("GrandCompanySupplyList");
@@ -304,9 +313,15 @@ namespace Artisan
                         return;
 
                     var atkUnitBase = (AtkUnitBase*)timerWindow.Address;
+
+                    // 同上，這裡用到 NodeList[19] ⇒ 要求 count >= 20；節點本身也要判空。
+                    if (atkUnitBase == null || atkUnitBase->UldManager.NodeList == null
+                        || atkUnitBase->UldManager.NodeListCount <= 19)
+                        return;
+
                     var node = atkUnitBase->UldManager.NodeList[19];
 
-                    if (!node->IsVisible())
+                    if (node == null || !node->IsVisible())
                         return;
 
                     var position = AtkResNodeFunctions.GetNodePosition(node);
@@ -389,13 +404,26 @@ namespace Artisan
                         return;
 
                     var atkUnitBase = (AtkUnitBase*)timerWindow.Address;
+                    if (atkUnitBase == null)
+                        return;
+
+                    // 🔴 AtkValues 與 NodeList 都是原生指標陣列，長度分別恰為 AtkValuesCount 與
+                    // NodeListCount。越界讀到的是堆積垃圾不是 null ⇒ 判空擋不住，而 [233] 這一格
+                    // 只是讀 Type 就已經是越界讀，[97] 更是要當節點指標交給 IsVisible() 原生呼叫。
+                    // 外面那層 try/catch 對 AVE（corrupted-state exception）無效。
+                    // 本區塊用到 AtkValues[233] 與 NodeList[97]。
+                    if (atkUnitBase->AtkValues == null || atkUnitBase->AtkValuesCount <= 233)
+                        return;
 
                     if (atkUnitBase->AtkValues[233].Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int)
                         return;
 
+                    if (atkUnitBase->UldManager.NodeList == null || atkUnitBase->UldManager.NodeListCount <= 97)
+                        return;
+
                     var node = atkUnitBase->UldManager.NodeList[97];
 
-                    if (!node->IsVisible())
+                    if (node == null || !node->IsVisible())
                         return;
 
                     var position = AtkResNodeFunctions.GetNodePosition(node);
@@ -476,8 +504,21 @@ namespace Artisan
             NewCraftingList craftingList = new NewCraftingList();
             craftingList.Name = $"GC Supply List ({DateTime.Now.ToShortDateString()})";
 
+            // 🔴 AtkValues 的長度恰為 AtkValuesCount；越界讀到的是堆積垃圾不是 null ⇒ 判空擋不住。
+            // 這個迴圈用到 [i]、[i-40]、[i-360]、[i-400]，衍生索引全都小於 i，所以驗 i 就夠。
+            // 台服的佈局若與這組寫死索引對不上，失敗形式是「清單建不出來」而不是崩潰。
+            var valueCount = atkUnitBase == null ? 0 : atkUnitBase->AtkValuesCount;
+            if (atkUnitBase == null || atkUnitBase->AtkValues == null || valueCount <= 425)
+            {
+                Svc.Log.Information($"Artisan: GrandCompanySupplyList 的 AtkValues 只有 {valueCount} 格（需要 433），無法建立補給任務清單");
+                return;
+            }
+
             for (int i = 425; i <= 432; i++)
             {
+                if (i >= valueCount)
+                    break;
+
                 if (atkUnitBase->AtkValues[i].Type == 0)
                     continue;
 
@@ -535,8 +576,20 @@ namespace Artisan
             NewCraftingList craftingList = new NewCraftingList();
             craftingList.Name = $"GC Supply List ({DateTime.Now.ToShortDateString()})";
 
+            // 同 CreateGCListAgent。這裡衍生索引是 [i+16]／[i+8]／[i+40]，最大是 i+40，
+            // 所以每一圈驗的是 i + 40 而不是 i —— 只驗 i 會漏掉後面三個。
+            var valueCount = atkUnitBase == null ? 0 : atkUnitBase->AtkValuesCount;
+            if (atkUnitBase == null || atkUnitBase->AtkValues == null || valueCount <= 273)
+            {
+                Svc.Log.Information($"Artisan: ContentsInfoDetail 的 AtkValues 只有 {valueCount} 格（需要 281），無法建立補給任務清單");
+                return;
+            }
+
             for (int i = 233; i <= 240; i++)
             {
+                if (i + 40 >= valueCount)
+                    break;
+
                 if (atkUnitBase->AtkValues[i].Type == 0)
                     continue;
 

@@ -172,7 +172,13 @@ namespace Artisan.RawInformation
                         if (materalizeWindow == null)
                             return;
 
-                        var list = (AtkComponentList*)materalizeWindow->UldManager.NodeList[5];
+                        // 🔴 NodeList 的長度恰為 NodeListCount，[5] 越界時讀的是陣列後方的 8 bytes
+                        // 堆積垃圾（不是 null）。這個區域變數目前沒有任何消費端，所以只把越界讀擋掉，
+                        // 不改後面 FireCallback 的行為 —— 刻意不把它改成「讀不到就不送」，那是回退既有行為。
+                        var materializeUld = materalizeWindow->UldManager;
+                        var list = materializeUld.NodeList != null && materializeUld.NodeListCount > 5
+                            ? (AtkComponentList*)materializeUld.NodeList[5]
+                            : null;
 
                         var values = stackalloc AtkValue[2];
                         values[0] = new()

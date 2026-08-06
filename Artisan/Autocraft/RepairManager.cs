@@ -47,10 +47,32 @@ namespace Artisan.Autocraft
                 // 其實沒擋到。IsComponentEnabled 是既有 null 檢查的超集（button != null && OwnerNode
                 // != null && IsEnabled），順帶把「讀兩次 YesButton」的 TOCTOU 也消掉。
                 IsComponentEnabled(addon->YesButton) &&
-                addon->AtkUnitBase.UldManager.NodeList[15]->IsVisible())
+                IsNode15Visible(addon))
             {
                 new AddonMaster.SelectYesno((IntPtr)addon).Yes();
             }
+        }
+
+        /// <summary>
+        /// SelectYesno 的 NodeList[15]（確認文字節點）是否可見。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 原本是 <c>NodeList[15]-&gt;IsVisible()</c> 裸鏈，一個守衛都沒有。
+        /// <c>UldManager.NodeList</c> 的長度<b>恰為</b> <c>NodeListCount</c>，索引越界讀到的是陣列
+        /// 後方的堆積垃圾 —— <b>不是 null</b>，所以「補判空」是半套、擋不住。再把那串垃圾當
+        /// <c>AtkResNode*</c> 交給 <c>IsVisible()</c>（那是 <c>[MemberFunction]</c> 原生呼叫）就是
+        /// AccessViolationException，而 AVE 是 corrupted-state exception，<c>try/catch</c> 無效。
+        /// <para>順序：①容器判空 ②上界檢查 ③節點判空 ④才呼叫原生函式。
+        /// 任一層過不了就回 false ⇒ 這一輪不按確認，下一輪節流到期再試。</para>
+        /// </remarks>
+        private static bool IsNode15Visible(AddonSelectYesno* addon)
+        {
+            var uld = addon->AtkUnitBase.UldManager;
+            if (uld.NodeList == null || uld.NodeListCount <= 15)
+                return false;
+
+            var node = uld.NodeList[15];
+            return node != null && node->IsVisible();
         }
 
         /// <summary>換區與剛登入的短暫視窗內背包容器還沒載入，InventoryManager 的各種計數會

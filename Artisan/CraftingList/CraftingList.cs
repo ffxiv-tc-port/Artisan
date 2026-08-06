@@ -684,36 +684,104 @@ namespace Artisan.CraftingLists
                     diag.Append($"Artisan: SetIngredients walking RecipeNote nodes "
                                 + $"(NodeCount={addon->AtkUnitBase.UldManager.NodeListCount}):");
 
+                    // 🔴 上界必須在進迴圈前就驗，而且**只補判空是半套、完全擋不住**：
+                    // UldManager.NodeList 的長度恰為 NodeListCount，索引越界讀到的是陣列後方的
+                    // 堆積垃圾 —— 那不是 null。再把垃圾交給 GetAsAtkComponentNode()
+                    //（FFXIVClientStructs 裡是 [MemberFunction] 原生呼叫，不是受管理轉型）就是
+                    // AccessViolationException；AVE 是 corrupted-state exception，
+                    // 底下那個 try/catch 與任何例外隔離包裝**一律攔不到**。
+                    // 這個迴圈用到外層 NodeList[18..23]（i = 0..5），所以要求 count >= 24。
+                    var outerList = addon->AtkUnitBase.UldManager.NodeList;
+                    var outerCount = addon->AtkUnitBase.UldManager.NodeListCount;
+                    if (outerList == null || outerCount < 24)
+                    {
+                        Svc.Log.Information(diag.ToString()
+                            + $" -> RecipeNote NodeList 不足（count={outerCount}，需要 24），"
+                            + "這次不指派素材。失敗形式是「沒有指派」而不是崩潰。");
+                        return false;
+                    }
+
                     for (int i = 0; i <= 5; i++)
                     {
                         try
                         {
-                            var node = addon->AtkUnitBase.UldManager.NodeList[23 - i]->GetAsAtkComponentNode();
-
-                            // Diagnostic only - does not affect the decision below.
                             diag.Append($" [{i}]node{23 - i}=");
-                            if (node is null)
-                                diag.Append("NULL");
-                            else if (!node->AtkResNode.IsVisible())
-                                diag.Append("hidden");
-                            else
-                                diag.Append(node->Component->UldManager.NodeList[11]->IsVisible()
-                                            ? "visible/hq-menu" : "visible/material");
 
-                            if (node is null || !node->AtkResNode.IsVisible())
+                            var rawNode = outerList[23 - i];
+                            if (rawNode == null)
                             {
+                                diag.Append("NULL");
                                 continue;
                             }
 
+                            // 轉型前先驗型別：AtkResNode 宣告 Size = 0xB0，而 AtkComponentNode.Component
+                            // 在 FieldOffset 0xB0 ⇒ 對非 component 節點讀 Component 是讀出界 16 bytes。
+                            // Type >= 1000 才是 component 家族。
+                            if ((int)rawNode->Type < 1000)
+                            {
+                                diag.Append($"type{(int)rawNode->Type}");
+                                continue;
+                            }
+
+                            var node = rawNode->GetAsAtkComponentNode();
+                            if (node == null || node->Component == null)
+                            {
+                                diag.Append("NULL");
+                                continue;
+                            }
+
+                            // node->AtkResNode 是 FieldOffset 0 的內嵌結構，位址等同 rawNode。
+                            if (!rawNode->IsVisible())
+                            {
+                                diag.Append("hidden");
+                                continue;
+                            }
+
+                            // 內層元件同樣要驗：本區塊用到元件的 NodeList[11] 與 [14] ⇒ 要求 count >= 15。
+                            var innerList = node->Component->UldManager.NodeList;
+                            var innerCount = node->Component->UldManager.NodeListCount;
+                            if (innerList == null || innerCount < 15)
+                            {
+                                diag.Append($"inner-count{innerCount}");
+                                continue;
+                            }
+
+                            var hqMenuNode = innerList[11];
+                            if (hqMenuNode == null)
+                            {
+                                diag.Append("inner-null");
+                                continue;
+                            }
+
+                            // 原本這個判斷被求值兩次（診斷一次、決策一次），是 TOCTOU；取一次共用。
+                            var hqMenuVisible = hqMenuNode->IsVisible();
+                            diag.Append(hqMenuVisible ? "visible/hq-menu" : "visible/material");
+
                             diagHandled++;
 
-                            if (node->Component->UldManager.NodeList[11]->IsVisible())
+                            if (hqMenuVisible)
                             {
                                 var ingredient = LuminaSheets.RecipeSheet.Values.Where(x => x.RowId == Endurance.RecipeID).FirstOrDefault().Ingredients().ElementAt(i).Item;
 
-                                var btn = node->Component->UldManager.NodeList[14]->GetAsAtkComponentButton();
+                                var buttonNode = innerList[14];
+                                if (buttonNode == null)
+                                {
+                                    diag.Append("(btn-node-null)");
+                                    continue;
+                                }
+
+                                var btn = buttonNode->GetAsAtkComponentButton();
+                                if (btn == null)
+                                {
+                                    diag.Append("(btn-null)");
+                                    continue;
+                                }
+
                                 try
                                 {
+                                    // ⚠️ ClickAddonButton 的第一個參數是 by-value `this AtkComponentButton`
+                                    // ⇒ **傳參當下就解參考**，內部守衛救不了呼叫端的 null，
+                                    // 而這個 try 只擋得住受管理例外。null 必須在上面就攔掉。
                                     btn->ClickAddonButton((AtkComponentBase*)addon, 4, EventType.CHANGE);
                                 }
                                 catch (Exception ex)

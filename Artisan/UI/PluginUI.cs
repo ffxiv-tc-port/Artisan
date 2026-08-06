@@ -873,6 +873,10 @@ namespace Artisan.UI
                 if (ImGui.Checkbox("Restock finished products from retainers as well".Loc(), ref P.Config.RestockFinishedProductsFromRetainers))
                     P.Config.Save();
 
+                if (ImGui.Checkbox("Use AutoRetainer's fast item retrieval".Loc(), ref P.Config.UseDirectRetainerRetrieval))
+                    P.Config.Save();
+                ImGuiComponents.HelpMarker("When AutoRetainer is installed, restocking asks it to send the game's own retrieve command for each stack instead of clicking through the retainer window and its quantity dialog, which is several times faster. Whole stacks are taken rather than exact amounts. Turn this off to always drive the retainer window. Has no effect if AutoRetainer is missing or too old - the retainer window is used automatically in that case.".Loc());
+
                 ImGui.PushItemWidth(100);
                 if (ImGui.InputInt("Times to Add with Context Menu".Loc(), ref P.Config.ContextMenuLoops))
                 {

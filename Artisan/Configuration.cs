@@ -123,6 +123,14 @@ namespace Artisan
         public bool SubtractOwnedFinishedProductFromIngredientTable = false;
         public bool RestockFinishedProductsFromRetainers = false;
 
+        /// <summary>
+        /// Whether retainer restocking may ask AutoRetainer to fire the game's retrieve command directly at a
+        /// slot instead of driving the retainer window. Defaults on because that is the whole point of the
+        /// integration; turning it off restores the window-driving path exactly as it was, and the path is
+        /// skipped automatically anyway whenever AutoRetainer is missing or too old.
+        /// </summary>
+        public bool UseDirectRetainerRetrieval = true;
+
         public bool DefaultHideInventoryColumn = false;
         public bool DefaultHideRetainerColumn = false;
         public bool DefaultHideRemainingColumn = false;

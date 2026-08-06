@@ -433,6 +433,25 @@ namespace Artisan.IPC
 
         public static bool ExtractSingular(uint ItemId, int howManyToGet, ulong retainerKey)
         {
+            if (howManyToGet != 0 && RetainerDirectFetch.Available)
+            {
+                bool wantHQ = RetainerData[retainerKey].Values.Any(x => x.ItemId == ItemId && x.HQQuantity > 0);
+                EnqueueDirectExtract(ItemId, wantHQ, howManyToGet, (gained, fallBack) =>
+                {
+                    var remaining = Math.Max(0, howManyToGet - gained);
+                    if (fallBack && remaining > 0)
+                        TM.EnqueueImmediate(() => { ExtractSingularViaWindow(ItemId, remaining, retainerKey); }, "FallbackExtractSingular");
+                });
+                return true;
+            }
+
+            return ExtractSingularViaWindow(ItemId, howManyToGet, retainerKey);
+        }
+
+        /// <summary>The original retainer-window path for a single item - see
+        /// <see cref="ExtractItemViaWindow"/>.</summary>
+        private static bool ExtractSingularViaWindow(uint ItemId, int howManyToGet, ulong retainerKey)
+        {
             Svc.Log.Debug($"{howManyToGet}");
             if (howManyToGet != 0)
             {
@@ -453,7 +472,8 @@ namespace Artisan.IPC
                         howManyToGet = Math.Max(0, howManyToGet - (int)firstFoundQuantity);
                         TM.EnqueueImmediate(() =>
                         {
-                            ExtractSingular(ItemId, howManyToGet, retainerKey);
+                            // Stays on the window path - see the matching note in ExtractItemViaWindow.
+                            ExtractSingularViaWindow(ItemId, howManyToGet, retainerKey);
                         });
                         return true;
                     }
@@ -465,7 +485,7 @@ namespace Artisan.IPC
 
                         TM.EnqueueImmediate(() =>
                         {
-                            ExtractSingular(ItemId, howManyToGet, retainerKey);
+                            ExtractSingularViaWindow(ItemId, howManyToGet, retainerKey);
                         });
                         return true;
                     }
@@ -671,7 +691,74 @@ namespace Artisan.IPC
 
         private const int FreeSlotsNeededForFullStack = 2;
 
+        /// <summary>
+        /// Pulls <paramref name="stillNeeded"/> of an item off the open retainer with AutoRetainer's retrieve
+        /// command, and reports how many actually landed in the player's bags.
+        /// <para/>
+        /// Runs as a single polling task rather than the enqueue-a-step-per-item recursion the window-driving
+        /// path uses: there is no context menu to open and no quantity dialog to answer, so the only thing to
+        /// wait for is the item arriving. The task's own time limit is only a backstop - the step function
+        /// enforces its own deadlines so that it can hand back to the UI path instead of dying on a
+        /// TimeoutException.
+        /// </summary>
+        /// <param name="onFinished">Given the number that arrived, and whether the UI path still has to run
+        /// for the remainder.</param>
+        private static void EnqueueDirectExtract(uint itemId, bool hqOnly, int stillNeeded, Action<int, bool> onFinished)
+        {
+            var progress = new RetainerDirectFetch.Progress(itemId, hqOnly, stillNeeded);
+            // 🔴 Typed explicitly rather than written inline. EnqueueImmediate is overloaded on both Action
+            // and Func<bool?>, and a lambda whose body is just a bool-returning call fits either; binding to
+            // the Action overload would throw away the "not finished yet" result and run the polling step
+            // exactly once, which looks like the retrieve simply not working.
+            Func<bool?> poll = () => progress.Step();
+            TM.EnqueueImmediate(() => { RetainerDirectFetch.ResetTracking(); return true; }, "DirectExtractReset");
+            TM.EnqueueImmediate(poll, 90000, "DirectExtract");
+            TM.EnqueueImmediate(() =>
+            {
+                onFinished(progress.Gained, progress.FallBackToUi);
+                return true;
+            }, "DirectExtractFinish");
+        }
+
         private static bool ExtractItem(Dictionary<int, int> requiredItems, KeyValuePair<int, int> item, ulong key)
+        {
+            if (requiredItems[item.Key] != 0)
+            {
+                _InventoryChanged = false;
+                if (RetainerDirectFetch.Available)
+                {
+                    // The retainer cache is what decides HQ-vs-any here, exactly as below; it is refreshed
+                    // first because the direct path is fast enough that a stale cache would be the slowest
+                    // part of it.
+                    TM.EnqueueImmediate(() => RefreshRetainerItem((uint)item.Key, key));
+                    TM.EnqueueImmediate(() =>
+                    {
+                        var wanted = requiredItems[item.Key];
+                        if (wanted <= 0) return true;
+                        var wantHQ = RetainerData[key].Values.Any(x => x.ItemId == item.Key && x.HQQuantity > 0);
+                        EnqueueDirectExtract((uint)item.Key, wantHQ, wanted, (gained, fallBack) =>
+                        {
+                            requiredItems[item.Key] = Math.Max(0, wanted - gained);
+                            // Only the window-driving path is re-entered on fallback, and only when something
+                            // is still missing - re-entering the direct path would just repeat the failure.
+                            if (fallBack && requiredItems[item.Key] > 0)
+                                TM.EnqueueImmediate(() => { ExtractItemViaWindow(requiredItems, item, key); }, "FallbackExtract");
+                        });
+                        return true;
+                    }, "DirectExtractEntry");
+                    return true;
+                }
+
+                return ExtractItemViaWindow(requiredItems, item, key);
+            }
+
+            return true;
+        }
+
+        /// <summary>The original retainer-window path: open the stack's context menu, pick "Retrieve from
+        /// Retainer", type a quantity, repeat. Kept whole as the fallback for everything the command path
+        /// cannot or should not do.</summary>
+        private static bool ExtractItemViaWindow(Dictionary<int, int> requiredItems, KeyValuePair<int, int> item, ulong key)
         {
             if (requiredItems[item.Key] != 0)
             {
@@ -704,7 +791,10 @@ namespace Artisan.IPC
                         TM.EnqueueImmediate(() => _InventoryChanged);
                         TM.EnqueueImmediate(() =>
                         {
-                            ExtractItem(requiredItems, item, key);
+                            // Stays on the window path deliberately: this recursion is only reached from the
+                            // fallback, and bouncing back into the direct path would repeat whatever made it
+                            // give up in the first place.
+                            ExtractItemViaWindow(requiredItems, item, key);
                         }, "RecursiveExtract");
                         return true;
                     }

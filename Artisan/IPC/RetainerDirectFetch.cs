@@ -315,9 +315,14 @@ namespace Artisan.IPC
                 // wanted amount already arrived would just make the retainer window dance for nothing.
                 FallBackToUi = fallBackToUi && Gained < Wanted;
                 var elapsed = Environment.TickCount64 - StartedAt;
+                // On a shortfall, say what is still sitting on the retainer: "40 of 60 arrived" on its own
+                // does not tell anyone whether the other 20 exist. ⚠️ Printed as "?" when unknown rather than
+                // as 0 - a 0 there would read as "the retainer is empty, nothing was missed".
+                var stillOnRetainer = Gained < Wanted ? RetainerQuantity(ItemId, HqOnly) : 0;
                 Svc.Log.Information($"[Artisan][Restock][direct] item {ItemId} done: {reason}. " +
                                     $"{CommandsFired} command(s) covering {QuantityCommanded}, {Gained} of {Wanted} arrived, {elapsed}ms" +
                                     $"{(CommandsFired > 0 ? $" ({elapsed / CommandsFired}ms per command)" : "")}." +
+                                    $"{(Gained < Wanted ? $" Retainer still holds {(stillOnRetainer < 0 ? "?" : stillOnRetainer.ToString())}." : "")}" +
                                     $"{(FallBackToUi ? " Handing the remainder to the retainer-window path." : "")}");
                 return true;
             }

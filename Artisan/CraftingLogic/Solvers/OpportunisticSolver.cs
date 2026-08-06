@@ -1,4 +1,5 @@
 using ECommons.DalamudServices;
+using System;
 using System.Collections.Generic;
 using Condition = Artisan.CraftingLogic.CraftData.Condition;
 using Skills = Artisan.RawInformation.Character.Skills;
@@ -59,6 +60,7 @@ public class OpportunisticSolver : Solver, ICraftValidator
         var bestAction = planned.Action;
         var bestConsumesPlanStep = true;
         var best = baseline;
+        var bestQuality = EffectiveQuality(craft, baseline);
 
         foreach (var (candidate, consumesPlanStep) in Candidates(step, planned.Action))
         {
@@ -74,10 +76,12 @@ public class OpportunisticSolver : Solver, ICraftValidator
             var outcome = Rollout(solver, craft, step, candidate);
             if (outcome == null || outcome.Progress < craft.CraftProgress)
                 continue; // deviation breaks the craft
-            if (outcome.Quality <= best.Quality)
+            var outcomeQuality = EffectiveQuality(craft, outcome);
+            if (outcomeQuality <= bestQuality)
                 continue; // no better than what we already have
 
             best = outcome;
+            bestQuality = outcomeQuality;
             bestAction = candidate;
             bestConsumesPlanStep = consumesPlanStep;
         }
@@ -88,10 +92,21 @@ public class OpportunisticSolver : Solver, ICraftValidator
         if (bestAction == planned.Action)
             return planned;
 
+        var baseQuality = EffectiveQuality(craft, baseline);
         Svc.Log.Information($"[Opportunistic] {step.Condition} 狀態偏離原計畫：{planned.Action} -> {bestAction} " +
-            $"({(bestConsumesPlanStep ? "取代該步" : "額外插入一步")})，模擬最終品質 {baseline.Quality} -> {best.Quality}");
-        return new(bestAction, $"{planned.Comment} (偏離：{step.Condition} 預估品質 +{best.Quality - baseline.Quality})");
+            $"({(bestConsumesPlanStep ? "取代該步" : "額外插入一步")})，模擬最終品質 {baseQuality} -> {bestQuality}");
+        return new(bestAction, $"{planned.Comment} (偏離：{step.Condition} 預估品質 +{bestQuality - baseQuality})");
     }
+
+    // 🔴 Simulator 的品質**從不封頂**(Simulator.Execute 只是 step.Quality + CalculateQuality,
+    //    只有實機那條路才在 Crafting.cs 用 Math.Min 夾回 CraftQualityMax)。
+    //    直接拿原始 Quality 比大小的話,滿品質之後 rollout 仍會算出「更高的無效品質」,
+    //    於是兩條都已經滿品質的路會因為溢出值誰比較大而被判成「更好」——
+    //    白白花掉一回合去插改革/崇敬/掌握,最終品質卻一點都沒變。
+    //    比較前一律夾到遊戲真正會記錄的上限。
+    // ⚠️ CraftQualityMax 為 0 的配方(完全不看品質)維持原本的比法,不改既有行為。
+    private static int EffectiveQuality(CraftState craft, StepState s)
+        => craft.CraftQualityMax > 0 ? Math.Min(s.Quality, craft.CraftQualityMax) : s.Quality;
 
     private static bool IsInterestingCondition(Condition c) => c is Condition.Good or Condition.Excellent or Condition.Poor;
 

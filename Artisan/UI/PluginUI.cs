@@ -877,6 +877,18 @@ namespace Artisan.UI
                     P.Config.Save();
                 ImGuiComponents.HelpMarker("When AutoRetainer is installed, restocking asks it to send the game's own retrieve command for each stack instead of clicking through the retainer window and its quantity dialog, which is several times faster. Whole stacks are taken rather than exact amounts. Turn this off to always drive the retainer window. Has no effect if AutoRetainer is missing or too old - the retainer window is used automatically in that case.".Loc());
 
+                // SetNextItemWidth rather than PushItemWidth: the surrounding block pushes widths without
+                // ever popping them, so adding a matching pop here would unbalance what follows.
+                ImGui.SetNextItemWidth(200f);
+                if (ImGui.SliderInt("Free bag slots needed to take a whole stack".Loc(), ref P.Config.RestockFullStackFreeSlots, 1, 10))
+                {
+                    if (P.Config.RestockFullStackFreeSlots < 1)
+                        P.Config.RestockFullStackFreeSlots = 1;
+                }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    P.Config.Save();
+                ImGuiComponents.HelpMarker("Only applies to the retainer window path, where restocking takes the whole stack instead of the exact amount still needed - but only while the bag has at least this many free slots, because a whole stack landing on an existing partial stack can split across two of them. Lower it to take whole stacks more often and make fewer return trips, at the risk of the withdrawal coming up short when the bag is nearly full. Raise it to be more cautious. While the free-slot count cannot be read at all, the exact amount is used regardless of this setting.".Loc());
+
                 ImGui.PushItemWidth(100);
                 if (ImGui.InputInt("Times to Add with Context Menu".Loc(), ref P.Config.ContextMenuLoops))
                 {

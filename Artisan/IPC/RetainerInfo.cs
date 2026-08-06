@@ -680,16 +680,21 @@ namespace Artisan.IPC
         /// bag slot than a partial one would (a 999 stack landing on top of an existing partial stack splits),
         /// so this only does it while the bag is known to have room to spare; when the free-slot count is
         /// unknown (-1) or tight it falls back to the exact quantity, which is the old behaviour.
+        /// <para/>
+        /// The "room to spare" threshold is <see cref="Configuration.RestockFullStackFreeSlots"/>, which
+        /// defaults to the 2 this used to hardcode.
         /// </summary>
         private static int WithdrawalQuantity(int stillNeeded, int stackQuantity, int freeSlots)
         {
             var exact = Math.Min(stillNeeded, stackQuantity);
             if (stackQuantity <= exact)
                 return exact; // already the whole stack
-            return freeSlots >= FreeSlotsNeededForFullStack ? stackQuantity : exact;
-        }
 
-        private const int FreeSlotsNeededForFullStack = 2;
+            // Clamped to >= 1 on purpose: GetFreeInventorySlots() reports "don't know" as -1, and a config
+            // file hand-edited to 0 or lower would make that unknown compare as "plenty of room".
+            var needed = Math.Max(1, P.Config.RestockFullStackFreeSlots);
+            return freeSlots >= needed ? stackQuantity : exact;
+        }
 
         /// <summary>
         /// Pulls <paramref name="stillNeeded"/> of an item off the open retainer with AutoRetainer's retrieve

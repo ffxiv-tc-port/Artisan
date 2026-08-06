@@ -745,7 +745,11 @@ public static unsafe class Crafting
                 // transition (ExecutingCraftingAction) will be cleared in a few frames, if this action did not complete the craft
                 // if there are any status changes (e.g. remaining step updates) and if craft is not complete, these will be updated by the next StatusEffectList packet, which might arrive with a delay
                 // because of that, we wait until statuses match prediction (or too much time passes) before transitioning to InProgress
-                if (CurState is not State.WaitAction or State.InProgress)
+                // 🔴 原本寫成 `is not State.WaitAction or State.InProgress`,C# 會解析成
+                //    `(not WaitAction) or InProgress` —— 而 InProgress 本來就屬於 not WaitAction,
+                //    整條等價於 `!= WaitAction`,上游 2024-01-11「Fix errors」想加進白名單的
+                //    InProgress **從來沒生效過**,反而每次都落進下面的錯誤路徑並跳過預測邏輯。
+                if (CurState is not State.WaitAction and not State.InProgress)
                 {
                     Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message"); //Probably an invalid state, so most data will not be set causing CTD
                     // 只跳過我們的解讀;Original 由呼叫端統一呼叫,行為與改寫前相同。

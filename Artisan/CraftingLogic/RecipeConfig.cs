@@ -281,20 +281,30 @@ public class RecipeConfig
         {
             var recipe = craft.Recipe;
             var config = this;
-            var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor);
+            var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor, out var solverTooltip);
             var solver = CraftingProcessor.GetSolverForRecipe(config, craft);
 
+            var showedDistribution = false;
             if (solver.Name != "Expert Recipe Solver".Loc())
             {
                 if (craft.MissionHasMaterialMiracle && solver.Name == "Standard Recipe Solver".Loc() && P.Config.UseMaterialMiracle)
                     ImGuiEx.TextWrapped("This would use Material Miracle, which is not compatible with the simulator.".Loc());
                 else
+                {
                     ImGuiEx.TextWrapped(hintColor, solverHint);
+                    showedDistribution = true;
+                }
             }
             else
                 ImGuiEx.TextWrapped("Please run this recipe in the simulator for results.".Loc());
 
-            if (ImGui.IsItemClicked())
+            // ⚠️ 先把點擊狀態存下來再畫 tooltip —— ImGuiEx.Tooltip 會開一個新視窗,
+            //    之後的 IsItemClicked 就不再指向上面那段文字了。
+            var hintClicked = ImGui.IsItemClicked();
+            if (showedDistribution && solverTooltip.Length > 0)
+                ImGuiEx.Tooltip(solverTooltip);
+
+            if (hintClicked)
             {
                 P.PluginUi.OpenWindow = UI.OpenWindow.Simulator;
                 P.PluginUi.IsOpen = true;

@@ -10,6 +10,7 @@ using System;
 using System.ComponentModel;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using Condition = Artisan.CraftingLogic.CraftData.Condition;
 
 namespace Artisan.CraftingLogic;
@@ -139,10 +140,19 @@ public static class Simulator
         }
     }
 
-    public unsafe static string SimulatorResult(Recipe recipe, RecipeConfig config, CraftState craft, out Vector4 hintColor, bool assumeMaxStartingQuality = false)
+    /// <summary>
+    /// 配方頁的「這個配方做得起來嗎」提示。
+    ///
+    /// 🔑 結論(完成率／品質中位數)寫在列上,明細(樣本數、分位數、突破點分布、
+    /// 舊的單次決定性模擬)進 <paramref name="tooltip"/>。取樣還沒跑完時列上寫 <c>?</c> ——
+    /// 「不知道」本身要看得見,不能畫成 0。
+    /// </summary>
+    public unsafe static string SimulatorResult(Recipe recipe, RecipeConfig config, CraftState craft, out Vector4 hintColor, out string tooltip, bool assumeMaxStartingQuality = false)
     {
         hintColor = ImGuiColors.DalamudWhite;
-        var solver = CraftingProcessor.GetSolverForRecipe(config, craft).CreateSolver(craft);
+        tooltip = "";
+        var solverDesc = CraftingProcessor.GetSolverForRecipe(config, craft);
+        var solver = solverDesc.CreateSolver(craft);
         if (solver == null) return "沒有找到有效的解算器";
         var startingQuality = GetStartingQuality(recipe, assumeMaxStartingQuality, craft.StatLevel);
         var time = SolverUtils.EstimateCraftTime(solver, craft, startingQuality);
@@ -150,7 +160,7 @@ public static class Simulator
         var status = result != null ? Status(craft, result) : CraftStatus.InProgress;
         var hq = result != null ? Calculations.GetHQChance((float)result.Quality / craft.CraftQualityMax * 100) : 0;
 
-        string solverHint = status switch
+        string deterministicHint = status switch
         {
             CraftStatus.InProgress => "製作未完成（解算器在完成之前未返回任何步驟）。",
             CraftStatus.FailedDurability => $"因耐久度不足導致製作失敗。(進展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品質：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
@@ -165,23 +175,80 @@ public static class Simulator
             _ => "你不應該看到這個，請報告問題。",
         };
 
+        // 🔴 上面那句是**單次決定性模擬**的結論:擲骰寫死成 (0, 1) = 動作必成功、
+        //    狀態永遠回到「通常」,同時吃到一個樂觀假設與一個悲觀假設。
+        //    離線量測(~/.claude/tools/artisan-sim 的 b4hint)顯示專家配方的品質平均低估
+        //    48.8 個百分點,36 格裡有 16 格說「做不完」但實測完成率超過 50%。
+        //    所以它降級成 tooltip 裡的參考值,列上改用真的跑 N 次的分布。
+        // 📌 把這句話塞進快取鍵是刻意的:它每一幀都重算,而且內含解算器實際跑出來的
+        //    進度/品質/耗時 —— 使用者改了巨集之類「不在鍵裡的東西」時,它會跟著變,
+        //    等於免費得到一個失效偵測。
+        var qualityMatters = craft.CraftQualityMax > 0 && (craft.CraftHQ || craft.CraftCollectible || craft.CraftExpert);
+        // 專家/收藏品的變異大,樣本要多一點;一般配方少一點就夠,免得白花時間。
+        var target = craft.CraftExpert || craft.CraftCollectible ? 200 : 60;
+        var key = $"{recipe.RowId}|{solverDesc.Def?.GetType().FullName}|{solverDesc.Flavour}|{solverDesc.Name}|" +
+                  $"{craft.StatCraftsmanship}/{craft.StatControl}/{craft.StatCP}/{craft.StatLevel}|" +
+                  $"{craft.Specialist}{craft.UnlockedManipulation}|{startingQuality}|{deterministicHint}";
+        var dist = SolverHintSampler.Sample(key, solver, craft, startingQuality, target);
 
-        hintColor = status switch
+        var medianQuality = dist.QualityQuantile(0.5);
+        string solverHint;
+        if (!dist.Done)
         {
-            CraftStatus.InProgress => ImGuiColors.DalamudWhite,
-            CraftStatus.FailedDurability => ImGuiColors.DalamudRed,
-            CraftStatus.FailedMinQuality => ImGuiColors.DalamudRed,
-            CraftStatus.SucceededQ1 => new Vector4(0.7f, 0.5f, 0.5f, 1f),
-            CraftStatus.SucceededQ2 => new Vector4(0.5f, 0.5f, 0.7f, 1f),
-            CraftStatus.SucceededQ3 => new Vector4(0.5f, 1f, 0.5f, 1f),
-            CraftStatus.SucceededMaxQuality => ImGuiColors.ParsedGreen,
-            CraftStatus.SucceededSomeQuality => new Vector4(1 - (hq / 100f), 0 + (hq / 100f), 1 - (hq / 100f), 255),
-            CraftStatus.SucceededNoQualityReq => ImGuiColors.ParsedGreen,
-            CraftStatus.Count => ImGuiColors.DalamudWhite,
-            _ => ImGuiColors.DalamudWhite,
-        };
+            // ⚠️ 取樣還沒完的時候不要把未知畫成 0 —— 用 ? 標明「還不知道」。
+            solverHint = $"完成率 ?　品質中位 ?　（取樣中 {dist.Samples}/{dist.Target}，預估耗時 {time.TotalSeconds:f0} 秒）";
+        }
+        else if (dist.Completed == 0)
+        {
+            solverHint = $"完成率 0%　做不完（{dist.Samples} 次模擬全部失敗）";
+        }
+        else if (qualityMatters)
+        {
+            solverHint = $"完成率 {dist.CompletionPct:f0}%　品質中位 {medianQuality:f0}%　預估耗時 {time.TotalSeconds:f0} 秒";
+        }
+        else
+        {
+            solverHint = $"完成率 {dist.CompletionPct:f0}%　（此配方不看品質）　預估耗時 {time.TotalSeconds:f0} 秒";
+        }
 
+        var medianHQ = medianQuality >= 0 ? Calculations.GetHQChance((float)medianQuality) : 0;
+        hintColor = !dist.Done ? ImGuiColors.DalamudGrey
+            : dist.CompletionPct < 50 ? ImGuiColors.DalamudRed
+            : dist.CompletionPct < 95 ? ImGuiColors.DalamudOrange
+            : !qualityMatters || medianQuality >= 99.5 ? ImGuiColors.ParsedGreen
+            : new Vector4(1 - (medianHQ / 100f), 0 + (medianHQ / 100f), 1 - (medianHQ / 100f), 1f);
+
+        tooltip = BuildHintTooltip(craft, dist, deterministicHint, qualityMatters);
         return solverHint;
+    }
+
+    private static string BuildHintTooltip(CraftState craft, SolverHintSampler.Result dist, string deterministicHint, bool qualityMatters)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"隨機模擬 {dist.Samples} 次（動作成敗與製作狀態都照機率擲骰）");
+        if (!dist.Done)
+            sb.AppendLine($"目標 {dist.Target} 次，還在取樣中……");
+        sb.AppendLine($"完成率：{dist.CompletionPct:f1}%（{dist.Samples} 次裡有 {dist.Completed} 次做完）");
+
+        if (dist.Completed > 0 && qualityMatters)
+        {
+            sb.AppendLine();
+            sb.AppendLine("品質達成率分布（只計做完的那幾次）：");
+            sb.AppendLine($"　最差 10%：{dist.QualityQuantile(0.1):f0}%");
+            sb.AppendLine($"　中位數：　{dist.QualityQuantile(0.5):f0}%");
+            sb.AppendLine($"　最好 10%：{dist.QualityQuantile(0.9):f0}%");
+        }
+
+        if ((craft.CraftCollectible || craft.CraftExpert) && craft.CraftQualityMin1 > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"打到第幾個突破點：第一 {dist.TierPct(1):f0}%／第二 {dist.TierPct(2):f0}%／第三 {dist.TierPct(3):f0}%");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("單次決定性模擬（舊版提示；假設動作必成功、狀態永遠是「通常」，兩邊都不準）：");
+        sb.Append($"　{deterministicHint}");
+        return sb.ToString();
     }
 
     public unsafe static int GetStartingQuality(Recipe recipe, bool assumeMaxStartingQuality, int characterLevel)

@@ -1643,9 +1643,13 @@ internal class ListEditor : Window, IDisposable
 
         ImGui.Checkbox("Assume Max Starting Quality (for simulator)".Loc(), ref hqSim);
 
-        var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor, hqSim);
+        var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor, out var solverTooltip, hqSim);
         if (!recipe.IsExpert)
+        {
             ImGuiEx.TextWrapped(hintColor, solverHint);
+            if (solverTooltip.Length > 0)
+                ImGuiEx.Tooltip(solverTooltip);
+        }
         else
             ImGuiEx.TextWrapped("Please run this recipe in the simulator for results.".Loc());
     }

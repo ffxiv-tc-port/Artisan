@@ -33,7 +33,14 @@ namespace Artisan.CraftingLogic.Solvers
                 // a macro plays back a fixed action list and cannot react to good/excellent/poor showing up;
                 // wrap it so we can deviate opportunistically, but only when the simulator says the deviation
                 // still finishes the craft with strictly better quality than the untouched plan
-                return new OpportunisticSolver(new MacroSolver(output!, craft));
+                //
+                // 再包一層奇蹟之材:Raphael 的狀態模型只有 通常/高品質/最高品質/低品質,
+                // 連「大進展」這類專家狀態都表達不出來,所以它永遠不會提議 41269。
+                // 而奇蹟之材是免費動作(不佔回合、不耗 CP/耐久、不讓 buff 掉一格),
+                // 插在計畫前面不會動到計畫本身 —— 詳見 MaterialMiracleSolver 的類別註解。
+                // ⚠️ 順序是刻意的:奇蹟之材在最外層,底下才是機會性偏離,
+                //    這樣閘門的 rollout 驅動的是「真正會執行的那份計畫」。
+                return new MaterialMiracleSolver(new OpportunisticSolver(new MacroSolver(output!, craft)));
             }
             return craft.CraftExpert ? new ExpertSolver() : new StandardSolver(false);
         }

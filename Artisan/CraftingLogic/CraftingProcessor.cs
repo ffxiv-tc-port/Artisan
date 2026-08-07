@@ -170,6 +170,12 @@ public static class CraftingProcessor
         SolverStarted?.Invoke(recipe, ActiveSolver, craft, initialStep);
 
         _nextRec = _activeSolver.Solve(craft, initialStep);
+        // 奇蹟之材的閘門判定在上面那一行就跑完了。**在這裡**記 log 而不是在解算器內部,是因為
+        // 同一個解算器也被配方視窗的提示取樣器拿去跑上百次模擬(見 SolverHintSampler),
+        // 在裡面記會把 log 洗掉;而這裡保證是實機的那一場製作。
+        // Information 級是刻意的:使用者跑 LogLevel 2,Debug/Verbose 收不到。
+        if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.LastGateExplanation is { Length: > 0 } mmWhy)
+            Svc.Log.Information($"[MaterialMiracle] {mmWhy}");
         if (Simulator.CannotUseAction(craft, initialStep, _nextRec.Action, out string reason))
             DuoLog.Error($"Unable to use {_nextRec.Action.NameOfAction()}: {reason}");
         if (_nextRec.Action != Skills.None)

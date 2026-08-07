@@ -39,6 +39,9 @@ public record class CraftState
     public bool IsCosmic;
     public ConditionFlags ConditionFlags;
     public bool MissionHasMaterialMiracle;
+    // 這個宇宙任務給幾次奇蹟之材(來源與校準見 LuminaSheets.MissionMaterialMiracle)。
+    // ⚠️ **只有模擬器用**:實機的次數由 Crafting.MaterialMiracleCharges() 向 DutyActionManager 取。
+    public uint MissionMaterialMiracleCharges;
     public int InitialQuality;
 
     public uint ItemId;

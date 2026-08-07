@@ -20,8 +20,13 @@ public static class Simulator
     /// <summary>
     /// 奇蹟之材(Action #41269)的持續時間,單位秒。
     ///
-    /// 🔴 **唯一來源是 <see cref="Skills.MaterialMiracle"/> 那一行的註解("lasts 45s")** ——
-    /// 台服的 Action 表裡查不到技能時長欄位,這個數字**沒有辦法離線驗證**。
+    /// ✅ **有台服官方資料背書,不是抄來的猜測**(2026-08-07 更正):
+    /// `D:/ffxiv-tc-port/exd-tc/7.20/ActionTransient.csv` 第 41269 列的 `Description` 欄逐字寫著
+    ///   「每次作業會發生變化的製作狀態固定變為『高品質』『結實』『安定』『高效』『長持續』『大進展』
+    ///     狀態的其中一個 / **持續時間:**45秒 / **該技能僅限在探索任務的製作中使用**」
+    /// (舊註解說「Action 表裡查不到時長欄位所以無法離線驗證」——**前半對、結論錯**。)
+    ///
+    /// 🔑 可複用的教訓:**技能時長不在 `Action` 表的欄位裡,在 `ActionTransient.Description` 的文字裡。**
     /// 全外掛只有這一處硬編,底下兩個值都由它推導。
     /// </summary>
     public const float MaterialMiracleDurationSeconds = 45f;
@@ -97,7 +102,11 @@ public static class Simulator
             QuickInnoLeft = craft.Specialist ? 1 : 0,
             TrainedPerfectionAvailable = craft.StatLevel >= MinLevel(Skills.TrainedPerfection),
             Condition = Condition.Normal,
-            MaterialMiracleCharges = (uint)(craft.MissionHasMaterialMiracle ? 1 : 0),
+            // 以前這裡寫死 1。任務其實可以給到 3 次(實機 log 直接觀測到配方 36214 是 3),
+            // 寫死 1 會讓「一場製作可用多次」那個設定在模擬器裡**永遠無效而且靜默**:
+            // 勾了沒反應,因為 CanUseAction 卡在 Charges > 0。
+            // 🔴 MissionMaterialMiracleCharges 自帶 Max(1,…) 的 fail-safe,所以這裡的下界仍是舊行為。
+            MaterialMiracleCharges = craft.MissionHasMaterialMiracle ? Math.Max(1u, craft.MissionMaterialMiracleCharges) : 0,
         };
 
     public static CraftStatus Status(CraftState craft, StepState step)

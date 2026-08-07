@@ -93,6 +93,9 @@ public static unsafe class Crafting
     {
         stats.Level = stats.Level == default ? CharacterInfo.JobLevel(job) : stats.Level;
         var lt = recipe.Number == 0 && stats.Level < 100 ? Svc.Data.GetExcelSheet<RecipeLevelTable>().First(x => x.ClassJobLevel == stats.Level) : recipe.RecipeLevelTable.Value;
+        // 一次查完「有沒有奇蹟之材」與「給幾次」—— 兩者走的是同一串任務資料表,
+        // 分兩次呼叫等於把整段掃描做兩遍(AllValidCrafts 會對整個職業的配方逐一建 CraftState)。
+        var miracle = recipe.MissionMaterialMiracle();
         var res = new CraftState()
         {
             ItemId = recipe.ItemResult.RowId,
@@ -121,7 +124,8 @@ public static unsafe class Crafting
             CollectableMetadataKey = recipe.CollectableMetadataKey,
             IsCosmic = recipe.Number == 0,
             ConditionFlags = (ConditionFlags)lt.ConditionsFlag,
-            MissionHasMaterialMiracle = recipe.MissionHasMaterialMiracle(),
+            MissionHasMaterialMiracle = miracle.Has,
+            MissionMaterialMiracleCharges = miracle.Charges,
             LevelTable = lt
         };
 

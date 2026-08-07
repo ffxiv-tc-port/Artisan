@@ -713,8 +713,22 @@ namespace Artisan.UI
 
                 ImGuiComponents.HelpMarker("This will switch the standard recipe solver to the expert solver for the duration of the buff. As this is a timed buff and not a permanent one with stacks, this will not give you correct simulator results as we can't really simulate it properly.".Loc());
 
+                // 🔴 上面那句 tooltip 說了「buff 期間換成專家解算器代打」,但**沒有說那要付多少代價**。
+                //    2026-08-07 離線量測(9 個宇宙配方 × 每格 1500 次製作,能力值 工5624/加5293/製674,
+                //    2x2 隔離出唯一變數就是這個旗標):對**標準解算器**在宇宙配方上是淨損失,
+                //    而且 9 個配方**每一個**的做出來率都變差 ——
+                //      旗標關:做出來 100.0% / 期望品質 56.2
+                //      旗標開:做出來  46.1% / 期望品質 35.5
+                //    把專家解算器的「先做完進度」自適應打開也只救回一半(46.1% -> 64.5%)。
+                //    最極端的是非專家的宇宙配方(#36214):100% -> 9%,因為專家解算器接手不了非專家配方。
+                //    ⚠️ 專家解算器與 Raphael 解算器**不受影響**(Raphael 那條有自己的安全閘門)。
+                //    「有沒有問題」要在列上看得見,tooltip 只放「為什麼」。
                 if (P.Config.UseMaterialMiracle)
                 {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow,
+                        "注意:這個選項會讓標準解算器在整段 buff 期間交給專家解算器代打。離線量測顯示宇宙配方的做出來率因此從 100% 掉到約 46%(專家解算器與 Raphael 解算器不受影響)。");
+                    ImGuiEx.Tooltip("量測條件:9 個宇宙配方、每個 1500 次模擬製作。把專家解算器的「先做完進度」自適應選項打開可回升到約 64%,仍低於不開這個選項。\n若你只是想在宇宙任務用奇蹟之材,把該配方指派給專家解算器或 Raphael 解算器不會有這個代價。");
+
                     ImGui.Indent();
                     if (ImGui.Checkbox("Use more than once per craft.".Loc(), ref P.Config.MaterialMiracleMulti))
                         P.Config.Save();

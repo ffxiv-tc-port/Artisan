@@ -284,6 +284,28 @@ public class RecipeConfig
             var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor, out var solverTooltip);
             var solver = CraftingProcessor.GetSolverForRecipe(config, craft);
 
+            // 🔑 「這個宇宙任務有奇蹟之材」以及「現在這個解算器到底會不會用它」必須在**列上**看得見。
+            //    改動前只有標準解算器那一條分支會講一句話,配方一旦(自動)切到 Raphael 就完全沒有提示 ——
+            //    使用者被靜默降級成「整場不用奇蹟之材」而無從得知。tooltip 藏的是「為什麼」,不是「有沒有問題」。
+            if (craft.MissionHasMaterialMiracle)
+            {
+                if (!P.Config.UseMaterialMiracle)
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "This mission grants Material Miracle, but it will not be used.".Loc());
+                    ImGuiEx.Tooltip("Turn on \"Use Material Miracle when available\" in the main settings to let solvers use it.".Loc());
+                }
+                else if (!Solvers.MaterialMiracleSolver.SolverUsesMaterialMiracle(solver))
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "This mission grants Material Miracle, but ?? will not use it.".Loc(solver.Name));
+                    ImGuiEx.Tooltip("Only the standard, expert and Raphael solvers know about Material Miracle. Pick one of those for this recipe to make use of it.".Loc());
+                }
+                else
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudWhite, "?? will use Material Miracle on this mission.".Loc(solver.Name));
+                    ImGuiEx.Tooltip("Material Miracle costs no step, no CP and no durability, and does not tick any buff down. While it is up every condition is a beneficial one.".Loc());
+                }
+            }
+
             var showedDistribution = false;
             if (solver.Name != "Expert Recipe Solver".Loc())
             {

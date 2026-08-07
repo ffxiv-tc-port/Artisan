@@ -372,7 +372,18 @@ namespace Artisan.UI
                 ImGui.InputInt("Debug Value", ref DebugValue);
                 if (ImGui.Button($"Open Recipe"))
                 {
-                    PreCrafting.TaskSelectRecipe(Svc.Data.GetExcelSheet<Recipe>().GetRow((uint)DebugValue));
+                    // DebugValue 是上面那個 InputInt 的內容，也就是純粹的使用者輸入。
+                    // 台服 Recipe 表不連續（0..6407 與 30000..38000 之間是空洞），隨手輸入一個
+                    // 一萬多的數字就會讓裸 GetRow 擲例外；這是在 Draw 裡，Dalamud 攔到後會把
+                    // Artisan 的 Draw 委派設成 null，等於一個除錯按鍵就能關掉整個外掛介面。
+                    if (Svc.Data.GetExcelSheet<Recipe>().TryGetRow((uint)DebugValue, out var debugRecipe))
+                        PreCrafting.TaskSelectRecipe(debugRecipe);
+                    else
+                    {
+                        // 失敗要看得見：不能靜默什麼都不做，否則按了沒反應會被誤讀成功能壞掉。
+                        Notify.Error($"No recipe with row id {DebugValue}");
+                        Svc.Log.Information($"[Artisan] Debug「Open Recipe」：Recipe 資料表沒有列 {DebugValue}。");
+                    }
                 }
 
                 ImGui.Text($"Item Count? {CraftingListUI.NumberOfIngredient((uint)DebugValue)}");

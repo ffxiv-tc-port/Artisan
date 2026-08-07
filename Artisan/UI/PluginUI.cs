@@ -614,10 +614,22 @@ namespace Artisan.UI
 
                 if (ImGuiEx.ButtonCtrl("Reset Cosmic Exploration Crafting Configs".Loc()))
                 {
+                    // c.Key 是使用者設定檔裡累積下來的配方 ID，不保證還存在於本地資料表：
+                    // 台服的 Recipe 表不連續（0..6407 與 30000..38000 之間有一段兩萬多的空洞），
+                    // 裸 GetRow 命中空洞就擲例外。這段在 Draw 裡，Dalamud 攔到之後會把 Artisan
+                    // 的 Draw 委派設成 null，整個外掛介面到重開遊戲前都不會再出現。
+                    // 查不到的項目「保留而不刪」：這裡是「重設宇宙探索設定」，把一筆讀不到的
+                    // 設定當成宇宙配方刪掉是猜測，留著並記一筆 Information 讓它可被回報。
+                    var recipeSheet = Svc.Data.GetExcelSheet<Recipe>();
                     var copy = P.Config.RecipeConfigs;
                     foreach (var c in copy)
                     {
-                        if (Svc.Data.GetExcelSheet<Recipe>().GetRow(c.Key).Number == 0)
+                        if (!recipeSheet.TryGetRow(c.Key, out var recipeRow))
+                        {
+                            Svc.Log.Information($"[Artisan] 設定檔中的配方 ID {c.Key} 不存在於本地 Recipe 資料表，重設宇宙探索設定時略過該筆。");
+                            continue;
+                        }
+                        if (recipeRow.Number == 0)
                             P.Config.RecipeConfigs.Remove(c.Key);
                     }
                 }

@@ -674,7 +674,7 @@ public static unsafe class Crafting
             LogDetourException("CraftingEventHandlerUpdate", ex);
         }
 
-        _craftingEventHandlerUpdateHook.Original(self, a2, a3, payload);
+        _craftingEventHandlerUpdateHook.OriginalDisposeSafe(self, a2, a3, payload);
         Svc.Log.Verbose("CEH hook exit");
     }
 

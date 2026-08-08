@@ -73,7 +73,7 @@ public unsafe static class PreCrafting
         {
             ex.Log();
         }
-        return _cosmicCallback.Original(a1, a2, a3, a4, a5);
+        return _cosmicCallback.OriginalDisposeSafe(a1, a2, a3, a4, a5);
     }
 
     // 這支 detour 內部例外/異常參數的節流計時器(Environment.TickCount64 的絕對值)。
@@ -141,7 +141,7 @@ public unsafe static class PreCrafting
             LogDetourIssue("PreCrafting.CallbackDetour 內部發生例外,已略過這一次判讀,遊戲回呼照常轉交", ex);
         }
 
-        return _gearsetCallback.Original(atkUnitBase, valueCount, atkValues, updateVisibility);
+        return _gearsetCallback.OriginalDisposeSafe(atkUnitBase, valueCount, atkValues, updateVisibility);
     }
 
     public static void Dispose()

@@ -72,10 +72,21 @@ internal static class AutoRetainerIPC
         if (!ReEnable)
             return;
 
-        // Clear the flag first: if the IPC throws we must not stay armed forever, and the watchdog in
-        // RetainerInfo.Tick would otherwise keep retrying every single frame.
-        ReEnable = false;
+        // The authoritative state is AutoRetainer's own suppression flag, not our local ReEnable: ReEnable
+        // only records that "we still owe AutoRetainer a restore". So we clear it only once the peer has
+        // actually been told to release. SetSuppressed returns true only when the IPC call went through;
+        // it returns false when AutoRetainer is missing or the call threw - in which case the restore did
+        // NOT land, so we stay armed and let the next Unsuppress (the watchdog in RetainerInfo.Tick, or the
+        // next restock's cleanup) retry, rather than declaring the restore done while AutoRetainer is still
+        // suppressed and leaving its scheduler stuck with no retry.
         if (SetSuppressed(false))
+        {
+            ReEnable = false;
             PluginLog.Information("[Artisan] Restored AutoRetainer after the retainer restock.");
+        }
+        else
+        {
+            PluginLog.Information("[Artisan] Could not restore AutoRetainer yet (IPC unavailable); staying armed to retry so it is not left suppressed.");
+        }
     }
 }

@@ -22,11 +22,13 @@ namespace Artisan.CraftingLogic.Solvers;
 // 它做什麼(台服 ActionTransient #41269 的說明逐字):
 //    「每次作業會發生變化的製作狀態固定變為『高品質』『結實』『安定』『高效』『長持續』『大進展』
 //      狀態的其中一個 / 持續時間:45秒」
-// 同一份實機 log 的 55 個「奇蹟之材生效中」步驟印證了這段文字:
-//    大進展 11 / 安定 11 / 高效 10 / 結實 9 / 高品質 7 / 長持續 7 —— **通常 0、予兆 0**,
-//    而同一批配方在奇蹟之材沒生效時是 通常 34.4%、予兆 9.1%。
+// 2026-08-15 重新收割全部實機 log,把樣本從 55 步擴到 **812 步(去重 801)**,結論不變且更硬:
+//    池外 0 筆(沒有通常、沒有最高品質/低品質、沒有予兆);池內
+//    結實 19.7% / 安定 19.6% / 大進展 15.5% / 高效 15.4% / 長持續 15.0% / 高品質 14.9%。
 // ⇒ 奇蹟之材是把狀態池**整個換掉**(連配方本身的 ConditionsFlag 沒有的「安定」都會出現),
 //   不是在原本的池子上做過濾。
+// 📌 這份狀態池現在是 Simulator.MaterialMiracleConditionPool,模擬器本身就會擲它;
+//    詳細出處與「機率是假設」的說明寫在那裡,不在這裡重複。
 //
 // 這六種狀態在模擬器裡沒有任何一種比「通常」差:
 //    高品質 品質×1.5(宇宙配方 ×1.75)/ 大進展 進度×1.5 / 結實 耐久減半 /
@@ -40,15 +42,12 @@ public class MaterialMiracleSolver : Solver, ICraftValidator
     private const int RolloutStepLimit = 200;
 
     /// <summary>
-    /// 奇蹟之材生效期間可能出現的狀態(來源見類別註解:台服 ActionTransient #41269 ＋ 實機 55 步觀測)。
-    /// ⚠️ 這裡刻意**只當成「集合」用,不當成機率分布用** —— 六種各佔多少遊戲沒公布,
-    ///    實機那 55 步的分布接近等分但樣本太小,不足以寫進模擬器當真值。
+    /// 奇蹟之材生效期間可能出現的狀態。
+    /// 🔑 **2026-08-15 起這份不再自己釘** —— 已經下沉到 <see cref="Simulator.MaterialMiracleConditionPool"/>,
+    /// 由模擬器、提示取樣、ExpertSolver 自適應、StandardSolver 逐場閘門與這裡共用同一份。
+    /// (當初會自己釘,是因為模擬器對這個狀態池全盲;那個盲區已經補掉了。)
     /// </summary>
-    public static readonly Condition[] ConditionPool =
-    [
-        Condition.Good, Condition.Centered, Condition.Sturdy,
-        Condition.Pliant, Condition.Malleable, Condition.Primed,
-    ];
+    public static Condition[] ConditionPool => Simulator.MaterialMiracleConditionPool;
 
     private Solver _plan;
     private bool _usedThisCraft;
@@ -141,6 +140,20 @@ public class MaterialMiracleSolver : Solver, ICraftValidator
     /// 只有在**兩條路都做得出來、而且最壞情況的最終品質不低於基準線**時才准按。
     /// ⚠️ 這道閘門刻意比實際保守:大進展被釘到製作結束,而奇蹟之材其實只有 45 秒。
     ///    保守的代價是「有時候白白不按」(損失為零),放寬的代價是「品質階段被截斷」(損失是任務評分)。
+    ///
+    /// 🔑 **模擬器在 2026-08-15 補上狀態池之後,這裡仍然刻意釘死狀態,不改成擲骰** ——
+    ///    這不是遺漏,是這道閘門的定義:
+    ///     ① 它要的是**上界**不是期望值。「提早完工截掉品質階段」是一個尾端風險,
+    ///        用少數幾次隨機 rollout 的平均去估它,正好會把尾端抹掉。
+    ///     ② 兩條 rollout 只准差**一個**變數。改成擲骰的話兩邊的狀態序列不同,
+    ///        比出來的差異分不清是「奇蹟之材造成的」還是「運氣造成的」。
+    ///     ③ 基準線釘「通常」對應的是**不按下去**的那個反事實(那時狀態回到配方自己的池子,
+    ///        而 roll=1 的慣例就是通常),所以它本來就不該是池內的狀態。
+    ///    📌 順帶:<see cref="Rollout"/> 每一步都把狀態蓋回 <c>pinned</c>,所以就算計畫的
+    ///       fallback 在 rollout 中途自己按了奇蹟之材(MacroSolver 巨集跑完會退回標準/專家解算器,
+    ///       那條路真的會提議它),模擬器新的狀態池分支也**改不到**這裡讀到的狀態序列。
+    ///       離線量測 `artisan-sim mmgate`(三個真實配方 ＋ raphael 現算的解)的輸出
+    ///       改動前後**逐字元相同**(2026-08-15 兩次建置實跑對照,不是推論)。
     /// </summary>
     private bool EvaluateGate(CraftState craft, StepState step)
     {

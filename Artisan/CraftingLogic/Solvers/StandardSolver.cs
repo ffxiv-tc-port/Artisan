@@ -131,7 +131,13 @@ namespace Artisan.CraftingLogic.Solvers
         /// **做不出來給 0 分**是關鍵 —— 素材做爛的代價遠大於少幾個品質點。
         /// 兩條路用同一組亂數(common random numbers)⇒ 比的是策略差異不是運氣差異;
         /// 種子只由局面決定 ⇒ 同一個局面永遠得到同一個答案,不會每幀跳來跳去。
-        /// 平手時維持代打(＝改動前的行為)。
+        ///
+        /// 🔴 **平手不代打**(要嚴格更好才換手)。平手代表「兩條路的期望收穫一樣」,而代打不是零成本的:
+        /// 它把一場製作切成兩段由兩個策略各打一半,多出一個交接點。前瞻模擬只有 <see cref="GateRollouts"/> 次,
+        /// 平手時「一樣好」本身也帶著取樣誤差 ⇒ 平手翻成代打等於**只能輸不能贏**。
+        /// 離線量測(2026-08-15,artisan-sim mm88,88 個配方＝11 種形狀):
+        /// 「基準品質已經 100 到頂」的形狀(進度 9504 / 耐久 25)每一場都平手,舊的「平手維持代打」把它
+        /// 從 100.00 打成 99.33 —— 沒有任何形狀是靠平手代打賺到的。
         /// </summary>
         private bool ShouldDelegateDuringMiracle(CraftState craft, StepState step)
         {
@@ -142,12 +148,13 @@ namespace Artisan.CraftingLogic.Solvers
                 withDelegate += PolicyValue(craft, step, true, new Random(seed));
                 without += PolicyValue(craft, step, false, new Random(seed));
             }
-            var ok = withDelegate >= without;
+            var ok = withDelegate > without;
             _gateExplanation = ok
                 ? $"第 {step.Index} 步起的奇蹟之材期間交給專家解算器代打:前瞻模擬 {GateRollouts} 次的期望收穫 " +
-                  $"{withDelegate / GateRollouts:F3} ≥ 自己打的 {without / GateRollouts:F3}。"
+                  $"{withDelegate / GateRollouts:F3} > 自己打的 {without / GateRollouts:F3}。"
                 : $"第 {step.Index} 步起的奇蹟之材期間**不**交給專家解算器代打:前瞻模擬 {GateRollouts} 次的期望收穫 " +
-                  $"{withDelegate / GateRollouts:F3} < 自己打的 {without / GateRollouts:F3}(代打會在 buff 結束交還時留下收不回來的進度缺口)。";
+                  $"{withDelegate / GateRollouts:F3} ≤ 自己打的 {without / GateRollouts:F3}(沒有嚴格更好就不換手:" +
+                  $"代打會在 buff 結束交還時留下收不回來的進度缺口,平手時換手只是白白多冒一次交接風險)。";
             return ok;
         }
 

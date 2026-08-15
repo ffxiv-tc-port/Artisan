@@ -292,14 +292,13 @@ public class RecipeConfig
                 if (!P.Config.UseMaterialMiracle)
                 {
                     ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "This mission grants Material Miracle, but it will not be used.".Loc());
-                    // 🔴 這句原本無條件叫使用者「去把開關打開」。對**標準解算器**那是反向建議:
-                    //    2026-08-07 離線量測(9 個宇宙配方 × 每格 1500 次製作,2x2 隔離)顯示打開之後
-                    //    標準解算器的做出來率從 100% 掉到 46.1% —— 因為 buff 期間整場交給專家解算器代打
-                    //    (StandardSolver.cs:160)。專家解算器與 Raphael 解算器沒有這個代價,
-                    //    所以建議必須看這個配方目前指派給誰,不能一律叫人打開。
-                    ImGuiEx.Tooltip(solver.Def is Solvers.StandardSolverDefinition
-                        ? "可在主設定開啟「使用奇蹟之材」。\n⚠️ 但這個配方目前指派給標準解算器 —— 離線量測顯示打開後宇宙配方的做出來率會從 100% 掉到約 46%(buff 期間整場由專家解算器代打)。改指派給專家解算器或 Raphael 解算器就沒有這個代價。"
-                        : "Turn on \"Use Material Miracle when available\" in the main settings to let solvers use it.".Loc());
+                    // 📌 這句原本無條件叫使用者「去把開關打開」;2026-08-07 因為標準解算器打開後
+                    //    做出來率 100%→46.1% 而改成反向警告。**那個代價 2026-08-15 已經修掉**
+                    //    (代打改成逐場過閘門,見 StandardSolver.ShouldDelegateDuringMiracle):
+                    //    在標準解算器真正搆得到的那 88 個非專家宇宙配方上重新量測(19 個抽樣 × 每格 500 次),
+                    //    做出來率 88.8%→94.5%、期望品質 81.4→91.8,且沒有任何一個配方比修改前差。
+                    //    ⇒ 警告已經沒有事實基礎,改回單純的建議。
+                    ImGuiEx.Tooltip("Turn on \"Use Material Miracle when available\" in the main settings to let solvers use it.".Loc());
                 }
                 else if (!Solvers.MaterialMiracleSolver.SolverUsesMaterialMiracle(solver))
                 {

@@ -34,6 +34,24 @@ namespace Artisan.CraftingLogic.Solvers
 
         private Solver? _fallback; //For Material Miracle
 
+        // 這一場製作要不要在奇蹟之材期間交給 ExpertSolver 代打(只算一次,見 ShouldDelegateDuringMiracle)。
+        private bool? _delegateDuringMiracle;
+
+        /// <summary>
+        /// 代打閘門最近一次判定的理由,給**呼叫端**記 log 用(讀走就清掉,一場製作只會印一次)。
+        /// 🔴 這裡刻意不自己呼叫 Svc.Log:同一個解算器也被配方視窗的提示取樣器拿去跑上百次模擬
+        ///    (見 <see cref="SolverHintSampler"/>),在裡面記會把 log 洗掉 —— 與
+        ///    <see cref="MaterialMiracleSolver.LastGateExplanation"/> 同一個理由與同一套接線。
+        /// </summary>
+        public string ConsumeGateExplanation()
+        {
+            var res = _gateExplanation;
+            _gateExplanation = "";
+            return res;
+        }
+
+        private string _gateExplanation = "";
+
         public StandardSolver(bool expert)
         {
             _expert = expert;
@@ -83,6 +101,78 @@ namespace Artisan.CraftingLogic.Solvers
                 rec.Action = Skills.BasicSynthesis;
 
             return rec;
+        }
+
+        private bool DelegateNow(CraftState craft, StepState step)
+        {
+            if (!step.MaterialMiracleActive)
+                return false;
+            _delegateDuringMiracle ??= ShouldDelegateDuringMiracle(craft, step);
+            return _delegateDuringMiracle.Value;
+        }
+
+        // 12 次是量出來的:離線量測(artisan-sim mmdiag,每個配方 500~800 次製作)
+        // 2 次時閘門在部分配方上判錯(整批平均做出來率 83.6%),8 次 94.9%,12 次 97.2%,16 次沒有再更好。
+        // 成本是每場製作一次、約 0.7~1.5 ms(非專家製作,ExpertSolver 的自適應前瞻不會被觸發)。
+        private const int GateRollouts = 12;
+        private const int GateRolloutCap = 150;
+
+        /// <summary>
+        /// 「奇蹟之材生效期間交給專家解算器代打」對**這一場**製作是賺是賠,只在 buff 剛生效時算一次。
+        ///
+        /// 為什麼需要:代打不是換個解算器,是把一場製作**切成兩段**由兩個策略各打一半。
+        /// 專家解算器的打法是「先把品質堆完,進度留到最後收」,而 buff 只有 21 步 ——
+        /// 交還的那一刻常常是「品質很漂亮、進度還差一大截、耐久與 CP 都花光了」,
+        /// 標準解算器接手後收不回來。離線量測(2026-08-15,artisan-sim mmdiag):
+        /// 這件事在不同配方形狀上**兩個方向都有** —— 有的形狀代打後品質 91.3→100.0 且完成率不變,
+        /// 有的形狀完成率 100%→9.5%。所以正解不是「一律代打」也不是「一律不代打」,是逐場判斷。
+        ///
+        /// 評分函式與 <see cref="ExpertSolver"/> 的前瞻模擬刻意用同一個:做得出來 ? 品質達成率 : 0。
+        /// **做不出來給 0 分**是關鍵 —— 素材做爛的代價遠大於少幾個品質點。
+        /// 兩條路用同一組亂數(common random numbers)⇒ 比的是策略差異不是運氣差異;
+        /// 種子只由局面決定 ⇒ 同一個局面永遠得到同一個答案,不會每幀跳來跳去。
+        /// 平手時維持代打(＝改動前的行為)。
+        /// </summary>
+        private bool ShouldDelegateDuringMiracle(CraftState craft, StepState step)
+        {
+            double withDelegate = 0, without = 0;
+            for (var k = 0; k < GateRollouts; ++k)
+            {
+                var seed = unchecked(step.Index * 7919 + k * 104729 + step.Durability * 31 + step.RemainingCP);
+                withDelegate += PolicyValue(craft, step, true, new Random(seed));
+                without += PolicyValue(craft, step, false, new Random(seed));
+            }
+            var ok = withDelegate >= without;
+            _gateExplanation = ok
+                ? $"第 {step.Index} 步起的奇蹟之材期間交給專家解算器代打:前瞻模擬 {GateRollouts} 次的期望收穫 " +
+                  $"{withDelegate / GateRollouts:F3} ≥ 自己打的 {without / GateRollouts:F3}。"
+                : $"第 {step.Index} 步起的奇蹟之材期間**不**交給專家解算器代打:前瞻模擬 {GateRollouts} 次的期望收穫 " +
+                  $"{withDelegate / GateRollouts:F3} < 自己打的 {without / GateRollouts:F3}(代打會在 buff 結束交還時留下收不回來的進度缺口)。";
+            return ok;
+        }
+
+        /// 用指定的代打政策把剩下的製作跑完,回傳「做得出來 ? 品質達成率(0~1) : 0」。
+        private double PolicyValue(CraftState craft, StepState step, bool delegateDuringMiracle, Random rng)
+        {
+            // 🔴 一定要先把政策釘進複製品,否則 Solve 又會走進這道閘門 → 無窮遞迴。
+            var probe = (StandardSolver)Clone();
+            probe._delegateDuringMiracle = delegateDuringMiracle;
+            var cur = step;
+            for (var guard = 0; Simulator.Status(craft, cur) == Simulator.CraftStatus.InProgress; ++guard)
+            {
+                if (guard >= GateRolloutCap)
+                    return 0; // 沒收斂:當成做不出來,不要把遊戲執行緒吊死
+                var action = probe.Solve(craft, cur).Action;
+                if (action == Skills.None)
+                    return 0;
+                var (res, next) = Simulator.Execute(craft, cur, action, rng.NextSingle(), rng.NextSingle());
+                if (res == Simulator.ExecuteResult.CantUse)
+                    return 0;
+                cur = next;
+            }
+            if (cur.Progress < craft.CraftProgress || craft.CraftQualityMax <= 0)
+                return 0;
+            return Math.Min(1.0, (double)cur.Quality / craft.CraftQualityMax);
         }
 
         private static bool InTouchRotation(CraftState craft, StepState step)
@@ -157,7 +247,7 @@ namespace Artisan.CraftingLogic.Solvers
             _venereationUsed |= step.PrevComboAction == Skills.Veneration;
             _materialMiracleUsed |= step.PrevComboAction == Skills.MaterialMiracle && !P.Config.MaterialMiracleMulti;
 
-            if (step.MaterialMiracleActive)
+            if (DelegateNow(craft, step))
                 return fallbackRec;
 
             if (P.Config.UseMaterialMiracle && !_materialMiracleUsed && Simulator.CanUseAction(craft, step, Skills.MaterialMiracle))

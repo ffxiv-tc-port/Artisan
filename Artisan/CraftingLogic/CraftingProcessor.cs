@@ -191,6 +191,11 @@ public static class CraftingProcessor
             Svc.Log.Warning($"Previous action was different from recommendation: recommended {_nextRec.Action}, used {step.PrevComboAction}");
 
         _nextRec = _activeSolver.Solve(craft, step);
+        // 標準解算器的「奇蹟之材期間要不要交給專家解算器代打」閘門是在製作**中途**(buff 生效那一步)
+        // 才跑的,所以不能像 MaterialMiracleSolver 那樣只在 OnCraftStarted 讀一次。
+        // 讀走即清 ⇒ 一場製作只會印一行。Information 級是刻意的:使用者跑 LogLevel 2。
+        if (_activeSolver is Solvers.StandardSolver stdSolver && stdSolver.ConsumeGateExplanation() is { Length: > 0 } stdWhy)
+            Svc.Log.Information($"[MaterialMiracle] {stdWhy}");
         Svc.Log.Debug($"Next rec is: {_nextRec.Action}");
         if (Simulator.CannotUseAction(craft, step, _nextRec.Action, out string reason))
             DuoLog.Error($"Unable to use {_nextRec.Action.NameOfAction()}: {reason}");

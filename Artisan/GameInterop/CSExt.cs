@@ -140,7 +140,19 @@ public unsafe struct CraftingEventHandler
     [FieldOffset(0x465)] public byte QuickSynthCur;
     [FieldOffset(0x467)] public byte ConditionPlus1; // Condition enum + 1
 
-    public static CraftingEventHandler* Instance() => (CraftingEventHandler*)EventFramework.Instance()->GetEventHandlerById(0x000A0001);
+    /// <summary>目前的製作事件處理器。<b>會回 null</b>,呼叫端必須自己判。</summary>
+    /// <remarks>
+    /// EventFramework.Instance() 的宣告是 [StaticAddress(..., isPointer: true)] —— 讀的是一個
+    /// **指標變數**,遊戲還沒把事件框架建起來時它就是 null。原本這一行直接解參考它,
+    /// 而 AVE 是 corrupted-state exception,try/catch 攔不到。
+    /// (沒在製作時 GetEventHandlerById 本來就會回 null,所以「回 null」不是新的語意。)
+    /// </remarks>
+    public static CraftingEventHandler* Instance()
+    {
+        var eventFramework = EventFramework.Instance();
+        if (eventFramework == null) return null;
+        return (CraftingEventHandler*)eventFramework->GetEventHandlerById(0x000A0001);
+    }
 
     public enum OperationId
     {

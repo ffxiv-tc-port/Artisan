@@ -109,10 +109,10 @@ namespace Artisan.CraftingLists
                 else
                 {
                     if (!RetainerInfo.AToolsInstalled)
-                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, $"Please install Allagan Tools for retainer features.");
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, "Please install Allagan Tools for retainer features.".Loc());
 
                     if (RetainerInfo.AToolsInstalled && !RetainerInfo.AToolsEnabled)
-                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, $"Please enable Allagan Tools for retainer features.");
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, "Please enable Allagan Tools for retainer features.".Loc());
                 }
 
 

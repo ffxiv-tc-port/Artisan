@@ -1,4 +1,5 @@
-﻿using Artisan.GameInterop;
+﻿using Artisan.Autocraft;
+using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.UI;
 using Dalamud.Interface.Colors;
@@ -129,101 +130,200 @@ namespace Artisan.CraftingLogic.Solvers
                 Svc.Log.Information(process.StartInfo.Arguments);
 
                 var cts = new CancellationTokenSource();
-                cts.Token.Register(() => { process.Kill(); Tasks.Remove(key, out var _); });
+                // 🔴 取消回呼跑在 CancelAfter 的計時器執行緒(或任何呼叫 Cancel() 的執行緒)上,而
+                //    CancellationTokenSource.Cancel() 會把回呼丟出來的例外包成 AggregateException 往上拋;
+                //    CancelAfter 內部的計時器回呼只攔 ObjectDisposedException,其餘的就直接變成
+                //    執行緒集區的未處理例外。process.Kill() 在「行程根本沒啟動成功」時會丟
+                //    InvalidOperationException,所以這個清理回呼必須自己攔下例外,而且 Tasks 的移除
+                //    要放進 finally 才保證跑得到 —— key 沒被移掉的話 InProgressAny() 就永遠是 true。
+                cts.Token.Register(() =>
+                {
+                    try
+                    {
+                        process.Kill();
+                    }
+                    catch (Exception ex)
+                    {
+                        Svc.Log.Information($"Raphael: 取消時終止 raphael-cli 失敗(多半代表它已經自己結束了):{ex.Message}");
+                    }
+                    finally
+                    {
+                        Tasks.TryRemove(key, out _);
+                    }
+                });
                 cts.CancelAfter(TimeSpan.FromMinutes(P.Config.RaphaelSolverConfig.TimeOutMins));
 
-                var task = Task.Run(() =>
+                // 🔴 這個工作必須「先登記進 Tasks,再開始跑」。原本是 Task.Run(...) 之後才 TryAdd:
+                //    快速失敗的路徑(raphael-cli 一啟動就非零離開)可以在 TryAdd 之前就把 key 移掉,
+                //    接著 TryAdd 又把它加回去,而 cts 已經取消不會再觸發清理 ⇒ key 永遠留在 Tasks 裡,
+                //    InProgressAny() 永遠是 true,Operations.RepeatActualCraft() 從此被擋死。
+                var task = new Task(() =>
                 {
-                    process.Start();
-                    var output = process.StandardOutput.ReadToEnd();
-                    var error = process.StandardError.ReadToEnd().Trim();
-                    if (process.ExitCode != 0)
+                    try
                     {
-                        DuoLog.Error(error.Split('\r', '\n')[1]);
-                        cts.Cancel();
-                        return;
-                    }
-                    var rng = new Random();
-                    var ID = rng.Next(50001, 10000000);
-                    while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
-                        ID = rng.Next(50001, 10000000);
-
-                    var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
-                    P.Config.RaphaelSolverCacheV3[key] = new MacroSolverSettings.Macro()
-                    {
-                        ID = ID,
-                        Name = key,
-                        Steps = MacroUI.ParseMacro(cleansedOutput),
-                        Options = new()
+                        process.Start();
+                        var output = process.StandardOutput.ReadToEnd();
+                        var error = process.StandardError.ReadToEnd().Trim();
+                        if (process.ExitCode != 0)
                         {
-                            SkipQualityIfMet = false,
-                            // 🔴 這兩個維持 false 是刻意的,2026-08-06 用離線量測台實測過(每格 3000 次製作,
-                            //    台服 rlvl740 一般配方 #36073 / #36062,三種能力值檔位):
-                            //      打開 Upgrade → 做出來率 100% 掉到 58~85%,期望品質 96.6 掉到 56.1
-                            //    原因是 Raphael 的解把 CP 與耐久算得剛剛好,把某一步換成
-                            //    集中加工/集中製作會改變消耗,整份計畫的預算就崩了。
-                            //    要在好/高品質狀態撿便宜,正確做法是 OpportunisticSolver ——
-                            //    它會先模擬「偏離之後剩下整段還跑不跑得完」再決定,實測 +0.5~2.8 期望品質、
-                            //    做出來率完全不變(100% → 100%)。
-                            UpgradeProgressActions = false,
-                            UpgradeQualityActions = false,
-                            MinCP = craft.StatCP,
-                            MinControl = craft.StatControl,
-                            MinCraftsmanship = craft.StatCraftsmanship,
+                            DuoLog.Error(DescribeCliFailure(error, process.ExitCode));
+                            cts.Cancel();
+                            AbortWaitingAutomation();
+                            return;
                         }
-                    };
+                        var rng = new Random();
+                        var ID = rng.Next(50001, 10000000);
+                        while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
+                            ID = rng.Next(50001, 10000000);
 
-                    cts.Token.ThrowIfCancellationRequested();
-                    if (P.Config.RaphaelSolverCacheV3[key] == null || P.Config.RaphaelSolverCacheV3[key].Steps.Count == 0)
-                    {
-                        Svc.Log.Error($"Raphael failed to generate a valid macro. This could be one of the following reasons:" +
-                            $"\n- If you are not running Windows, Raphael may not be compatible with your OS." +
-                            $"\n- You cancelled the generation." +
-                            $"\n- Raphael just gave up after not finding a result.{(P.Config.RaphaelSolverConfig.AutoGenerate ? "\nAutomatic generation will be disabled as a result." : "")}");
-                        P.Config.RaphaelSolverConfig.AutoGenerate = false;
-                        cts.Cancel();
-                        return;
-                    }
-
-
-                    if (P.Config.RaphaelSolverConfig.AutoSwitch)
-                    {
-                        if (!P.Config.RaphaelSolverConfig.AutoSwitchOnAll)
+                        var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
+                        P.Config.RaphaelSolverCacheV3[key] = new MacroSolverSettings.Macro()
                         {
-                            Svc.Log.Debug("Switching to Raphael solver");
-                            var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
-                            if (opt is not null)
+                            ID = ID,
+                            Name = key,
+                            Steps = MacroUI.ParseMacro(cleansedOutput),
+                            Options = new()
                             {
-                                var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
-                                config.SolverType = opt?.Def.GetType().FullName!;
-                                config.SolverFlavour = (int)(opt?.Flavour);
-                                P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
+                                SkipQualityIfMet = false,
+                                // 🔴 這兩個維持 false 是刻意的,2026-08-06 用離線量測台實測過(每格 3000 次製作,
+                                //    台服 rlvl740 一般配方 #36073 / #36062,三種能力值檔位):
+                                //      打開 Upgrade → 做出來率 100% 掉到 58~85%,期望品質 96.6 掉到 56.1
+                                //    原因是 Raphael 的解把 CP 與耐久算得剛剛好,把某一步換成
+                                //    集中加工/集中製作會改變消耗,整份計畫的預算就崩了。
+                                //    要在好/高品質狀態撿便宜,正確做法是 OpportunisticSolver ——
+                                //    它會先模擬「偏離之後剩下整段還跑不跑得完」再決定,實測 +0.5~2.8 期望品質、
+                                //    做出來率完全不變(100% → 100%)。
+                                UpgradeProgressActions = false,
+                                UpgradeQualityActions = false,
+                                MinCP = craft.StatCP,
+                                MinControl = craft.StatControl,
+                                MinCraftsmanship = craft.StatCraftsmanship,
                             }
-                        }
-                        else
+                        };
+
+                        cts.Token.ThrowIfCancellationRequested();
+                        if (P.Config.RaphaelSolverCacheV3[key] == null || P.Config.RaphaelSolverCacheV3[key].Steps.Count == 0)
                         {
-                            var crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId).ToList();
-                            Svc.Log.Debug($"Applying solver to {crafts.Count()} recipes.");
-                            var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
-                            if (opt is not null)
+                            Svc.Log.Error($"Raphael failed to generate a valid macro. This could be one of the following reasons:" +
+                                $"\n- If you are not running Windows, Raphael may not be compatible with your OS." +
+                                $"\n- You cancelled the generation." +
+                                $"\n- Raphael just gave up after not finding a result.{(P.Config.RaphaelSolverConfig.AutoGenerate ? "\nAutomatic generation will be disabled as a result." : "")}");
+                            P.Config.RaphaelSolverConfig.AutoGenerate = false;
+                            cts.Cancel();
+                            AbortWaitingAutomation();
+                            return;
+                        }
+
+
+                        if (P.Config.RaphaelSolverConfig.AutoSwitch)
+                        {
+                            if (!P.Config.RaphaelSolverConfig.AutoSwitchOnAll)
                             {
-                                var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
-                                config.SolverType = opt?.Def.GetType().FullName!;
-                                config.SolverFlavour = (int)(opt?.Flavour);
-                                foreach (var c in crafts)
+                                Svc.Log.Debug("Switching to Raphael solver");
+                                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
+                                if (opt is not null)
                                 {
-                                    Svc.Log.Debug($"Switching {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) to Raphael solver");
-                                    P.Config.RecipeConfigs[c.Recipe.RowId] = config;
+                                    var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
+                                    config.SolverType = opt?.Def.GetType().FullName!;
+                                    config.SolverFlavour = (int)(opt?.Flavour);
+                                    P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
+                                }
+                            }
+                            else
+                            {
+                                var crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId).ToList();
+                                Svc.Log.Debug($"Applying solver to {crafts.Count()} recipes.");
+                                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
+                                if (opt is not null)
+                                {
+                                    var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
+                                    config.SolverType = opt?.Def.GetType().FullName!;
+                                    config.SolverFlavour = (int)(opt?.Flavour);
+                                    foreach (var c in crafts)
+                                    {
+                                        Svc.Log.Debug($"Switching {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) to Raphael solver");
+                                        P.Config.RecipeConfigs[c.Recipe.RowId] = config;
+                                    }
                                 }
                             }
                         }
+                        P.Config.Save();
                     }
-                    P.Config.Save();
-                    Tasks.Remove(key, out var _);
-                }, cts.Token);
+                    catch (OperationCanceledException)
+                    {
+                        // 使用者按了取消、或逾時到了,不是故障 —— 清理照做,但不必再吵一次。
+                        Svc.Log.Information($"Raphael 解算已取消:{key}");
+                    }
+                    catch (Exception ex)
+                    {
+                        // 🔴 例外從這裡逃出去 ＝ 後面的清理整段跳過,而且 Task 的例外沒有人觀察,
+                        //    使用者唯一看得到的現象是「Artisan 從此不再開工」而且一句話都沒有。
+                        Svc.Log.Error(ex, "Raphael solution generation threw");
+                        DuoLog.Error("Raphael solution generation failed: ??".Loc(ex.Message));
+                        AbortWaitingAutomation();
+                    }
+                    finally
+                    {
+                        // 不論成功、失敗還是取消,這個 key 一定要離開 Tasks。
+                        Tasks.TryRemove(key, out _);
+                    }
+                }, cts.Token, TaskCreationOptions.DenyChildAttach);
 
                 Tasks.TryAdd(key, new(cts, task));
+                try
+                {
+                    task.Start(TaskScheduler.Default);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    // 登記與啟動之間 cts 就被取消掉的極端情況:工作已經是完成狀態,Start() 會丟例外。
+                    Svc.Log.Information($"Raphael 解算工作在啟動前就被取消:{ex.Message}");
+                    Tasks.TryRemove(key, out _);
+                }
             }
+        }
+
+        /// <summary>
+        /// raphael-cli 失敗時 stderr 不保證有兩行:它可能一個字都沒印,也可能只印一行。
+        /// 舊碼固定取 Split(...)[1],那兩種情況都會丟 IndexOutOfRangeException,而那個例外會從
+        /// 解算工作裡逃出去、把後面的清理整段跳過,於是 Tasks 裡的 key 永遠移不掉、
+        /// InProgressAny() 永遠是 true,製作就靜默凍結在那裡。
+        /// </summary>
+        private static string DescribeCliFailure(string error, int exitCode)
+        {
+            // 取第 2 行是刻意的:raphael-cli 的第 1 行通常是 "error: ..." 這種標題,真正的說明在下一行。
+            // 有第 2 行就照舊,只有一行就用那一行,完全沒輸出至少把離開碼講出來。
+            var lines = error.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length > 1)
+                return lines[1];
+            if (lines.Length == 1)
+                return lines[0];
+            return "raphael-cli exited with code ?? without printing an error message.".Loc(exitCode);
+        }
+
+        /// <summary>
+        /// 解算失敗時的收尾。耐力模式在等 Raphael 的期間,Operations.RepeatActualCraft() 被
+        /// InProgressAny() 擋著;而 Endurance 那個「連續五次開不了工就停機並說明原因」的退避,
+        /// 本身也寫在 if (!RaphaelCache.InProgressAny()) 裡面 —— 兩邊被同一個條件同時關掉,
+        /// 所以解算一旦失敗又沒有人把耐力模式關掉,呼叫端只會看到 Artisan 一直「忙」而永遠不動。
+        /// 這裡主動把耐力模式關掉,讓呼叫端自己的守衛(例如 ICE 的 CraftProgressGuard,它是在
+        /// 「Artisan 不忙了」時才會去檢查有沒有進展)看得到狀態改變而接手處理。
+        /// </summary>
+        private static void AbortWaitingAutomation()
+        {
+            if (!Endurance.Enable)
+                return;
+
+            // 這裡是解算工作的背景執行緒,而 ToggleEndurance 會動到 PreCrafting.Tasks 這種
+            // 只有框架執行緒該碰的狀態,所以排回框架執行緒再做。
+            Svc.Framework?.RunOnFrameworkThread(() =>
+            {
+                if (!Endurance.Enable)
+                    return;
+
+                DuoLog.Error("Raphael was unable to produce a solution - Endurance has been stopped.".Loc());
+                Endurance.ToggleEndurance(false);
+            });
         }
 
         public static string GetKey(CraftState craft)

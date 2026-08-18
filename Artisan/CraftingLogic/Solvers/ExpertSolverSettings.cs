@@ -88,10 +88,10 @@ public class ExpertSolverSettings
             changed |= ImGui.Checkbox("If at last step of ?? and not ?? ??, use ?? (forcing via ?? if necessary)".Loc(Skills.MuscleMemory.NameOfAction(), Condition.Centered.ToLocalizedString(), ConditionString, Skills.IntensiveSynthesis.NameOfAction(), Skills.HeartAndSoul.NameOfAction()), ref MuMeIntensiveLastResort);
             changed |= ImGui.Checkbox("Use ?? on ?? ??, if ?? is already active".Loc(Skills.Manipulation.NameOfAction(), Condition.Primed.ToLocalizedString(), ConditionString, Skills.Veneration.NameOfAction()), ref MuMePrimedManip);
             changed |= ImGui.Checkbox("?? during unfavourable ?? instead of spending ?? on ??".Loc(Skills.Observe.NameOfAction(), ConditionString, DurabilityString, Skills.RapidSynthesis.NameOfAction()), ref MuMeAllowObserve);
-            ImGui.Text("Allow ?? only if more than this amount of steps remain on ??".Loc(Skills.Manipulation.NameOfAction(), Skills.MuscleMemory.NameOfAction()));
+            ImGui.Text(SharedText.AllowOnlyIfStepsRemain.Loc(Skills.Manipulation.NameOfAction(), Skills.MuscleMemory.NameOfAction()));
             ImGui.PushItemWidth(250);
             changed |= ImGui.SliderInt("###MumeMinStepsForManip", ref MuMeMinStepsForManip, 0, 5);
-            ImGui.Text("Allow ?? only if more than this amount of steps remain on ??".Loc(Skills.Veneration.NameOfAction(), Skills.MuscleMemory.NameOfAction()));
+            ImGui.Text(SharedText.AllowOnlyIfStepsRemain.Loc(Skills.Veneration.NameOfAction(), Skills.MuscleMemory.NameOfAction()));
             ImGui.PushItemWidth(250);
             changed |= ImGui.SliderInt("###MuMeMinStepsForVene", ref MuMeMinStepsForVene, 0, 5);
         }

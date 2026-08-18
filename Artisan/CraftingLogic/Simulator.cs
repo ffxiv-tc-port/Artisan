@@ -502,10 +502,10 @@ public static class Simulator
             {
                 Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade => "Condition is not Good/Excellent or Heart and Soul is not active".Loc(),
                 Skills.PrudentSynthesis or Skills.PrudentTouch => "You have a Waste Not buff".Loc(),
-                Skills.MuscleMemory or Skills.Reflect => "You are not on the first step of the craft".Loc(),
+                Skills.MuscleMemory or Skills.Reflect => SharedText.NotOnFirstStep.Loc(),
                 Skills.TrainedFinesse => "You have less than 10 Inner Quiet stacks".Loc(),
                 Skills.ByregotsBlessing => "You have 0 Inner Quiet stacks".Loc(),
-                Skills.TrainedEye => craft.CraftExpert ? "Craft is expert".Loc() : step.Index != 1 ? "You are not on the first step of the craft".Loc() : "Craft is not 10 or more levels lower than your current level".Loc(),
+                Skills.TrainedEye => craft.CraftExpert ? "Craft is expert".Loc() : step.Index != 1 ? SharedText.NotOnFirstStep.Loc() : "Craft is not 10 or more levels lower than your current level".Loc(),
                 Skills.Manipulation => "You haven't unlocked Manipulation".Loc(),
                 Skills.CarefulObservation => craft.Specialist ? Crafting.DelineationCount() == 0 ? "You have run out of Delineations.".Loc() : "You already used Careful Observation 3 times".Loc() : "You are not a specialist".Loc(),
                 Skills.HeartAndSoul => craft.Specialist ? Crafting.DelineationCount() == 0 ? "You have run out of Delineations.".Loc() : "You don't have Heart & Soul available anymore for this craft".Loc() : "You are not a specialist".Loc(),

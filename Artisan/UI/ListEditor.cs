@@ -1394,10 +1394,10 @@ internal class ListEditor : Window, IDisposable
         {
             ImGui.EndDisabled();
 
-            ImGuiComponents.HelpMarker("This character has not unlocked materia extraction. This setting will be ignored.".Loc());
+            ImGuiComponents.HelpMarker(SharedText.MateriaExtractionNotUnlocked.Loc());
         }
         else
-            ImGuiComponents.HelpMarker("Will automatically extract materia from any equipped gear once it's spiritbond is 100%".Loc());
+            ImGuiComponents.HelpMarker(SharedText.AutoMateriaExtractionHelp.Loc());
 
         var repair = SelectedList.Repair;
         if (ImGui.Checkbox("Automatic Repairs".Loc(), ref repair))
@@ -1406,7 +1406,7 @@ internal class ListEditor : Window, IDisposable
             P.Config.Save();
         }
 
-        ImGuiComponents.HelpMarker("If enabled, Artisan will automatically repair your gear when any piece reaches the configured repair threshold.\n\nCurrent min gear condition is ??% and cost to repair at a vendor is ?? gil.\n\nIf unable to repair with Dark Matter, will try for a nearby repair NPC.".Loc(RepairManager.GetMinEquippedPercent(), RepairManager.GetNPCRepairPrice()));
+        ImGuiComponents.HelpMarker(SharedText.AutoRepairHelp.Loc(RepairManager.GetMinEquippedPercent(), RepairManager.GetNPCRepairPrice()));
 
         if (SelectedList.Repair)
         {
@@ -1416,7 +1416,7 @@ internal class ListEditor : Window, IDisposable
                 P.Config.Save();
         }
 
-        if (ImGui.Checkbox("Set new items added to list as quick synth".Loc(), ref SelectedList.AddAsQuickSynth))
+        if (ImGui.Checkbox(SharedText.NewItemsAsQuickSynth.Loc(), ref SelectedList.AddAsQuickSynth))
             P.Config.Save();
 
         ImGui.EndChild();
@@ -1651,7 +1651,7 @@ internal class ListEditor : Window, IDisposable
                 ImGuiEx.Tooltip(solverTooltip);
         }
         else
-            ImGuiEx.TextWrapped("Please run this recipe in the simulator for results.".Loc());
+            ImGuiEx.TextWrapped(SharedText.RunInSimulatorForResults.Loc());
     }
 
     private void DrawRecipeSettingsHeader()

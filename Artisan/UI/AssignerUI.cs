@@ -39,7 +39,7 @@ namespace Artisan.UI
         public static void Draw()
         {
             ImGuiEx.TextWrapped("This tab allows you to quickly assign solvers and consumables to recipes based on recipe criteria.".Loc());
-            ImGuiEx.TextWrapped("Job abbreviations: CRP - Carpenter; ARM - Armorer; LTW - Leatherworker; ALC - Alchemist; BSM - Blacksmith; GSM - Goldsmith; WVR - Weaver; CUL - Culinarian.".Loc());
+            ImGuiEx.TextWrapped(SharedText.JobAbbreviations.Loc());
             ImGui.Separator();
             ImGui.Spacing();
             DrawCriteria();

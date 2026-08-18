@@ -145,7 +145,7 @@ namespace Artisan.Autocraft
                 P.Config.Repair = repairs;
                 P.Config.Save();
             }
-            ImGuiComponents.HelpMarker("If enabled, Artisan will automatically repair your gear when any piece reaches the configured repair threshold.\n\nCurrent min gear condition is ??% and cost to repair at a vendor is ?? gil.\n\nIf unable to repair with Dark Matter, will try for a nearby repair NPC.".Loc(RepairManager.GetMinEquippedPercent(), RepairManager.GetNPCRepairPrice()));
+            ImGuiComponents.HelpMarker(SharedText.AutoRepairHelp.Loc(RepairManager.GetMinEquippedPercent(), RepairManager.GetNPCRepairPrice()));
             if (P.Config.Repair)
             {
                 //ImGui.SameLine();
@@ -173,10 +173,10 @@ namespace Artisan.Autocraft
             {
                 ImGui.EndDisabled();
 
-                ImGuiComponents.HelpMarker("This character has not unlocked materia extraction. This setting will be ignored.".Loc());
+                ImGuiComponents.HelpMarker(SharedText.MateriaExtractionNotUnlocked.Loc());
             }
             else
-                ImGuiComponents.HelpMarker("Will automatically extract materia from any equipped gear once it's spiritbond is 100%".Loc());
+                ImGuiComponents.HelpMarker(SharedText.AutoMateriaExtractionHelp.Loc());
 
             ImGui.Checkbox("Craft only X times".Loc(), ref P.Config.CraftingX);
             if (P.Config.CraftingX)
@@ -381,8 +381,8 @@ namespace Artisan.Autocraft
 
                 if (RecipeID == 0)
                 {
-                    Svc.Toasts.ShowError("No recipe has been set for Endurance mode. Disabling Endurance mode.".Loc());
-                    DuoLog.Error("No recipe has been set for Endurance mode. Disabling Endurance mode.".Loc());
+                    Svc.Toasts.ShowError(SharedText.EnduranceNoRecipeSet.Loc());
+                    DuoLog.Error(SharedText.EnduranceNoRecipeSet.Loc());
                     ToggleEndurance(false);
                     return;
                 }
@@ -526,8 +526,8 @@ namespace Artisan.Autocraft
                 Svc.Log.Warning($"Error Warnings [{Errors.Count(x => x > Environment.TickCount64 - 10 * 1000)}]: {message}");
                 if (Errors.Count() >= 5 && Errors.All(x => x > Environment.TickCount64 - 10 * 1000))
                 {
-                    Svc.Toasts.ShowError("Current crafting mode has been ?? due to too many errors in succession.".Loc(Enable ? "disabled".Loc() : "paused".Loc()));
-                    DuoLog.Error("Current crafting mode has been ?? due to too many errors in succession.".Loc(Enable ? "disabled".Loc() : "paused".Loc()));
+                    Svc.Toasts.ShowError(SharedText.CraftingModeChangedTooManyErrors.Loc(Enable ? "disabled".Loc() : "paused".Loc()));
+                    DuoLog.Error(SharedText.CraftingModeChangedTooManyErrors.Loc(Enable ? "disabled".Loc() : "paused".Loc()));
                     if (enable)
                         ToggleEndurance(false);
                     if (CraftingListUI.Processing)

@@ -182,7 +182,7 @@ namespace Artisan
                 DrawCopyOfCraftMenu();
                 if (SimpleTweaks.IsFocusTweakEnabled())
                 {
-                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, "Warning: You have the \"Auto Focus Recipe Search\" SimpleTweak enabled. This is highly incompatible with Artisan and is recommended to disable it.".Loc());
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, SharedText.AutoFocusRecipeSearchWarning.Loc());
                 }
                 if (Endurance.RecipeID != 0)
                 {
@@ -352,7 +352,7 @@ namespace Artisan
                             P.PluginUi.OpenWindow = OpenWindow.Lists;
                         }
                         ImGui.SameLine();
-                        if (ImGui.Button("Create Crafting List (with subcrafts) (Star only)".Loc(), new Vector2(size.X / 2, 0)))
+                        if (ImGui.Button(SharedText.CreateListWithSubcraftsStarOnly.Loc(), new Vector2(size.X / 2, 0)))
                         {
                             CreateGCListAgent(atkUnitBase, true, true);
                             P.PluginUi.IsOpen = true;
@@ -460,7 +460,7 @@ namespace Artisan
                         ImGui.GetIO().FontGlobalScale = 0.80f * scale.X;
                         using (var f = ImRaii.PushFont(ImGui.GetFont()))
                         {
-                            if (ImGui.Button("Create Crafting List (with subcrafts) (Star only)".Loc(), new Vector2(size.X / 2, s.Y)))
+                            if (ImGui.Button(SharedText.CreateListWithSubcraftsStarOnly.Loc(), new Vector2(size.X / 2, s.Y)))
                             {
                                 CreateGCList(atkUnitBase, true, true);
                                 P.PluginUi.IsOpen = true;
@@ -916,7 +916,7 @@ namespace Artisan
 
                 if (SimpleTweaks.IsFocusTweakEnabled())
                 {
-                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, "Warning: You have the \"Auto Focus Recipe Search\" SimpleTweak enabled. This is highly incompatible with Artisan and is recommended to disable it.".Loc());
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, SharedText.AutoFocusRecipeSearchWarning.Loc());
                 }
                 if (Endurance.RecipeID != 0)
                 {

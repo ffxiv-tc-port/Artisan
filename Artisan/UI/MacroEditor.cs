@@ -283,7 +283,7 @@ namespace Artisan.UI
                                         P.Config.Save();
                                     }
 
-                                    ImGuiComponents.HelpMarker("Uses a recommendation from the appropriate default solver, i.e Standard Recipe Solver for regular recipes, Expert Recipe Solver for expert recipes.".Loc());
+                                    ImGuiComponents.HelpMarker(SharedText.MacroDefaultSolverHelp.Loc());
 
                                     if (ImGui.Selectable("Touch Combo".Loc()))
                                     {
@@ -291,7 +291,7 @@ namespace Artisan.UI
                                         P.Config.Save();
                                     }
 
-                                    ImGuiComponents.HelpMarker("This will use the appropriate step of the 3-step touch combo, depending on the last action actually used. Useful if upgrading quality actions or skipping on conditions.".Loc());
+                                    ImGuiComponents.HelpMarker(SharedText.MacroTouchComboHelp.Loc());
 
                                     if (ImGui.Selectable("Touch Combo (Refined Touch Route)".Loc()))
                                     {
@@ -299,7 +299,7 @@ namespace Artisan.UI
                                         P.Config.Save();
                                     }
 
-                                    ImGuiComponents.HelpMarker("Similar to the other touch combo, this will alternate between Basic Touch & Refined Touch depending on the previous action used.".Loc());
+                                    ImGuiComponents.HelpMarker(SharedText.MacroAlternateTouchComboHelp.Loc());
 
                                     ImGui.Separator();
 
@@ -334,7 +334,7 @@ namespace Artisan.UI
                                 P.Config.Save();
                             }
 
-                            ImGuiComponents.HelpMarker("Uses a recommendation from the appropriate default solver, i.e Standard Recipe Solver for regular recipes, Expert Recipe Solver for expert recipes.".Loc());
+                            ImGuiComponents.HelpMarker(SharedText.MacroDefaultSolverHelp.Loc());
 
                             if (ImGui.Selectable("Touch Combo".Loc()))
                             {
@@ -342,7 +342,7 @@ namespace Artisan.UI
                                 P.Config.Save();
                             }
 
-                            ImGuiComponents.HelpMarker("This will use the appropriate step of the 3-step touch combo, depending on the last action actually used. Useful if upgrading quality actions or skipping on conditions.".Loc());
+                            ImGuiComponents.HelpMarker(SharedText.MacroTouchComboHelp.Loc());
 
                             if (ImGui.Selectable("Touch Combo (Refined Touch Route)".Loc()))
                             {
@@ -350,7 +350,7 @@ namespace Artisan.UI
                                 P.Config.Save();
                             }
 
-                            ImGuiComponents.HelpMarker("Similar to the other touch combo, this will alternate between Basic Touch & Refined Touch depending on the previous action used.".Loc());
+                            ImGuiComponents.HelpMarker(SharedText.MacroAlternateTouchComboHelp.Loc());
 
                             ImGui.Separator();
 

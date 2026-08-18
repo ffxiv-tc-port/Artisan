@@ -197,7 +197,7 @@ namespace Artisan.UI
                 }
                 else
                 {
-                    ImGui.Text("Please have a gearset selected from above to use this feature.".Loc());
+                    ImGui.Text(SharedText.GearsetRequiredForFeature.Loc());
                 }
             }
             else
@@ -546,7 +546,7 @@ namespace Artisan.UI
         {
             if (SimGS is null && !CustomStatMode)
             {
-                ImGui.Text("Please have a gearset selected from above to use this feature.".Loc());
+                ImGui.Text(SharedText.GearsetRequiredForFeature.Loc());
                 return;
             }
             DrawSolverCombo();

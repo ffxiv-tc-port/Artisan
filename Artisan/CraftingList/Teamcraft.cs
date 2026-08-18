@@ -88,7 +88,7 @@ namespace Artisan.CraftingLists
                         return;
                     }
                     P.Config.Save();
-                    Notify.Success("Merged clipboard items into the current list.".Loc());
+                    Notify.Success(SharedText.ClipboardMergedIntoList.Loc());
                 });
                 return;
             }
@@ -107,7 +107,7 @@ namespace Artisan.CraftingLists
             }
 
             P.Config.Save();
-            Notify.Success("Merged clipboard items into the current list.".Loc());
+            Notify.Success(SharedText.ClipboardMergedIntoList.Loc());
         }
 
         private static void ExportSelectedListToTC()
@@ -200,13 +200,13 @@ namespace Artisan.CraftingLists
                 if (!P.Config.DefaultListQuickSynth)
                     ImGui.Checkbox("Import as Quick Synth".Loc() + "###ImportQSPre", ref precraftQS);
                 else
-                    ImGui.TextWrapped("These items will try to be added as quick synth due to the default setting being enabled.".Loc());
+                    ImGui.TextWrapped(SharedText.ImportAsQuickSynthNotice.Loc());
                 ImGui.Text("Final Items".Loc());
                 ImGui.InputTextMultiline("###FinalItems", ref importListItems, 5000000, new Vector2(ImGui.GetContentRegionAvail().X, 100));
                 if (!P.Config.DefaultListQuickSynth)
                     ImGui.Checkbox("Import as Quick Synth".Loc() + "###ImportQSFinal", ref finalitemQS);
                 else
-                    ImGui.TextWrapped("These items will try to be added as quick synth due to the default setting being enabled.".Loc());
+                    ImGui.TextWrapped(SharedText.ImportAsQuickSynthNotice.Loc());
 
                 try
                 {
@@ -227,7 +227,7 @@ namespace Artisan.CraftingLists
                                 MergeLinesIntoList(finalText, list, finalQS);
                                 if (list.Recipes.Count == 0)
                                 {
-                                    Notify.Error("The imported list has no items. Please check your import and try again.".Loc());
+                                    Notify.Error(SharedText.ImportedListEmpty.Loc());
                                     return;
                                 }
                                 if (GenericHelpers.IsNullOrEmpty(list.Name))
@@ -260,7 +260,7 @@ namespace Artisan.CraftingLists
                             }
                             else
                             {
-                                Notify.Error("The imported list has no items. Please check your import and try again.".Loc());
+                                Notify.Error(SharedText.ImportedListEmpty.Loc());
                             }
                         }
                     }

@@ -888,7 +888,7 @@ namespace Artisan.UI
                     }
                 }
 
-                if (ImGui.Checkbox("Set new items added to list as quick synth".Loc(), ref P.Config.DefaultListQuickSynth))
+                if (ImGui.Checkbox(SharedText.NewItemsAsQuickSynth.Loc(), ref P.Config.DefaultListQuickSynth))
                 {
                     P.Config.Save();
                 }

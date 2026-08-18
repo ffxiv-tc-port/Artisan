@@ -324,7 +324,7 @@ public class RecipeConfig
                 }
             }
             else
-                ImGuiEx.TextWrapped("Please run this recipe in the simulator for results.".Loc());
+                ImGuiEx.TextWrapped(SharedText.RunInSimulatorForResults.Loc());
 
             // ⚠️ 先把點擊狀態存下來再畫 tooltip —— ImGuiEx.Tooltip 會開一個新視窗,
             //    之後的 IsItemClicked 就不再指向上面那段文字了。

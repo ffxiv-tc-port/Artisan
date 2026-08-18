@@ -19,7 +19,7 @@ namespace Artisan.UI
 
             if (Svc.ClientState.IsLoggedIn && Crafting.CurState is not Crafting.State.IdleNormal and not Crafting.State.IdleBetween)
             {
-                ImGui.Text("Crafting in progress. Macro settings will be unavailable until you stop crafting.".Loc());
+                ImGui.Text(SharedText.CraftingInProgressSettingsLocked.Loc());
                 return;
             }
             ImGui.Spacing();

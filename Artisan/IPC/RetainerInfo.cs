@@ -283,7 +283,7 @@ namespace Artisan.IPC
                     // below - this method is called once per material when a list is restocked, so the old
                     // Where().Select().ToArray()[i] allocated ten arrays per material for no reason.
                     var configuredRetainerIds = P.Config.RetainerIDs
-                        .Where(x => x.Value == Svc.ClientState.LocalContentId)
+                        .Where(x => x.Value == SvcEx.PlayerState.ContentId)
                         .Select(x => x.Key)
                         .ToArray();
 
@@ -310,11 +310,11 @@ namespace Artisan.IPC
 
                         if (retainer is not null)
                         {
-                            if (retainer->RetainerId > 0 && !P.Config.RetainerIDs.Any(x => x.Key == retainer->RetainerId && x.Value == Svc.ClientState.LocalContentId))
+                            if (retainer->RetainerId > 0 && !P.Config.RetainerIDs.Any(x => x.Key == retainer->RetainerId && x.Value == SvcEx.PlayerState.ContentId))
                             {
                                 if (retainer->Available)
                                 {
-                                    P.Config.RetainerIDs.Add(retainer->RetainerId, Svc.ClientState.LocalContentId);
+                                    P.Config.RetainerIDs.Add(retainer->RetainerId, SvcEx.PlayerState.ContentId);
                                     P.Config.Save();
                                 }
                             }
@@ -831,7 +831,7 @@ namespace Artisan.IPC
             {
                 if ((x.ObjectKind == ObjectKind.Housing || x.ObjectKind == ObjectKind.EventObj) && x.Name.ToString().EqualsIgnoreCaseAny(BellName, "リテイナーベル"))
                 {
-                    if (Vector3.Distance(x.Position, Svc.ClientState.LocalPlayer.Position) < GetValidInteractionDistance(x) && x.IsTargetable())
+                    if (Vector3.Distance(x.Position, Svc.Objects.LocalPlayer.Position) < GetValidInteractionDistance(x) && x.IsTargetable())
                     {
                         return x;
                     }

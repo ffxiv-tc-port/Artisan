@@ -187,7 +187,7 @@ internal class ListEditor : Window, IDisposable
 
         Table?.Dispose();
         Table = null;
-        P.UniversalsisClient.PlayerWorld = Svc.ClientState.LocalPlayer?.CurrentWorld.RowId;
+        P.UniversalsisClient.PlayerWorld = Svc.Objects.LocalPlayer?.CurrentWorld.RowId;
         Svc.Log.Debug($"Starting ingredient table regeneration {generation}");
         RegenerateTask = Task.Run(
             () => GenerateTableAsync(generationSource, generation),

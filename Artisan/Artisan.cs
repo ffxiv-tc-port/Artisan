@@ -46,6 +46,7 @@ public unsafe class Artisan : IDalamudPlugin
     public Artisan(IDalamudPluginInterface pluginInterface)
     {
         ECommonsMain.Init(pluginInterface, this, Module.All);
+        SvcEx.Init(pluginInterface);
         ECommons.LanguageHelpers.Localization.Init("ChineseTraditional");
         PunishLibMain.Init(pluginInterface, "Artisan", new AboutPlugin() { Sponsor = "https://ko-fi.com/taurenkey" });
         P = this;

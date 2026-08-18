@@ -639,7 +639,7 @@ public static unsafe class Crafting
         return Math.Max(1, (int)Math.Ceiling(remainingMs / 1000.0 / Simulator.MaterialMiracleSecondsPerStep));
     }
 
-    private static Dalamud.Game.ClientState.Statuses.Status? GetStatus(uint statusID) => Svc.ClientState.LocalPlayer?.StatusList.FirstOrDefault(s => s.StatusId == statusID);
+    private static Dalamud.Game.ClientState.Statuses.Status? GetStatus(uint statusID) => Svc.Objects.LocalPlayer?.StatusList.FirstOrDefault(s => s.StatusId == statusID);
 
     // 這支 detour 內部例外的節流計時器(Environment.TickCount64 的絕對值)。
     // ⚠️ 刻意**不用** Artisan.Autocraft.Throttler —— 那是全外掛共用的單一節流窗,

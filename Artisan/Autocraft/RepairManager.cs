@@ -220,15 +220,15 @@ namespace Artisan.Autocraft
         internal static bool RepairNPCNearby(out IGameObject npc)
         {
             npc = null;
-            if (Svc.ClientState.LocalPlayer != null)
+            if (Svc.Objects.LocalPlayer != null)
             {
                 foreach (var obj in Svc.Objects.Where(x => x.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc))
                 {
-                    if (Svc.Data.Excel.GetSheet<ENpcBase>().TryGetRow(obj.DataId, out var enpcsheet))
+                    if (Svc.Data.Excel.GetSheet<ENpcBase>().TryGetRow(obj.BaseId, out var enpcsheet))
                     {
                         if (enpcsheet.ENpcData.Any(x => x.RowId == 720915))
                         {
-                            var npcDistance = Vector3.Distance(obj.Position, Svc.ClientState.LocalPlayer.Position);
+                            var npcDistance = Vector3.Distance(obj.Position, Svc.Objects.LocalPlayer.Position);
                             if (npcDistance > 7)
                                 continue;
 
@@ -255,7 +255,7 @@ namespace Artisan.Autocraft
                 TargetSystem.Instance()->OpenObjectInteraction(npc.Struct());
                 if (TryGetAddonByName<AddonSelectIconString>("SelectIconString", out var addonSelectIconString))
                 {
-                    var index = GenericHelpers.IndexOf(Svc.Data.Excel.GetSheet<ENpcBase>().GetRow(npc.DataId).ENpcData, x => x.RowId == 720915);
+                    var index = GenericHelpers.IndexOf(Svc.Data.Excel.GetSheet<ENpcBase>().GetRow(npc.BaseId).ENpcData, x => x.RowId == 720915);
                     Callback.Fire(&addonSelectIconString->AtkUnitBase, true, index);
                 }
 

@@ -52,7 +52,7 @@ namespace Artisan.CraftingLogic.Solvers
             {
                 yield return new(this, 3, 0, "Raphael Recipe Solver".Loc());
             }
-            else if (!P.Config.RaphaelSolverConfig.AllowFallbackToStandard)
+            else if (!RaphaelCache.FallbackToStandardAllowed)
             {
                 // Yielding an *unsupported* flavour rather than nothing at all: GetAvailableSolversForRecipe
                 // still filters this out of every picker (it passes returnUnsupported: false), but FindSolver
@@ -465,6 +465,17 @@ namespace Artisan.CraftingLogic.Solvers
 
             return best;
         }
+
+        /// <summary>
+        /// 「指定的解算器現在不能用的時候,可不可以安靜地改用標準解算器」。
+        /// 使用者的設定說可以,也還有一個問題要問:這場製作是不是別的外掛透過 IPC 叫起來的
+        /// (ICE 的宇宙製作就是,見 IPC.CraftX 設 Endurance.IPCOverride)。那種情況沒有人在看
+        /// 畫面,退回標準解算器會把金牌需要的品質默默做丟,而且從頭到尾一聲不響 —— 已知的
+        /// 唯一徵兆是事後發現獎牌不對。IPC 驅動時一律當成不准降級,讓 CraftingProcessor 觸發
+        /// SolverFailed 把「哪個解算器不能用、為什麼」講出來並停下,而不是硬做完。
+        /// </summary>
+        internal static bool FallbackToStandardAllowed
+            => P.Config.RaphaelSolverConfig.AllowFallbackToStandard && !Endurance.IPCOverride;
 
         public static bool InProgress(CraftState craft) => Tasks.TryGetValue(GetKey(craft), out var _);
 

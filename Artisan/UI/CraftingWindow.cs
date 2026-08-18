@@ -190,6 +190,12 @@ namespace Artisan.UI
             var text = "??. Artisan will not continue.".Loc(reason);
             Svc.Toasts.ShowError(text);
             DuoLog.Error(text);
+
+            // 由別的外掛透過 IPC 驅動時(ICE 的宇宙製作),沒有人在看這個錯誤訊息,而耐力模式
+            // 還開著就會在這場製作結束後照樣開下一件、再撞同一個問題一次。既然已經宣告
+            // 「Artisan will not continue」,就真的停下來,把控制權交回呼叫端自己的守衛。
+            if (Endurance.IPCOverride)
+                Endurance.ToggleEndurance(false);
         }
 
         private void OnSolverFinished(Lumina.Excel.Sheets.Recipe recipe, SolverRef solver, CraftState craft, StepState finalStep)

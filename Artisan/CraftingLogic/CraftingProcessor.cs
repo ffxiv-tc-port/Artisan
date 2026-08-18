@@ -96,8 +96,9 @@ public static class CraftingProcessor
         // flavour at all (its Flavours() yielded nothing). Falling straight through to MaxBy(Priority)
         // swaps in the standard solver without telling anyone. Gate that behind the setting, keeping the
         // Def pointing at the real definition so CreateSolver() on this Desc still cannot null-deref.
+        // ⚠️ FallbackToStandardAllowed 不只看使用者那個開關:由 IPC 驅動的製作(ICE)一律不准降級。
         var configuredType = recipeConfig?.SolverType ?? "";
-        if (configuredType.Length > 0 && !P.Config.RaphaelSolverConfig.AllowFallbackToStandard)
+        if (configuredType.Length > 0 && !RaphaelCache.FallbackToStandardAllowed)
         {
             var configuredDef = SolverDefinitions.Find(x => x.GetType().FullName == configuredType);
             if (configuredDef != null)

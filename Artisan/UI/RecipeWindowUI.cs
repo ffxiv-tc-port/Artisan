@@ -631,6 +631,78 @@ namespace Artisan
             Notify.Success("Crafting List Created".Loc());
         }
 
+        /// <summary>
+        /// 取出 SubmarinePartsMenu 的指定文字節點。
+        /// 🔴 上界（NodeListCount）只是三層裡的第一層：NodeList 元素本身可為 null，
+        /// 而 GetAsAtkTextNode() 在節點型別不是文字節點時也回 null。
+        /// 三層任一沒過就回 null，呼叫端 fail-closed 不做事，不要拿去解參考 NodeText。
+        /// </summary>
+        private static unsafe AtkTextNode* GetWorkshopTextNode(AtkUnitBase* addonPtr, uint index)
+        {
+            if (addonPtr == null || addonPtr->UldManager.NodeList == null || addonPtr->UldManager.NodeListCount <= index)
+                return null;
+
+            var node = addonPtr->UldManager.NodeList[index];
+            if (node == null)
+                return null;
+
+            return node->GetAsAtkTextNode();
+        }
+
+        /// <summary>
+        /// 由 SubmarinePartsMenu 的文字節點推出目前階段並建立對應的製作清單。
+        /// 兩顆按鈕（含／不含前置素材）除了 withPrecrafts 以外邏輯完全相同，收斂在此。
+        /// </summary>
+        private static unsafe void CreateWorkshopPhaseList(AtkUnitBase* addonPtr, bool withPrecrafts)
+        {
+            var itemNameNode = GetWorkshopTextNode(addonPtr, 37);
+            var phaseProgress = GetWorkshopTextNode(addonPtr, 26);
+
+            if (itemNameNode == null || phaseProgress == null)
+            {
+                // 使用者按下按鈕才會走到這裡（不是每影格路徑），安靜失敗會讓人以為清單已經建好了。
+                Svc.Log.Information("Artisan: SubmarinePartsMenu 的成品名或階段進度文字節點取不到，未建立工房清單。");
+                return;
+            }
+
+            var itemName = itemNameNode->NodeText.ExtractText();
+
+            if (!LuminaSheets.WorkshopSequenceSheet.Values.Any(x => x.ResultItem.Value.Name.ExtractText() == itemName))
+                return;
+
+            var project = LuminaSheets.WorkshopSequenceSheet.Values.First(x => x.ResultItem.Value.Name.ExtractText() == itemName);
+            var phaseNum = Convert.ToInt32(phaseProgress->NodeText.ToString().First().ToString());
+
+            if (project.CompanyCraftPart.Count(x => x.RowId > 0) == 1)
+            {
+                var part = project.CompanyCraftPart.First(x => x.RowId > 0).Value;
+                var phase = part.CompanyCraftProcess[phaseNum - 1];
+
+                FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, withPrecrafts, null, project);
+                Notify.Success("FC Workshop List Created".Loc());
+            }
+            else
+            {
+                var currentPartNode = GetWorkshopTextNode(addonPtr, 28);
+                if (currentPartNode == null)
+                {
+                    Svc.Log.Information("Artisan: SubmarinePartsMenu 的目前部件文字節點取不到，未建立工房清單。");
+                    return;
+                }
+
+                string partStep = currentPartNode->NodeText.ExtractText().Split(":").Last();
+
+                if (project.CompanyCraftPart.Any(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep))
+                {
+                    var part = project.CompanyCraftPart.First(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep).Value;
+                    var phase = part.CompanyCraftProcess[phaseNum - 1];
+
+                    FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, withPrecrafts, null, project);
+                    Notify.Success("FC Workshop List Created".Loc());
+                }
+            }
+        }
+
         private unsafe void DrawWorkshopOverlay()
         {
             try
@@ -643,12 +715,12 @@ namespace Artisan
                 if (addonPtr == null)
                     return;
 
-                if (addonPtr->UldManager.NodeListCount < 38)
+                if (addonPtr->UldManager.NodeList == null || addonPtr->UldManager.NodeListCount < 38)
                     return;
 
                 var node = addonPtr->UldManager.NodeList[2];
 
-                if (!node->IsVisible())
+                if (node == null || !node->IsVisible())
                     return;
 
                 var position = AtkResNodeFunctions.GetNodePosition(node);
@@ -676,72 +748,12 @@ namespace Artisan
 
                 if (ImGui.Button("Create crafting list for this phase".Loc()))
                 {
-                    var itemNameNode = addonPtr->UldManager.NodeList[37]->GetAsAtkTextNode();
-                    var phaseProgress = addonPtr->UldManager.NodeList[26]->GetAsAtkTextNode();
-
-                    if (LuminaSheets.WorkshopSequenceSheet.Values.Any(x => x.ResultItem.Value.Name.ExtractText() == itemNameNode->NodeText.ExtractText()))
-                    {
-                        var project = LuminaSheets.WorkshopSequenceSheet.Values.First(x => x.ResultItem.Value.Name.ExtractText() == itemNameNode->NodeText.ExtractText());
-                        var phaseNum = Convert.ToInt32(phaseProgress->NodeText.ToString().First().ToString());
-
-                        if (project.CompanyCraftPart.Count(x => x.RowId > 0) == 1)
-                        {
-                            var part = project.CompanyCraftPart.First(x => x.RowId > 0).Value;
-                            var phase = part.CompanyCraftProcess[phaseNum - 1];
-
-                            FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, false, null, project);
-                            Notify.Success("FC Workshop List Created".Loc());
-                        }
-                        else
-                        {
-                            var currentPartNode = addonPtr->UldManager.NodeList[28]->GetAsAtkTextNode();
-                            string partStep = currentPartNode->NodeText.ExtractText().Split(":").Last();
-
-                            if (project.CompanyCraftPart.Any(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep))
-                            {
-                                var part = project.CompanyCraftPart.First(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep).Value;
-                                var phase = part.CompanyCraftProcess[phaseNum - 1];
-
-                                FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, false, null, project);
-                                Notify.Success("FC Workshop List Created".Loc());
-                            }
-                        }
-                    }
+                    CreateWorkshopPhaseList(addonPtr, false);
                 }
 
                 if (ImGui.Button("Create crafting list for this phase (including precrafts)".Loc()))
                 {
-                    var itemNameNode = addonPtr->UldManager.NodeList[37]->GetAsAtkTextNode();
-                    var phaseProgress = addonPtr->UldManager.NodeList[26]->GetAsAtkTextNode();
-
-                    if (LuminaSheets.WorkshopSequenceSheet.Values.Any(x => x.ResultItem.Value.Name.ExtractText() == itemNameNode->NodeText.ExtractText()))
-                    {
-                        var project = LuminaSheets.WorkshopSequenceSheet.Values.First(x => x.ResultItem.Value.Name.ExtractText() == itemNameNode->NodeText.ExtractText());
-                        var phaseNum = Convert.ToInt32(phaseProgress->NodeText.ToString().First().ToString());
-
-                        if (project.CompanyCraftPart.Count(x => x.RowId > 0) == 1)
-                        {
-                            var part = project.CompanyCraftPart.First(x => x.RowId > 0).Value;
-                            var phase = part.CompanyCraftProcess[phaseNum - 1];
-
-                            FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, true, null, project);
-                            Notify.Success("FC Workshop List Created".Loc());
-                        }
-                        else
-                        {
-                            var currentPartNode = addonPtr->UldManager.NodeList[28]->GetAsAtkTextNode();
-                            string partStep = currentPartNode->NodeText.ExtractText().Split(":").Last();
-
-                            if (project.CompanyCraftPart.Any(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep))
-                            {
-                                var part = project.CompanyCraftPart.First(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep).Value;
-                                var phase = part.CompanyCraftProcess[phaseNum - 1];
-
-                                FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, true, null, project);
-                                Notify.Success("FC Workshop List Created".Loc());
-                            }
-                        }
-                    }
+                    CreateWorkshopPhaseList(addonPtr, true);
                 }
 
                 ImGui.End();

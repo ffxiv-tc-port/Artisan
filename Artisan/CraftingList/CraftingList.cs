@@ -672,9 +672,17 @@ namespace Artisan.CraftingLists
                 return true;
             }
 
+            // 🔴 這條 && 鏈原本只判了 AgentRecipeNote.Instance()，漏掉同一行裡的
+            // RaptureAtkModule.Instance()。RaptureAtkModule.Instance() 是 CS 手寫包裝
+            //（`UIModule.Instance() == null ? null : uiModule->GetRaptureAtkModule()`），
+            // 而 UIModule.Instance() 又是 `Framework.Instance() == null ? null : ...` ——
+            // 兩層都合法回 null（登入前／切換場景時是常態），裸解參考就是 AVE，
+            // 而 AVE 是 corrupted-state exception，外層任何 try/catch 都攔不到。
+            // 這裡是每幀輪詢的閘門：取不到就當成「還沒 ready」讓 && 短路成 false，不寫 log。
             if (TryGetAddonByName<AddonRecipeNote>("RecipeNote", out var addon) &&
                 addon->AtkUnitBase.IsVisible &&
                 AgentRecipeNote.Instance() != null &&
+                RaptureAtkModule.Instance() != null &&
                 RaptureAtkModule.Instance()->AtkModule.IsAddonReady(AgentRecipeNote.Instance()->AgentInterface.AddonId))
             {
                 if (setIngredients == null || Endurance.IPCOverride)

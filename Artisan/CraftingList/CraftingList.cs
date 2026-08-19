@@ -573,6 +573,10 @@ namespace Artisan.CraftingLists
         {
             if (addon == null)
                 return null;
+            // 🔴 NodeListCount 非 0 不保證 NodeList 已配置（元件還在載入時就是 null）——
+            //    上界之外還要判指標，否則是 AccessViolation。
+            if (addon->UldManager.NodeList == null)
+                return null;
 
             var count = addon->UldManager.NodeListCount;
             for (var i = 0; i < count; i++)
@@ -596,6 +600,12 @@ namespace Artisan.CraftingLists
         {
             if (addon == null)
                 return;
+            // 🔴 同 FindNodeById：NodeListCount 非 0 不保證 NodeList 已配置。
+            if (addon->UldManager.NodeList == null)
+            {
+                Svc.Log.Information("Artisan: WKSRecipeNotebook 節點傾印 — NodeList 尚未配置，跳過");
+                return;
+            }
 
             var count = addon->UldManager.NodeListCount;
             var dump = new System.Text.StringBuilder();

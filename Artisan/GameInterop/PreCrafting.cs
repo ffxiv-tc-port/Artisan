@@ -848,7 +848,9 @@ public unsafe static class PreCrafting
 
         var sb = new System.Text.StringBuilder();
         sb.Append($"Artisan: AtkValues (count={addon->AtkValuesCount}):");
-        for (var i = 0; i < addon->AtkValuesCount; i++)
+        // 🔴 AtkValuesCount 是遊戲寫入的欄位，AtkValues 是與它成對的**指標**——
+        //    Count > 0 並不保證陣列已經配置好。上界之外還要判指標，否則是 AVE。
+        for (var i = 0; addon->AtkValues != null && i < addon->AtkValuesCount; i++)
         {
             var v = &addon->AtkValues[i];
             switch (v->Type)
@@ -870,7 +872,8 @@ public unsafe static class PreCrafting
 
         var nb = new System.Text.StringBuilder();
         nb.Append($"Artisan: 節點文字 (NodeListCount={addon->UldManager.NodeListCount}):");
-        for (var i = 0; i < addon->UldManager.NodeListCount; i++)
+        // 🔴 同理：NodeListCount 非 0 不保證 NodeList 已配置（元件還在載入時就是 null）。
+        for (var i = 0; addon->UldManager.NodeList != null && i < addon->UldManager.NodeListCount; i++)
         {
             var n = addon->UldManager.NodeList[i];
             if (n == null || n->Type != NodeType.Text)

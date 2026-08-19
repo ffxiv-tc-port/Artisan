@@ -485,7 +485,16 @@ internal unsafe static class RetainerHandlers
 
     internal static bool? CloseAgentRetainer()
     {
-        var a = CSFramework.Instance()->UIModule->GetAgentModule()->GetAgentByInternalId(AgentId.Retainer);
+        // 五層鏈逐節判空(Framework isPointer:true 合法回 null,UIModule/AgentModule/agent 各層皆可 null)。
+        // 對照組=AutoRetainer 的 RetainerHandlers.CloseAgentRetainer 同鏈每層都判。取不到=沒有東西要關,回 false。
+        var framework = CSFramework.Instance();
+        if (framework == null) return false;
+        var uiModule = framework->UIModule;
+        if (uiModule == null) return false;
+        var agentModule = uiModule->GetAgentModule();
+        if (agentModule == null) return false;
+        var a = agentModule->GetAgentByInternalId(AgentId.Retainer);
+        if (a == null) return false;
         if (a->IsAgentActive())
         {
             a->Hide();

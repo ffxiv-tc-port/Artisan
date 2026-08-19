@@ -112,7 +112,10 @@ internal static class CraftingListContextMenu
 
         if (args.AddonName == "RecipeNote")
         {
+            // FindAgentInterface 找不到回 0——0+0x398 的解參考是攔不到的 AVE;同檔其餘呼叫點都有判,唯獨這段漏了。
             IntPtr recipeNoteAgent = Svc.GameGui.FindAgentInterface(args.AddonName);
+            if (recipeNoteAgent == IntPtr.Zero)
+                return;
             var ItemId = *(uint*)(recipeNoteAgent + 0x398);
             var craftTypeIndex = *(uint*)(recipeNoteAgent + 944);
 

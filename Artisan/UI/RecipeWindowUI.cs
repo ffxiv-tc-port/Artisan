@@ -148,7 +148,9 @@ namespace Artisan
             var baseX = addonPtr->X;
             var baseY = addonPtr->Y;
 
-            if (addonPtr->UldManager.NodeListCount >= 2 && addonPtr->UldManager.NodeList[1]->IsVisible())
+            // 節點數只保證陣列長度，不保證元素非空：元素為 null 時解參考會直接 AVE（每影格路徑，安靜跳過）。
+            if (addonPtr->UldManager.NodeListCount >= 2 && addonPtr->UldManager.NodeList != null
+                && addonPtr->UldManager.NodeList[1] != null && addonPtr->UldManager.NodeList[1]->IsVisible())
             {
                 var node = addonPtr->UldManager.NodeList[1];
 
@@ -800,7 +802,9 @@ namespace Artisan
 
             if (addonPtr->UldManager.NodeListCount > 1)
             {
-                if (addonPtr->UldManager.NodeList[1]->IsVisible())
+                // 節點數只保證陣列長度，不保證元素非空：元素為 null 時解參考會直接 AVE（每影格路徑，安靜跳過）。
+                if (addonPtr->UldManager.NodeList != null && addonPtr->UldManager.NodeList[1] != null
+                    && addonPtr->UldManager.NodeList[1]->IsVisible())
                 {
                     var node = addonPtr->UldManager.NodeList[1];
 
@@ -901,7 +905,9 @@ namespace Artisan
             var baseX = addonPtr->X;
             var baseY = addonPtr->Y;
 
-            if (addonPtr->UldManager.NodeListCount >= 2 && addonPtr->UldManager.NodeList[1]->IsVisible())
+            // 節點數只保證陣列長度，不保證元素非空：元素為 null 時解參考會直接 AVE（每影格路徑，安靜跳過）。
+            if (addonPtr->UldManager.NodeListCount >= 2 && addonPtr->UldManager.NodeList != null
+                && addonPtr->UldManager.NodeList[1] != null && addonPtr->UldManager.NodeList[1]->IsVisible())
             {
                 var node = addonPtr->UldManager.NodeList[1];
 

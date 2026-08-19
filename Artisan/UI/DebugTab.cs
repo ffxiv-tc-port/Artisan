@@ -459,7 +459,22 @@ namespace Artisan.UI
                 TeleportToGCTown();
             }
 
-            Util.ShowStruct(WKSManager.Instance());
+            // 🔴 WKSManager.Instance() 的宣告是
+            //    [StaticAddress("48 89 05 ?? ?? ?? ?? 48 8B F8", 3, isPointer: true)] ——
+            //    產生器對 isPointer:true 產出的是「讀那個靜態槽的內容」,判空判的是**槽的位址**
+            //    (特徵碼有沒有解析成功),回傳的卻是**槽裡的內容**,而那個內容在沒進宇宙探索時
+            //    合法就是 null,從頭到尾沒被判過。
+            // 🔴 Dalamud 的 Util.ShowStruct<T>(T* obj) 進函式第一件事就是 `ShowStruct(*obj, ...)`
+            //    —— **在呼叫端來不及攔的地方當場解參考**。傳 null 進去是 AccessViolationException,
+            //    在 .NET Core 屬 corrupted-state exception,try/catch 與 ImGui 的繪製迴圈都攔不到。
+            //    這一行沒有任何前置條件,只要除錯頁開著而人不在宇宙探索區就會走到。
+            // 這是每幀路徑 ⇒ 不寫 log(會把整份 log 洗掉),改成把「取不到」畫在列上;
+            // 畫成空白會被讀成「這個結構是空的」,那是誤導。
+            var wksManager = WKSManager.Instance();
+            if (wksManager == null)
+                ImGui.TextUnformatted("WKSManager unavailable (not in Cosmic Exploration?)");
+            else
+                Util.ShowStruct(wksManager);
         }
 
         public unsafe static void TeleportToGCTown()

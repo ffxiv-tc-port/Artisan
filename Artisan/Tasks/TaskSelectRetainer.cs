@@ -327,10 +327,30 @@ internal unsafe static class RetainerHandlers
                 {
                     quantity = item->Quantity;
                     Svc.Log.Debug($"Found item? {item->Quantity}");
+                    // 🔴 這一行原本有三處連續裸解參考,任何一處是 null 都是 AccessViolationException
+                    //    (corrupted-state exception,try/catch 攔不到,遊戲直接結束):
+                    //    ① AgentInventoryContext.Instance() 是產生器產出的
+                    //       「agentModule == null ? null : GetAgentByInternalId(...)」,兩層都能合法回 null;
+                    //    ② AgentModule.Instance() 是 UIModule 的轉手,同樣會回 null;
+                    //    ③ GetAgentByInternalId 查的是 FixedSizeArray484<Pointer<AgentInterface>>,
+                    //       雇員 agent 那一格還沒建立時就是 null。
+                    //    判法與 PreCrafting.cs 的裝備流程(451 行起)一致。
+                    // fail-closed:取不到就回 false —— 與這個迴圈既有的「這一頁裡沒有這個道具」同義,
+                    //    呼叫端本來就會重試(見上面 314 行的註解)。
                     var ag = AgentInventoryContext.Instance();
-                    ag->OpenForItemSlot(inv, i, 0, AgentModule.Instance()->GetAgentByInternalId(AgentId.Retainer)->GetAddonId());
+                    var agentModule = AgentModule.Instance();
+                    var retainerAgent = agentModule == null ? null : agentModule->GetAgentByInternalId(AgentId.Retainer);
+                    if (ag == null || retainerAgent == null)
+                    {
+                        Svc.Log.Information($"Artisan: inventory/retainer agent unavailable (ctx={(nint)ag:X}, retainer={(nint)retainerAgent:X}) - not opening the context menu for item {ItemId} this time.");
+                        return false;
+                    }
+                    ag->OpenForItemSlot(inv, i, 0, retainerAgent->GetAddonId());
                     var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu", 1).Address;
+                    // 重新取得的一次呼叫,各自判空(下面 358 行起整段都在解參考它)。
                     var contextAgent = AgentInventoryContext.Instance();
+                    if (contextAgent == null)
+                        return false;
                     var indexOfRetrieveAll = -1;
                     var indexOfRetrieveQuantity = -1;
 

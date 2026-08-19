@@ -481,8 +481,16 @@ namespace Artisan.UI
                 3 => 21071u,
                 _ => 0u
             };
-            if (InventoryManager.Instance()->GetInventoryItemCount(ticket) > 0)
-                AgentInventoryContext.Instance()->UseItem(ticket);
+            // 🔴 AgentInventoryContext.Instance() 是產生器產出的取得子,本體即
+            //    「agentModule == null ? null : GetAgentByInternalId(...)」,兩層都能合法回 null。
+            //    裸解參考 = AccessViolationException,corrupted-state,try/catch 攔不到。
+            // fail-closed:取不到 agent 就退回傳送(else 分支本來就是這個道具沒有時的行為),
+            //    不要在未知狀態下對空指標呼叫 UseItem。
+            var invContext = InventoryManager.Instance()->GetInventoryItemCount(ticket) > 0
+                ? AgentInventoryContext.Instance()
+                : null;
+            if (invContext != null)
+                invContext->UseItem(ticket);
             else
                 Telepo.Instance()->Teleport(aetheryte, 0);
         }

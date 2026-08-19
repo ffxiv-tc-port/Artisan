@@ -264,7 +264,13 @@ namespace Artisan
                                     var orid = Operations.GetSelectedRecipeEntry();
                                     if (orid == null || (orid != null && orid->RecipeId != recipe.RowId))
                                     {
-                                        AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                                        // 🔴 AgentRecipeNote.Instance() 合法回 null(產生器本體即
+                                        //    agentModule == null ? null : ...);裸解參考 = AVE,
+                                        //    corrupted-state,外面那圈 catch (Exception) 攔不到。
+                                        // fail-closed:取不到就不開 —— 使用者再點一次即可。
+                                        var recipeAgent = AgentRecipeNote.Instance();
+                                        if (recipeAgent != null)
+                                            recipeAgent->OpenRecipeByRecipeId(recipe.RowId);
                                     }
 
                                     searched = true;

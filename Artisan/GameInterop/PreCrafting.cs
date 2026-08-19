@@ -660,7 +660,15 @@ public unsafe static class PreCrafting
                 + $"falling back to SearchRecipeByItemId({itemId}). If the crafting log opens now, "
                 + "the primary open function resolves to the wrong code on this client.");
         }
-        AgentRecipeNote.Instance()->SearchRecipeByItemId(itemId);
+        // 🔴 AgentRecipeNote.Instance() 是產生器產出的取得子,本體即
+        //    「agentModule == null ? null : GetAgentByInternalId(...)」,兩層都能合法回 null。
+        //    裸解參考 = AccessViolationException,corrupted-state exception,try/catch 攔不到。
+        // fail-closed:取不到就不送這次備援開窗。這條路徑本來就只在重複失敗後才會走到,
+        //    再等一輪重試是既有行為。
+        var agent = AgentRecipeNote.Instance();
+        if (agent == null)
+            return;
+        agent->SearchRecipeByItemId(itemId);
     }
 
     // 🔴 宇宙筆記關掉之後怎麼開回來（2026-07-31 實機 log 定案）
@@ -1016,7 +1024,11 @@ public unsafe static class PreCrafting
             if (!recipeNoteOpen)
             {
                 ReportRecipeOpenAttempt(recipe.RowId);
-                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                // 🔴 同上:Instance() 合法回 null,裸解參考是攔不到的 AVE。
+                // fail-closed:取不到就這一輪不開,下一次重試(500ms)會再試。
+                var openAgent = AgentRecipeNote.Instance();
+                if (openAgent != null)
+                    openAgent->OpenRecipeByRecipeId(recipe.RowId);
                 TryOpenViaSearchFallback(recipe);
             }
             else if (re != null && re->RecipeId != recipe.RowId)
@@ -1035,8 +1047,14 @@ public unsafe static class PreCrafting
                         $"Artisan: RecipeNote is open but has recipe {re->RecipeId} selected, "
                         + $"wanted {recipe.RowId}. OpenRecipeByRecipeId did not select it; "
                         + $"trying SearchRecipeByItemId({itemId}).");
+                    // 🔴 同上。注意 _lastMismatchAction 已經在上面更新過了,所以即使這次取不到
+                    //    agent 也不會變成不受節流的重試迴圈 —— 2 秒後才會再進來一次。
                     if (itemId != 0)
-                        AgentRecipeNote.Instance()->SearchRecipeByItemId(itemId);
+                    {
+                        var searchAgent = AgentRecipeNote.Instance();
+                        if (searchAgent != null)
+                            searchAgent->SearchRecipeByItemId(itemId);
+                    }
                 }
             }
             else if ((DateTime.Now - _lastOpenAttempt).TotalSeconds >= 5)

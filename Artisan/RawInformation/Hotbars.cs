@@ -27,7 +27,18 @@ namespace Artisan.RawInformation
         {
             // GetUIModule() / GetRaptureHotbarModule() 都是原生呼叫,對 null 呼叫即攔不到的 AVE。
             // 取不到時保留上一次的快取內容(不清空),行為與「這次沒更新」相同。
-            var uiModule = Framework.Instance()->GetUIModule();
+            //
+            // 🔴 原本這裡是半套判空:下游兩層都判了,唯獨最外面那層沒判。
+            //    Framework.Instance() 是 [StaticAddress("48 8B 1D ?? ?? ?? ?? 8B 7C 24 64", 3, isPointer: true)],
+            //    產生器對 isPointer:true 產出的是「if (ppInstance is null) Throw...; return *ppInstance;」
+            //    —— 判空判的是**外層指標槽的位址**(特徵碼有沒有解析成功),回傳的卻是**槽裡的內容**,
+            //    而那個內容在遊戲還沒建好 Framework(這個方法從外掛建構期就會被呼叫)時合法為 null,
+            //    從頭到尾沒被判過。對它呼叫 GetUIModule() 就是 AccessViolationException。
+            var framework = Framework.Instance();
+            if (framework == null)
+                return;
+
+            var uiModule = framework->GetUIModule();
             if (uiModule == null)
                 return;
 

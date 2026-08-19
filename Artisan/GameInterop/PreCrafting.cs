@@ -387,10 +387,20 @@ public unsafe static class PreCrafting
             return TaskResult.Abort;
         }
 
+        // RaptureGearsetModule.Instance() 是 UIModule 的轉手,FFXIVClientStructs 裡它是手寫的
+        // 「uiModule == null ? null : ...」——沒登入、切場景、登出過程中都會合法回 null。
+        // 沒判就 ->Entries 是解參考 null,那是 AccessViolationException:corrupted-state
+        // exception,try/catch 攔不到,整個遊戲會當場結束。
         var gearsets = RaptureGearsetModule.Instance();
+        if (gearsets == null)
+        {
+            DuoLog.Error("Gearset module is not available right now - aborting class change.");
+            return TaskResult.Abort;
+        }
+
         foreach (ref var gs in gearsets->Entries)
         {
-            if (!RaptureGearsetModule.Instance()->IsValidGearset(gs.Id)) continue;
+            if (!gearsets->IsValidGearset(gs.Id)) continue;
             if ((Job)gs.ClassJob == job)
             {
                 if (gs.Flags.HasFlag(RaptureGearsetModule.GearsetFlag.MainHandMissing))
@@ -437,8 +447,22 @@ public unsafe static class PreCrafting
         }
 
         var agentId = pos.Value.inv is InventoryType.ArmoryMainHand or InventoryType.ArmoryHands ? AgentId.ArmouryBoard : AgentId.Inventory;
-        var addonId = AgentModule.Instance()->GetAgentByInternalId(agentId)->GetAddonId();
+
+        // 三層都可以合法回 null:AgentModule.Instance() 是 UIModule 的轉手(手寫判空);
+        // GetAgentByInternalId 查的是 FixedSizeArray484<Pointer<AgentInterface>>,還沒建立的
+        // agent 那一格就是 null;AgentInventoryContext.Instance() 是產生器產出的
+        // 「agentModule == null ? null : GetAgentByInternalId(...)」,同樣會回 null。
+        // 任何一層沒判就往下解參考 = AccessViolationException(攔不到,遊戲直接結束)。
+        var agentModule = AgentModule.Instance();
+        var ownerAgent = agentModule == null ? null : agentModule->GetAgentByInternalId(agentId);
         var ctx = AgentInventoryContext.Instance();
+        if (ownerAgent == null || ctx == null)
+        {
+            DuoLog.Error($"Inventory agent is not available right now - cannot equip item {ItemId}.");
+            return TaskResult.Abort;
+        }
+
+        var addonId = ownerAgent->GetAddonId();
         ctx->OpenForItemSlot(pos.Value.inv, pos.Value.slot, 0, addonId);
 
         var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu").Address;

@@ -332,8 +332,14 @@ namespace Artisan.UI
                 {
                     ImGui.TextUnformatted($"In-game stats: {CharacterInfo.Craftsmanship}/{CharacterInfo.Control}/{CharacterInfo.MaxCP}/{CharacterInfo.FCCraftsmanshipbuff}");
                     DrawEquippedGear();
-                    foreach (ref var gs in RaptureGearsetModule.Instance()->Entries)
-                        DrawGearset(ref gs);
+                    // 沒登入時 Instance() 合法回 null;直接 ->Entries 是解參考 null(AVE,攔不到)。
+                    // 取不到就把「取不到」畫出來,不要畫成空清單 —— 空清單會被讀成「沒有裝備組」。
+                    var gearsetModule = RaptureGearsetModule.Instance();
+                    if (gearsetModule == null)
+                        ImGui.TextUnformatted("Gearset module unavailable (not logged in?)");
+                    else
+                        foreach (ref var gs in gearsetModule->Entries)
+                            DrawGearset(ref gs);
                 }
 
                 if (ImGui.CollapsingHeader("Repairs"))

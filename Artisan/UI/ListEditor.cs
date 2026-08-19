@@ -221,7 +221,15 @@ internal class ListEditor : Window, IDisposable
     private static bool MonsterLookup =>
         DalamudReflector.TryGetDalamudPlugin("Monster Loot Hunter", out var mlh, false, true);
 
-    private static unsafe void SearchItem(uint item) => ItemFinderModule.Instance()->SearchForItem(item);
+    // ItemFinderModule.Instance() 是 UIModule 的轉手,手寫成「uiModule == null ? null : ...」,
+    // 沒登入時合法回 null。沒判就 ->SearchForItem 是解參考 null = AccessViolationException,
+    // 攔不到。取不到就不搜尋(這是使用者按下去才會跑的路徑)。
+    private static unsafe void SearchItem(uint item)
+    {
+        var itemFinder = ItemFinderModule.Instance();
+        if (itemFinder != null)
+            itemFinder->SearchForItem(item);
+    }
 
     public class ListOrderCheck
     {

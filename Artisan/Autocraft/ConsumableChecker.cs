@@ -25,7 +25,16 @@ namespace Artisan.Autocraft
 
         internal static void Init()
         {
-            itemContextMenuAgent = Framework.Instance()->UIModule->GetAgentModule()->GetAgentByInternalId(AgentId.InventoryContext);
+            // Init() 在外掛建構時就跑,可能落在標題畫面或登入途中。這條鏈上每一層都能合法是
+            // null:Framework.Instance() 是 [StaticAddress(isPointer: true)],讀的是靜態位址
+            // 裡「那個指標」,遊戲還沒把它填好時就是 null;UIModule 是 Framework 的欄位;
+            // GetAgentByInternalId 查的那格 agent 也可能還沒建立。
+            // 少判一層就是解參考 null = AccessViolationException,而那攔不到:外掛一載入
+            // 就把遊戲帶走。取不到就留 null(這個欄位目前沒有任何讀取端)。
+            var framework = Framework.Instance();
+            var uiModule = framework == null ? null : framework->UIModule;
+            var agentModule = uiModule == null ? null : uiModule->GetAgentModule();
+            itemContextMenuAgent = agentModule == null ? null : agentModule->GetAgentByInternalId(AgentId.InventoryContext);
             Usables = Svc.Data.GetExcelSheet<Item>().Where(i => i.ItemAction.RowId > 0).ToDictionary(i => i.RowId, i => i.Name.ToString().ToLower())
             .Concat(Svc.Data.GetExcelSheet<EventItem>().Where(i => i.Action.RowId > 0).ToDictionary(i => i.RowId, i => i.Name.ToString().ToLower()))
             .ToDictionary(kv => kv.Key, kv => kv.Value);

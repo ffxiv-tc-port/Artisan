@@ -870,6 +870,19 @@ namespace Artisan.UI
 
         private static unsafe void DrawGearSetDropdown()
         {
+            // 這個方法每幀都會被畫,底下有六處 RaptureGearsetModule.Instance()-> 的裸鏈。
+            // Instance() 是 UIModule 的轉手,FFXIVClientStructs 裡就寫成
+            // 「uiModule == null ? null : ...」——沒登入、切場景、登出途中都會合法回 null。
+            // 少判一處就是解參考 null = AccessViolationException,而它是 corrupted-state
+            // exception:ImGui 的繪製迴圈與 try/catch 都攔不到,遊戲當場結束。
+            //
+            // 這個區域函式讓 LINQ 的 lambda 裡也能安全查有效性(lambda 不能捕捉指標區域變數)。
+            static bool IsValidGearsetSafe(int id)
+            {
+                var module = RaptureGearsetModule.Instance();
+                return module != null && module->IsValidGearset(id);
+            }
+
             if (!CustomStatMode)
             {
                 if (ImGui.Button("Switch to Custom Stat Mode".Loc(), new (ImGui.GetContentRegionAvail().X, 0)))
@@ -883,7 +896,17 @@ namespace Artisan.UI
 
             if (!CustomStatMode)
             {
-                var validGS = RaptureGearsetModule.Instance()->Entries.ToArray().Count(x => RaptureGearsetModule.Instance()->IsValidGearset(x.Id) && x.ClassJob == SelectedRecipe?.CraftType.RowId + 8);
+                // 取不到模組時要明說「取不到」,不能沿用底下 validGS == 0 那條訊息 ——
+                // 那句是叫使用者去建一個裝備組,但他可能早就有了,真正的原因是還沒登入。
+                var gearsetModule = RaptureGearsetModule.Instance();
+                if (gearsetModule == null)
+                {
+                    ImGuiEx.Text("Gearset data is unavailable right now.".Loc());
+                    SimGS = null;
+                    return;
+                }
+
+                var validGS = gearsetModule->Entries.ToArray().Count(x => IsValidGearsetSafe(x.Id) && x.ClassJob == SelectedRecipe?.CraftType.RowId + 8);
 
                 if (validGS == 0)
                 {
@@ -893,7 +916,7 @@ namespace Artisan.UI
                 }
                 if (validGS == 1)
                 {
-                    var gs = RaptureGearsetModule.Instance()->Entries.ToArray().First(x => RaptureGearsetModule.Instance()->IsValidGearset(x.Id) && x.ClassJob == SelectedRecipe?.CraftType.RowId + 8);
+                    var gs = gearsetModule->Entries.ToArray().First(x => IsValidGearsetSafe(x.Id) && x.ClassJob == SelectedRecipe?.CraftType.RowId + 8);
                     SimGS = gs;
                     string name = gs.NameString;
                     bool materiaDiff = gs.Items.ToArray().Any(x => x.Flags.HasFlag(GearsetItemFlag.MateriaDiffers));
@@ -917,9 +940,9 @@ namespace Artisan.UI
                     SimGS = null;
                 }
 
-                foreach (var gs in RaptureGearsetModule.Instance()->Entries)
+                foreach (var gs in gearsetModule->Entries)
                 {
-                    if (!RaptureGearsetModule.Instance()->IsValidGearset(gs.Id)) continue;
+                    if (!IsValidGearsetSafe(gs.Id)) continue;
                     if (gs.ClassJob != SelectedRecipe?.CraftType.RowId + 8)
                         continue;
 

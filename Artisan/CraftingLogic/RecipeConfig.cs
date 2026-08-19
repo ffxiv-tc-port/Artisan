@@ -353,17 +353,24 @@ public class RecipeConfig
                     SimulatorUI.SimFood.Stats = new ConsumableStats(config.RequiredFood, config.RequiredFoodHQ);
                 }
 
-                foreach (ref var gs in RaptureGearsetModule.Instance()->Entries)
+                // Instance() 沒登入/切場景時合法回 null,直接 ->Entries 就是解參考 null
+                // (AccessViolationException,try/catch 攔不到)。取不到就不挑裝備組,
+                // SimGS 維持原值 —— 下面的使用點本來就處理 SimGS 為 null 的情況。
+                var gearsetModule = RaptureGearsetModule.Instance();
+                if (gearsetModule != null)
                 {
-                    if ((Job)gs.ClassJob == (Job)((uint)Job.CRP + recipe.CraftType.RowId))
+                    foreach (ref var gs in gearsetModule->Entries)
                     {
-                        if (SimulatorUI.SimGS is null || (Job)SimulatorUI.SimGS.Value.ClassJob != (Job)((uint)Job.CRP + recipe.CraftType.RowId))
+                        if ((Job)gs.ClassJob == (Job)((uint)Job.CRP + recipe.CraftType.RowId))
                         {
-                            SimulatorUI.SimGS = gs;
-                        }
+                            if (SimulatorUI.SimGS is null || (Job)SimulatorUI.SimGS.Value.ClassJob != (Job)((uint)Job.CRP + recipe.CraftType.RowId))
+                            {
+                                SimulatorUI.SimGS = gs;
+                            }
 
-                        if (SimulatorUI.SimGS.Value.ItemLevel < gs.ItemLevel)
-                            SimulatorUI.SimGS = gs;
+                            if (SimulatorUI.SimGS.Value.ItemLevel < gs.ItemLevel)
+                                SimulatorUI.SimGS = gs;
+                        }
                     }
                 }
 

@@ -241,7 +241,16 @@ public unsafe struct CharacterStats
     {
         if (CharacterInfo.JobID == job)
             return GetBaseStatsEquipped();
-        foreach (ref var gs in RaptureGearsetModule.Instance()->Entries)
+
+        // Instance() 沒登入時合法回 null(它是 UIModule 的轉手,FFXIVClientStructs 裡就寫成
+        // 「uiModule == null ? null : ...」)。直接 ->Entries 是解參考 null =
+        // AccessViolationException,而它是 corrupted-state exception:下面那個 try/catch
+        // 完全攔不到。取不到裝備組清單就走本來就有的 fallback。
+        var gearsetModule = RaptureGearsetModule.Instance();
+        if (gearsetModule == null)
+            return GetBaseStatsEquipped();
+
+        foreach (ref var gs in gearsetModule->Entries)
         {
             try
             {

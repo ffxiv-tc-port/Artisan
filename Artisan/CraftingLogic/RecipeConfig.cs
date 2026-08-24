@@ -14,6 +14,7 @@ using ECommons.LanguageHelpers;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -25,6 +26,40 @@ public class RecipeConfig
 {
     public const uint Default = 0;
     public const uint Disabled = 1;
+
+    // 臨時覆寫:只活在記憶體裡,不進設定檔(NonSerialized 擋欄位序列化、JsonIgnore 擋
+    // Newtonsoft)。由 Artisan.SetTemporary* 這組 IPC 設定,Artisan.ClearTemporary*
+    // 或 Artisan 卸載時清掉。
+    // 🔴 未設定時一律沿用既有欄位 —— 既有使用者的行為與設定檔內容都不變。
+    [NonSerialized, JsonIgnore]
+    public string TempSolverType = "";
+    [NonSerialized, JsonIgnore]
+    public int TempSolverFlavour = -1;
+    [NonSerialized, JsonIgnore]
+    public uint? TempRequiredFood;
+    [NonSerialized, JsonIgnore]
+    public bool TempRequiredFoodHQ;
+    [NonSerialized, JsonIgnore]
+    public uint? TempRequiredPotion;
+    [NonSerialized, JsonIgnore]
+    public bool TempRequiredPotionHQ;
+
+    public string CurrentSolverType => TempSolverType.Length > 0 ? TempSolverType : SolverType;
+    public int CurrentSolverFlavour => TempSolverFlavour >= 0 ? TempSolverFlavour : SolverFlavour;
+    public uint CurrentRequiredFood => TempRequiredFood ?? requiredFood;
+    public bool CurrentRequiredFoodHQ => TempRequiredFood.HasValue ? TempRequiredFoodHQ : requiredFoodHQ;
+    public uint CurrentRequiredPotion => TempRequiredPotion ?? requiredPotion;
+    public bool CurrentRequiredPotionHQ => TempRequiredPotion.HasValue ? TempRequiredPotionHQ : requiredPotionHQ;
+
+    public void ClearTemporaryOverrides()
+    {
+        TempSolverType = "";
+        TempSolverFlavour = -1;
+        TempRequiredFood = null;
+        TempRequiredFoodHQ = false;
+        TempRequiredPotion = null;
+        TempRequiredPotionHQ = false;
+    }
 
 
     public string SolverType = ""; // TODO: ideally it should be a Type?, but that causes problems for serialization
@@ -43,12 +78,12 @@ public class RecipeConfig
     public bool SquadronManualEnabled => RequiredSquadronManual != Disabled;
 
 
-    public uint RequiredFood => requiredFood == Default ? P.Config.DefaultConsumables.requiredFood : requiredFood;
-    public uint RequiredPotion => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotion : requiredPotion;
+    public uint RequiredFood => CurrentRequiredFood == Default ? P.Config.DefaultConsumables.requiredFood : CurrentRequiredFood;
+    public uint RequiredPotion => CurrentRequiredPotion == Default ? P.Config.DefaultConsumables.requiredPotion : CurrentRequiredPotion;
     public uint RequiredManual => requiredManual == Default ? P.Config.DefaultConsumables.requiredManual : requiredManual;
     public uint RequiredSquadronManual => requiredSquadronManual == Default ? P.Config.DefaultConsumables.requiredSquadronManual : requiredSquadronManual;
-    public bool RequiredFoodHQ => requiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : requiredFoodHQ;
-    public bool RequiredPotionHQ => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : requiredPotionHQ;
+    public bool RequiredFoodHQ => CurrentRequiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : CurrentRequiredFoodHQ;
+    public bool RequiredPotionHQ => CurrentRequiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : CurrentRequiredPotionHQ;
 
 
     public string FoodName => requiredFood == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.FoodName) : RequiredFood == Disabled ? "Disabled".Loc() :$"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";

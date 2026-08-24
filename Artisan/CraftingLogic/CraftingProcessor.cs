@@ -88,7 +88,7 @@ public static class CraftingProcessor
 
     public static ISolverDefinition.Desc GetSolverForRecipe(RecipeConfig? recipeConfig, CraftState craft)
     {
-        var s = FindSolver(craft, recipeConfig?.SolverType ?? "", recipeConfig?.SolverFlavour ?? 0);
+        var s = FindSolver(craft, recipeConfig?.CurrentSolverType ?? "", recipeConfig?.CurrentSolverFlavour ?? 0);
         if (s != null)
             return s.Value;
 
@@ -97,12 +97,15 @@ public static class CraftingProcessor
         // swaps in the standard solver without telling anyone. Gate that behind the setting, keeping the
         // Def pointing at the real definition so CreateSolver() on this Desc still cannot null-deref.
         // ⚠️ FallbackToStandardAllowed 不只看使用者那個開關:由 IPC 驅動的製作(ICE)一律不准降級。
-        var configuredType = recipeConfig?.SolverType ?? "";
+        // 🔴 這裡要看**生效中**的解算器,不是設定檔裡的那個。臨時解算器正是 IPC 設進來的
+        //    (ICE),而這段擋的就是「IPC 驅動時不准無聲降級」——用 SolverType 會讓臨時
+        //    解算器不可用時直接掉進下面的 MaxBy(Priority),正好繞過這個閘門。
+        var configuredType = recipeConfig?.CurrentSolverType ?? "";
         if (configuredType.Length > 0 && !RaphaelCache.FallbackToStandardAllowed)
         {
             var configuredDef = SolverDefinitions.Find(x => x.GetType().FullName == configuredType);
             if (configuredDef != null)
-                return new ISolverDefinition.Desc(configuredDef, recipeConfig?.SolverFlavour ?? 0, 0,
+                return new ISolverDefinition.Desc(configuredDef, recipeConfig?.CurrentSolverFlavour ?? 0, 0,
                     "(assigned solver unavailable)".Loc(),
                     "The solver assigned to this recipe is not available right now.".Loc());
         }

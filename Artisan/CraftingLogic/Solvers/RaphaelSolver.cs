@@ -546,7 +546,9 @@ namespace Artisan.CraftingLogic.Solvers
                         ImGuiEx.Tooltip(ignored + "\n\n" + "Rebuild the solution with your current gear, or restore the stats it was generated for.".Loc());
                     }
 
-                    if (liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
+                    // 臨時解算器生效中就不要自動產生 Raphael 解:那是別的外掛透過 IPC 指定的,
+                    // 自動產生會在使用者沒看畫面時把設定檔的解算器解算起來、蓋掉臨時指定的意圖。
+                    if (config.TempSolverType.Length == 0 && liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
                     {
                         if (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts))
                             Build(craft, TempConfigs[key]);

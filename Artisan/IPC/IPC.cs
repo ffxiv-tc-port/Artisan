@@ -1,13 +1,16 @@
 ﻿using Artisan.Autocraft;
 using Artisan.CraftingLists;
+using Artisan.CraftingLogic;
 using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Dalamud.Game.ClientState.Conditions;
 using ECommons.DalamudServices;
+using ECommons.ExcelServices;
 using ECommons.Logging;
 using OtterGui;
 using OtterGui.Extensions;
 using System;
+using System.Linq;
 
 namespace Artisan.IPC
 {
@@ -54,6 +57,16 @@ namespace Artisan.IPC
 
             Svc.PluginInterface.GetIpcProvider<ushort, int, object>("Artisan.CraftItem").RegisterAction(CraftX);
             Svc.PluginInterface.GetIpcProvider<bool>("Artisan.IsBusy").RegisterFunc(IsBusy);
+
+            // 每配方的「臨時」工藝設定:只活在記憶體裡,不寫進設定檔,Artisan 卸載時清空。
+            Svc.PluginInterface.GetIpcProvider<uint, string, bool>("Artisan.SetTemporarySolver").RegisterFunc(SetTemporarySolver);
+            Svc.PluginInterface.GetIpcProvider<uint, uint, bool, bool>("Artisan.SetTemporaryFood").RegisterFunc(SetTemporaryFood);
+            Svc.PluginInterface.GetIpcProvider<uint, uint, bool, bool>("Artisan.SetTemporaryPotion").RegisterFunc(SetTemporaryPotion);
+            Svc.PluginInterface.GetIpcProvider<uint, object>("Artisan.ClearTemporaryRecipeSettings").RegisterAction(ClearTemporaryRecipeSettings);
+            Svc.PluginInterface.GetIpcProvider<object>("Artisan.ClearAllTemporarySettings").RegisterAction(ClearAllTemporarySettings);
+            Svc.PluginInterface.GetIpcProvider<uint, string[]>("Artisan.GetAvailableSolvers").RegisterFunc(GetAvailableSolvers);
+            Svc.PluginInterface.GetIpcProvider<bool, uint[]>("Artisan.GetAvailableFood").RegisterFunc(GetAvailableFood);
+            Svc.PluginInterface.GetIpcProvider<bool, uint[]>("Artisan.GetAvailablePots").RegisterFunc(GetAvailablePots);
         }
 
         internal static void Dispose()
@@ -70,6 +83,19 @@ namespace Artisan.IPC
 
             Svc.PluginInterface.GetIpcProvider<ushort, int, object>("Artisan.CraftItem").UnregisterAction();
             Svc.PluginInterface.GetIpcProvider<ushort, int, object>("Artisan.IsBusy").UnregisterFunc();
+
+            Svc.PluginInterface.GetIpcProvider<uint, string, bool>("Artisan.SetTemporarySolver").UnregisterFunc();
+            Svc.PluginInterface.GetIpcProvider<uint, uint, bool, bool>("Artisan.SetTemporaryFood").UnregisterFunc();
+            Svc.PluginInterface.GetIpcProvider<uint, uint, bool, bool>("Artisan.SetTemporaryPotion").UnregisterFunc();
+            Svc.PluginInterface.GetIpcProvider<uint, object>("Artisan.ClearTemporaryRecipeSettings").UnregisterAction();
+            Svc.PluginInterface.GetIpcProvider<object>("Artisan.ClearAllTemporarySettings").UnregisterAction();
+            Svc.PluginInterface.GetIpcProvider<uint, string[]>("Artisan.GetAvailableSolvers").UnregisterFunc();
+            Svc.PluginInterface.GetIpcProvider<bool, uint[]>("Artisan.GetAvailableFood").UnregisterFunc();
+            Svc.PluginInterface.GetIpcProvider<bool, uint[]>("Artisan.GetAvailablePots").UnregisterFunc();
+
+            // 卸載時把臨時覆寫清乾淨。它們不進設定檔,但 P.Config 的 RecipeConfig 物件
+            // 在同一個 session 內是活的,留著會讓下次載入沿用上次的臨時設定。
+            ClearAllTemporarySettings();
         }
 
         static bool GetEnduranceStatus()
@@ -182,6 +208,118 @@ namespace Artisan.IPC
         public static bool IsBusy()
         {
             return Endurance.Enable || CraftingListUI.Processing || P.TM.NumQueuedTasks > 0 || P.CTM.NumQueuedTasks > 0 || !(Crafting.CurState is Crafting.State.IdleBetween or Crafting.State.IdleNormal);
+        }
+
+        private static bool SetTemporarySolver(uint recipeId, string solverName)
+        {
+            if (!TryBuildCraft(recipeId, out var craft))
+                return false;
+
+            var selectedSolver = CraftingProcessor.GetAvailableSolversForRecipe(craft, false)
+                .FirstOrDefault(x => string.Equals(x.Name, solverName, StringComparison.Ordinal));
+            if (string.IsNullOrEmpty(selectedSolver.Name))
+            {
+                DuoLog.Error($"配方 {recipeId} 不支援求解器「{solverName}」。");
+                return false;
+            }
+
+            var config = GetOrCreateRecipeConfig(recipeId);
+            config.TempSolverType = selectedSolver.Def.GetType().FullName!;
+            config.TempSolverFlavour = selectedSolver.Flavour;
+            return true;
+        }
+
+        private static bool SetTemporaryFood(uint recipeId, uint itemId, bool hq)
+        {
+            if (!RecipeExists(recipeId))
+                return false;
+            if (itemId is not (RecipeConfig.Default or RecipeConfig.Disabled)
+                && !ConsumableChecker.GetFood(true, hq).Any(x => x.Id == itemId))
+            {
+                DuoLog.Error($"物品 {itemId} 不是 Artisan 可用的{(hq ? " HQ" : " NQ")}製作食物。");
+                return false;
+            }
+
+            var config = GetOrCreateRecipeConfig(recipeId);
+            config.TempRequiredFood = itemId == RecipeConfig.Default ? null : itemId;
+            config.TempRequiredFoodHQ = hq;
+            return true;
+        }
+
+        private static bool SetTemporaryPotion(uint recipeId, uint itemId, bool hq)
+        {
+            if (!RecipeExists(recipeId))
+                return false;
+            if (itemId is not (RecipeConfig.Default or RecipeConfig.Disabled)
+                && !ConsumableChecker.GetPots(true, hq).Any(x => x.Id == itemId))
+            {
+                DuoLog.Error($"物品 {itemId} 不是 Artisan 可用的{(hq ? " HQ" : " NQ")}製作藥水。");
+                return false;
+            }
+
+            var config = GetOrCreateRecipeConfig(recipeId);
+            config.TempRequiredPotion = itemId == RecipeConfig.Default ? null : itemId;
+            config.TempRequiredPotionHQ = hq;
+            return true;
+        }
+
+        private static void ClearTemporaryRecipeSettings(uint recipeId)
+        {
+            if (P.Config.RecipeConfigs.TryGetValue(recipeId, out var config))
+                config.ClearTemporaryOverrides();
+        }
+
+        private static void ClearAllTemporarySettings()
+        {
+            foreach (var config in P.Config.RecipeConfigs.Values.ToArray())
+                config.ClearTemporaryOverrides();
+        }
+
+        private static string[] GetAvailableSolvers(uint recipeId)
+            => TryBuildCraft(recipeId, out var craft)
+                ? CraftingProcessor.GetAvailableSolversForRecipe(craft, false)
+                    .Where(x => !string.IsNullOrEmpty(x.Name))
+                    .Select(x => x.Name)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray()
+                : [];
+
+        private static uint[] GetAvailableFood(bool hq)
+            => ConsumableChecker.GetFood(true, hq).Select(x => x.Id).Distinct().ToArray();
+
+        private static uint[] GetAvailablePots(bool hq)
+            => ConsumableChecker.GetPots(true, hq).Select(x => x.Id).Distinct().ToArray();
+
+        private static RecipeConfig GetOrCreateRecipeConfig(uint recipeId)
+        {
+            if (!P.Config.RecipeConfigs.TryGetValue(recipeId, out var config) || config == null)
+            {
+                config = new RecipeConfig();
+                P.Config.RecipeConfigs[recipeId] = config;
+            }
+            return config;
+        }
+
+        private static bool RecipeExists(uint recipeId)
+        {
+            if (LuminaSheets.RecipeSheet!.ContainsKey(recipeId))
+                return true;
+            DuoLog.Error($"找不到配方 {recipeId}。");
+            return false;
+        }
+
+        private static bool TryBuildCraft(uint recipeId, out CraftState craft)
+        {
+            craft = null!;
+            if (!LuminaSheets.RecipeSheet!.TryGetValue(recipeId, out var recipe))
+            {
+                DuoLog.Error($"找不到配方 {recipeId}。");
+                return false;
+            }
+
+            var job = (Job)((uint)Job.CRP + recipe.CraftType.RowId);
+            craft = Crafting.BuildCraftStateForRecipe(CharacterStats.GetBaseStatsForClassHeuristic(job), job, recipe);
+            return craft != null;
         }
 
         public enum ArtisanMode

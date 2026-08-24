@@ -14,6 +14,7 @@ using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.GameHelpers;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
@@ -143,7 +144,7 @@ namespace Artisan.UI
                     ImGui.BeginTable("DebugeRcipeConfigs", 9);
                     ImGui.TableHeader("DebugRecipeConfigs");
                     ImGui.TableNextColumn();
-                    ImGui.Text("Item");
+                    ImGui.Text("Item".Loc());
                     ImGui.TableNextColumn();
                     ImGui.Text("requiredFood");
                     ImGui.TableNextColumn();
@@ -270,7 +271,7 @@ namespace Artisan.UI
                     {
                         Svc.PluginInterface.GetIpcSubscriber<bool, object>("Artisan.SetEnduranceStatus").InvokeAction(true);
                     }
-                    if (ImGui.Button("Disable"))
+                    if (ImGui.Button("Disable".Loc()))
                     {
                         Svc.PluginInterface.GetIpcSubscriber<bool, object>("Artisan.SetEnduranceStatus").InvokeAction(false);
                     }

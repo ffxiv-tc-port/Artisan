@@ -49,10 +49,19 @@ namespace Artisan.UI
                 P.StylePushed = true;
             }
 
+            // base.PreDraw() 推入 Dalamud 的每視窗不透明度(ImGuiStyleVar.Alpha)。
+            // 必須推在主題「之後」:StyleModelV1.Push() 自己也推了 Alpha
+            // (本外掛主題 Broken Mountain 的 Alpha = 1.0),先 base 再主題會被主題蓋掉,
+            // 不透明度就靜默失效。
+            base.PreDraw();
         }
 
         public override void PostDraw()
         {
+            // 與 PreDraw 相反順序彈出:ImGui 樣式堆疊是 LIFO,
+            // 且 StyleModel.Pop() 依「計數」彈出而非依名稱,順序錯會還原到錯的值。
+            base.PostDraw();
+
             if (P.StylePushed)
             {
                 P.Style.Pop();

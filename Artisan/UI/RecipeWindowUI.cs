@@ -663,7 +663,7 @@ namespace Artisan
             if (itemNameNode == null || phaseProgress == null)
             {
                 // 使用者按下按鈕才會走到這裡（不是每影格路徑），安靜失敗會讓人以為清單已經建好了。
-                Svc.Log.Information("Artisan: SubmarinePartsMenu 的成品名或階段進度文字節點取不到，未建立工房清單。");
+                Svc.Log.Information("Artisan: SubmarinePartsMenu 的成品名或階段進度文字節點取不到，未建立工坊清單。");
                 return;
             }
 
@@ -688,7 +688,7 @@ namespace Artisan
                 var currentPartNode = GetWorkshopTextNode(addonPtr, 28);
                 if (currentPartNode == null)
                 {
-                    Svc.Log.Information("Artisan: SubmarinePartsMenu 的目前部件文字節點取不到，未建立工房清單。");
+                    Svc.Log.Information("Artisan: SubmarinePartsMenu 的目前部件文字節點取不到，未建立工坊清單。");
                     return;
                 }
 

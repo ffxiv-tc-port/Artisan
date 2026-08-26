@@ -180,8 +180,14 @@ public unsafe struct CharacterStats
         stats.Craftsmanship = CharacterInfo.Craftsmanship;
         stats.Control = CharacterInfo.Control;
         stats.CP = (int)CharacterInfo.MaxCP;
-        stats.Specialist = InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 13)->ItemId != 0; // specialist == job crystal equipped
-        stats.SplendorCosmic = Svc.Data.GetExcelSheet<Item>()?.GetRow(InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 0)->ItemId) is { LevelEquip: 90 or 100, Rarity: >= 4 };
+        // InventoryManager.GetInventorySlot(type, index) 有 null 回傳路徑（換區／剛登入時容器還沒載入），
+        // 原本兩行都直接 ->ItemId 解參考。讀不到時兩個旗標都留 false：
+        // Specialist=false 讓求解器不去規劃專家限定技能（假定有而實際不能用，整條製作序列會斷）；
+        // SplendorCosmic=false 同樣是「少假設一個加成」的方向。
+        var soulCrystal = InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 13);
+        stats.Specialist = soulCrystal != null && soulCrystal->ItemId != 0; // specialist == job crystal equipped
+        var mainHand = InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 0);
+        stats.SplendorCosmic = mainHand != null && Svc.Data.GetExcelSheet<Item>()?.GetRow(mainHand->ItemId) is { LevelEquip: 90 or 100, Rarity: >= 4 };
         stats.Manipulation = CharacterInfo.IsManipulationUnlocked(CharacterInfo.JobID);
 
         return stats;
@@ -195,7 +201,10 @@ public unsafe struct CharacterStats
     {
         var res = GetBaseStatsNaked();
         var inventory = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
-        if (inventory == null)
+        // 既有的 == null 只擋了一半：容器存在但 Items（偏移 0x08）尚未配置時 Size 可能已非 0，
+        // 下面的 inventory->Items + i 會變成「null + i * 0x48」的小偏移假指標，
+        // ItemStats 會照著它讀出垃圾裝備數值 —— 那比讀不到更糟（求解器會拿假的匠心/加工去排序列）。
+        if (inventory == null || inventory->Items == null)
             return res;
 
         for (int i = 0; i < inventory->Size; ++i)
@@ -232,7 +241,16 @@ public unsafe struct CharacterStats
     {
         if (CharacterInfo.JobID == job)
             return GetBaseStatsEquipped();
-        foreach (ref var gs in RaptureGearsetModule.Instance()->Entries)
+
+        // Instance() 沒登入時合法回 null(它是 UIModule 的轉手,FFXIVClientStructs 裡就寫成
+        // 「uiModule == null ? null : ...」)。直接 ->Entries 是解參考 null =
+        // AccessViolationException,而它是 corrupted-state exception:下面那個 try/catch
+        // 完全攔不到。取不到裝備組清單就走本來就有的 fallback。
+        var gearsetModule = RaptureGearsetModule.Instance();
+        if (gearsetModule == null)
+            return GetBaseStatsEquipped();
+
+        foreach (ref var gs in gearsetModule->Entries)
         {
             try
             {

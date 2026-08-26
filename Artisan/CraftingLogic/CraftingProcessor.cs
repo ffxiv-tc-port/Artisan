@@ -4,6 +4,7 @@ using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using ECommons.Logging;
 using System;
 using System.Collections.Generic;
@@ -87,9 +88,27 @@ public static class CraftingProcessor
 
     public static ISolverDefinition.Desc GetSolverForRecipe(RecipeConfig? recipeConfig, CraftState craft)
     {
-        var s = FindSolver(craft, recipeConfig?.SolverType ?? "", recipeConfig?.SolverFlavour ?? 0);
+        var s = FindSolver(craft, recipeConfig?.CurrentSolverType ?? "", recipeConfig?.CurrentSolverFlavour ?? 0);
         if (s != null)
             return s.Value;
+
+        // The recipe has a solver explicitly assigned, but that definition currently offers no matching
+        // flavour at all (its Flavours() yielded nothing). Falling straight through to MaxBy(Priority)
+        // swaps in the standard solver without telling anyone. Gate that behind the setting, keeping the
+        // Def pointing at the real definition so CreateSolver() on this Desc still cannot null-deref.
+        // ⚠️ FallbackToStandardAllowed 不只看使用者那個開關:由 IPC 驅動的製作(ICE)一律不准降級。
+        // 🔴 這裡要看**生效中**的解算器,不是設定檔裡的那個。臨時解算器正是 IPC 設進來的
+        //    (ICE),而這段擋的就是「IPC 驅動時不准無聲降級」——用 SolverType 會讓臨時
+        //    解算器不可用時直接掉進下面的 MaxBy(Priority),正好繞過這個閘門。
+        var configuredType = recipeConfig?.CurrentSolverType ?? "";
+        if (configuredType.Length > 0 && !RaphaelCache.FallbackToStandardAllowed)
+        {
+            var configuredDef = SolverDefinitions.Find(x => x.GetType().FullName == configuredType);
+            if (configuredDef != null)
+                return new ISolverDefinition.Desc(configuredDef, recipeConfig?.CurrentSolverFlavour ?? 0, 0,
+                    "(assigned solver unavailable)".Loc(),
+                    "The solver assigned to this recipe is not available right now.".Loc());
+        }
 
         var s2 = GetAvailableSolversForRecipe(craft, false);
         if (s2.Count() > 0)
@@ -127,6 +146,15 @@ public static class CraftingProcessor
                 return;
             }
             _activeSolver = autoSolver.CreateSolver(craft);
+            if (_activeSolver == null)
+            {
+                // GetSolverForRecipe returns default when nothing at all is available, and CreateSolver on a
+                // default Desc returns null. Everything below dereferences _activeSolver unconditionally, so
+                // without this the craft starts and then throws NRE out of the framework update.
+                SolverFailed?.Invoke(recipe, "No solver is available for this craft.".Loc());
+                ActiveSolver = new("");
+                return;
+            }
             ActiveSolver = new(autoSolver.Name, _activeSolver);
         }
 
@@ -146,6 +174,12 @@ public static class CraftingProcessor
         SolverStarted?.Invoke(recipe, ActiveSolver, craft, initialStep);
 
         _nextRec = _activeSolver.Solve(craft, initialStep);
+        // 奇蹟之材的閘門判定在上面那一行就跑完了。**在這裡**記 log 而不是在解算器內部,是因為
+        // 同一個解算器也被配方視窗的提示取樣器拿去跑上百次模擬(見 SolverHintSampler),
+        // 在裡面記會把 log 洗掉;而這裡保證是實機的那一場製作。
+        // Information 級是刻意的:使用者跑 LogLevel 2,Debug/Verbose 收不到。
+        if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.LastGateExplanation is { Length: > 0 } mmWhy)
+            Svc.Log.Information($"[MaterialMiracle] {mmWhy}");
         if (Simulator.CannotUseAction(craft, initialStep, _nextRec.Action, out string reason))
             DuoLog.Error($"Unable to use {_nextRec.Action.NameOfAction()}: {reason}");
         if (_nextRec.Action != Skills.None)
@@ -161,6 +195,11 @@ public static class CraftingProcessor
             Svc.Log.Warning($"Previous action was different from recommendation: recommended {_nextRec.Action}, used {step.PrevComboAction}");
 
         _nextRec = _activeSolver.Solve(craft, step);
+        // 標準解算器的「奇蹟之材期間要不要交給專家解算器代打」閘門是在製作**中途**(buff 生效那一步)
+        // 才跑的,所以不能像 MaterialMiracleSolver 那樣只在 OnCraftStarted 讀一次。
+        // 讀走即清 ⇒ 一場製作只會印一行。Information 級是刻意的:使用者跑 LogLevel 2。
+        if (_activeSolver is Solvers.StandardSolver stdSolver && stdSolver.ConsumeGateExplanation() is { Length: > 0 } stdWhy)
+            Svc.Log.Information($"[MaterialMiracle] {stdWhy}");
         Svc.Log.Debug($"Next rec is: {_nextRec.Action}");
         if (Simulator.CannotUseAction(craft, step, _nextRec.Action, out string reason))
             DuoLog.Error($"Unable to use {_nextRec.Action.NameOfAction()}: {reason}");

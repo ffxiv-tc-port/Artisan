@@ -112,7 +112,10 @@ internal static class CraftingListContextMenu
 
         if (args.AddonName == "RecipeNote")
         {
+            // FindAgentInterface 找不到回 0——0+0x398 的解參考是攔不到的 AVE;同檔其餘呼叫點都有判,唯獨這段漏了。
             IntPtr recipeNoteAgent = Svc.GameGui.FindAgentInterface(args.AddonName);
+            if (recipeNoteAgent == IntPtr.Zero)
+                return;
             var ItemId = *(uint*)(recipeNoteAgent + 0x398);
             var craftTypeIndex = *(uint*)(recipeNoteAgent + 944);
 
@@ -249,8 +252,22 @@ internal static class CraftingListContextMenu
 
     private static unsafe IntPtr AgentById(AgentId id)
     {
-        var uiModule = (UIModule*)Svc.GameGui.GetUIModule().Address;
-        var agents = uiModule->GetAgentModule();
+        // 🔴 這條鏈原本三層全裸。`Svc.GameGui.GetUIModule()` 是 Dalamud 的服務包裝
+        //（UIModulePtr），它包的就是 `(nint)UIModule.Instance()` —— **`.Address` 合法為 0**
+        // （UIModule.Instance() 內部是 `Framework.Instance() == null ? null : ...`）。
+        // 把 0 轉型成 UIModule* 再 `->GetAgentModule()` 就是 AccessViolationException，
+        // 而 AVE 是 corrupted-state exception，try/catch 一律攔不到。
+        // 中間每一跳都是獨立的 null 路徑，所以三跳都要各自判。
+        // 呼叫端一律走 `GetObjectItemId(IntPtr, int)`，它已經檢查 `agent != IntPtr.Zero`，
+        // 因此回 IntPtr.Zero 就是正確的 fail-closed 值（選單項目不出現），不需要改呼叫端。
+        var uiModuleAddress = Svc.GameGui.GetUIModule().Address;
+        if (uiModuleAddress == nint.Zero)
+            return IntPtr.Zero;
+
+        var agents = ((UIModule*)uiModuleAddress)->GetAgentModule();
+        if (agents == null)
+            return IntPtr.Zero;
+
         var agent = agents->GetAgentByInternalId(id);
         return (IntPtr)agent;
     }
@@ -329,13 +346,16 @@ internal static class CraftingListContextMenu
         }
 
         CraftingListHelpers.TidyUpList(CraftingListUI.selectedList);
-        foreach (var w in P.ws.Windows)
+        // Matched on the literal window title "List Editor###<id>" before. That couples this refresh to an
+        // untranslated window caption - the moment the title is localised the string stops matching and the
+        // editor silently never refreshes after a context-menu add. It also cast every window in the list with
+        // `as`, which would NRE on any non-ListEditor window that happened to match. Select by type and id.
+        foreach (var editor in P.ws.Windows
+                     .OfType<ListEditor>()
+                     .Where(x => x.SelectedList.ID == CraftingListUI.selectedList.ID))
         {
-            if (w.WindowName == $"List Editor###{CraftingListUI.selectedList.ID}")
-            {
-                (w as ListEditor).RecipeSelector.ReplaceItems(CraftingListUI.selectedList.Recipes);
-                (w as ListEditor).RefreshTable(null, true);
-            }
+            editor.RecipeSelector.ReplaceItems(CraftingListUI.selectedList.Recipes);
+            editor.RefreshTable(null, true);
         }
 
         P.Config.Save();

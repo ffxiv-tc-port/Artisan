@@ -8,6 +8,7 @@ using ECommons.Automation;
 using ECommons.Automation.LegacyTaskManager;
 using ECommons.DalamudServices;
 using ECommons.Events;
+using ECommons.Throttlers;
 using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -38,18 +39,77 @@ internal unsafe static class RetainerListHandlers
 {
     internal static bool? SelectRetainerByID(ulong id)
     {
-        string retainerName = "";
-        for (uint i = 0; i < 10; i++)
+        var retainerName = ResolveRetainerName(id);
+        if (string.IsNullOrEmpty(retainerName))
         {
-            var retainer = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance()->GetRetainerBySortedIndex(i);
-            if (retainer == null) continue;
-
-            if (retainer->RetainerId == id)
-                retainerName = retainer->NameString;
-
+            // 🔴 Returns false ("not done, ask me again") rather than throwing. This task runs 200ms after the
+            // summoning bell is touched, and the client has usually not received the retainer list by then.
+            // SelectRetainerByName below is already written to be retried until the RetainerList addon is
+            // ready - that is what its bool? result is for - but throwing here jumped straight past it, and
+            // ECommons' TaskManager answers an exception by logging the message, dropping the task and
+            // carrying on with the rest of the queue. The whole restock then ran with no retainer ever
+            // selected: the retainer window never opened, so every later step quietly did nothing while
+            // looking like it was working.
+            ReportRetainerUnresolved(id);
+            return false;
         }
 
         return SelectRetainerByName(retainerName);
+    }
+
+    /// <summary>
+    /// Turns a retainer id into its name, or "" when the client cannot answer yet.
+    /// <para/>
+    /// 🔴 Deliberately walks the raw <c>Retainers</c> array rather than calling
+    /// <c>GetRetainerBySortedIndex</c>. That helper indexes through the display-order table at +0x2D0 and
+    /// returns <c>&amp;Retainers[displayOrder[i]]</c>, so for as long as that table is still zeroed - it is
+    /// only filled in once the retainer list has actually loaded - every sorted index resolves to retainer 0
+    /// and a lookup for any other retainer silently finds nothing. AutoRetainer's own GameRetainerManager
+    /// guards against the same table being unpopulated. The raw array needs no such table.
+    /// </summary>
+    private static string ResolveRetainerName(ulong id)
+    {
+        if (id == 0) return "";
+
+        var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+        if (manager == null) return "";
+
+        for (var i = 0; i < manager->Retainers.Length; i++)
+        {
+            var retainer = manager->Retainers[i];
+            if (retainer.RetainerId == id)
+                return retainer.NameString;
+        }
+
+        return "";
+    }
+
+    /// <summary>
+    /// Says why a retainer id could not be turned into a name. Information level because that is the level
+    /// users actually run at, and because this is otherwise completely invisible - the only symptom is
+    /// "restocking did nothing". Throttled per id, since the caller polls this.
+    /// </summary>
+    private static void ReportRetainerUnresolved(ulong id)
+    {
+        if (!EzThrottler.Throttle($"ArtisanResolveRetainer{id}", 3000)) return;
+
+        var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+        if (manager == null)
+        {
+            Svc.Log.Information($"[Artisan][Restock] Retainer {id} cannot be resolved: RetainerManager is not available yet. Waiting.");
+            return;
+        }
+
+        var loaded = new List<ulong>();
+        for (var i = 0; i < manager->Retainers.Length; i++)
+        {
+            var retainer = manager->Retainers[i];
+            if (retainer.RetainerId != 0) loaded.Add(retainer.RetainerId);
+        }
+
+        Svc.Log.Information($"[Artisan][Restock] Retainer {id} is not in the client's retainer list yet " +
+                            $"(IsReady={manager->IsReady}, {loaded.Count} loaded: {(loaded.Count == 0 ? "none" : string.Join(", ", loaded))}). " +
+                            $"Waiting for the list to arrive rather than skipping this retainer.");
     }
 
 
@@ -104,7 +164,7 @@ internal unsafe static class RetainerListHandlers
 
     internal static bool TryGetCurrentRetainer(out string name)
     {
-        if (Svc.Condition[ConditionFlag.OccupiedSummoningBell] && ProperOnLogin.PlayerPresent && Svc.Objects.Where(x => x.ObjectKind == ObjectKind.Retainer).OrderBy(x => Vector3.Distance(Svc.ClientState.LocalPlayer.Position, x.Position)).TryGetFirst(out var obj))
+        if (Svc.Condition[ConditionFlag.OccupiedSummoningBell] && ProperOnLogin.PlayerPresent && Svc.Objects.Where(x => x.ObjectKind == ObjectKind.Retainer).OrderBy(x => Vector3.Distance(Svc.Objects.LocalPlayer.Position, x.Position)).TryGetFirst(out var obj))
         {
             name = obj.Name.ToString();
             return true;
@@ -247,19 +307,50 @@ internal unsafe static class RetainerHandlers
 
         foreach (var inv in inventories)
         {
-            //Svc.Log.Debug($"RETAINER PAGE {inv} WITH SIZE {InventoryManager.Instance()->GetInventoryContainer(inv)->Size}");
-            for (int i = 0; i < InventoryManager.Instance()->GetInventoryContainer(inv)->Size; i++)
+            // 容器指標提到迴圈外：原本每次迭代都呼叫兩次 GetInventoryContainer（條件式一次、取格子一次）。
+            // 迴圈內唯二會回到遊戲的呼叫（OpenForItemSlot / Callback.Fire）後面都緊接著 return，
+            // 沒有任何一輪會在遊戲可能重配容器之後繼續跑，所以提出來不會拿到失效指標。
+            var container = InventoryManager.Instance()->GetInventoryContainer(inv);
+            // 讀不到就跳過這一頁，當成「這一頁裡沒有這個道具」，最壞情況是回 false 讓呼叫端重試。
+            // 反方向極危險：Items 尚未配置時 GetInventorySlot(i) 會回小偏移假指標，
+            // 假的 ItemId 若剛好對上就會用那個 i 去 OpenForItemSlot，對錯的格子按下「取回」。
+            if (container == null || container->Items == null)
+                continue;
+            //Svc.Log.Debug($"RETAINER PAGE {inv} WITH SIZE {container->Size}");
+            for (int i = 0; i < container->Size; i++)
             {
-                var item = InventoryManager.Instance()->GetInventoryContainer(inv)->GetInventorySlot(i);
+                var item = container->GetInventorySlot(i);
+                if (item == null)
+                    continue;
                 //Svc.Log.Debug($"ITEM {item->ItemId.NameOfItem()} IN {item->Slot}");
                 if (item->ItemId == ItemId && ((lookingForHQ && item->Flags == InventoryItem.ItemFlags.HighQuality) || (!lookingForHQ)))
                 {
                     quantity = item->Quantity;
                     Svc.Log.Debug($"Found item? {item->Quantity}");
+                    // 🔴 這一行原本有三處連續裸解參考,任何一處是 null 都是 AccessViolationException
+                    //    (corrupted-state exception,try/catch 攔不到,遊戲直接結束):
+                    //    ① AgentInventoryContext.Instance() 是產生器產出的
+                    //       「agentModule == null ? null : GetAgentByInternalId(...)」,兩層都能合法回 null;
+                    //    ② AgentModule.Instance() 是 UIModule 的轉手,同樣會回 null;
+                    //    ③ GetAgentByInternalId 查的是 FixedSizeArray484<Pointer<AgentInterface>>,
+                    //       雇員 agent 那一格還沒建立時就是 null。
+                    //    判法與 PreCrafting.cs 的裝備流程(451 行起)一致。
+                    // fail-closed:取不到就回 false —— 與這個迴圈既有的「這一頁裡沒有這個道具」同義,
+                    //    呼叫端本來就會重試(見上面 314 行的註解)。
                     var ag = AgentInventoryContext.Instance();
-                    ag->OpenForItemSlot(inv, i, 0, AgentModule.Instance()->GetAgentByInternalId(AgentId.Retainer)->GetAddonId());
+                    var agentModule = AgentModule.Instance();
+                    var retainerAgent = agentModule == null ? null : agentModule->GetAgentByInternalId(AgentId.Retainer);
+                    if (ag == null || retainerAgent == null)
+                    {
+                        Svc.Log.Information($"Artisan: inventory/retainer agent unavailable (ctx={(nint)ag:X}, retainer={(nint)retainerAgent:X}) - not opening the context menu for item {ItemId} this time.");
+                        return false;
+                    }
+                    ag->OpenForItemSlot(inv, i, 0, retainerAgent->GetAddonId());
                     var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu", 1).Address;
+                    // 重新取得的一次呼叫,各自判空(下面 358 行起整段都在解參考它)。
                     var contextAgent = AgentInventoryContext.Instance();
+                    if (contextAgent == null)
+                        return false;
                     var indexOfRetrieveAll = -1;
                     var indexOfRetrieveQuantity = -1;
 
@@ -355,9 +446,31 @@ internal unsafe static class RetainerHandlers
         var text = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Addon>().GetRow(13530).Text.ToDalamudString().GetText();
         if (TryGetAddonByName<AtkUnitBase>("RetainerItemTransferProgress", out var addon) && IsAddonReady(addon))
         {
-            var button = (AtkComponentButton*)addon->UldManager.NodeList[2]->GetComponent();
-            var nodetext = MemoryHelper.ReadSeString(&addon->UldManager.NodeList[2]->GetComponent()->UldManager.NodeList[2]->GetAsAtkTextNode()->NodeText).GetText();
-            if (nodetext == text && addon->UldManager.NodeList[2]->IsVisible() && button->IsEnabled && RetainerInfo.GenericThrottle)
+            // 🔴 GetComponent()／GetAsAtkTextNode() 在 FFXIVClientStructs 都是 [MemberFunction] 原生呼叫，
+            // 不是受管理的 null-safe 存取器 —— 對空節點呼叫一樣是 AVE。IsEnabled 解的又是 OwnerNode
+            // （AtkComponentBase 的 [0xA8]），對 OwnerNode 零空指標檢查。
+            // AVE 是 corrupted-state exception，try/catch 攔不到，只能在呼叫／讀取前先驗。
+            // 節點與元件一律先取到區域變數再用（原本 NodeList[2] 被重取三次，是 TOCTOU）；
+            // 上界也要驗 —— NodeListCount 不足時 NodeList[2] 讀到的是陣列後方的堆積垃圾，
+            // 那不是 null，只做判空等於沒擋。任一層驗不過就這一幀不做事，下一輪重來。
+            var nodeCount = addon->UldManager.NodeListCount;
+            var nodeList = addon->UldManager.NodeList;
+            if (nodeCount <= 2 || nodeList == null) return false;
+            var progressNode = nodeList[2];
+            if (progressNode == null) return false;
+            var component = progressNode->GetComponent();
+            if (component == null) return false;
+            var innerCount = component->UldManager.NodeListCount;
+            var innerList = component->UldManager.NodeList;
+            if (innerCount <= 2 || innerList == null) return false;
+            var labelNode = innerList[2];
+            if (labelNode == null) return false;
+            var labelTextNode = labelNode->GetAsAtkTextNode();
+            if (labelTextNode == null) return false;
+
+            var button = (AtkComponentButton*)component;
+            var nodetext = MemoryHelper.ReadSeString(&labelTextNode->NodeText).GetText();
+            if (nodetext == text && progressNode->IsVisible() && IsComponentEnabled(button) && RetainerInfo.GenericThrottle)
             {
                 button->ClickAddonButton(addon);
                 return true;
@@ -372,7 +485,16 @@ internal unsafe static class RetainerHandlers
 
     internal static bool? CloseAgentRetainer()
     {
-        var a = CSFramework.Instance()->UIModule->GetAgentModule()->GetAgentByInternalId(AgentId.Retainer);
+        // 五層鏈逐節判空(Framework isPointer:true 合法回 null,UIModule/AgentModule/agent 各層皆可 null)。
+        // 對照組=AutoRetainer 的 RetainerHandlers.CloseAgentRetainer 同鏈每層都判。取不到=沒有東西要關,回 false。
+        var framework = CSFramework.Instance();
+        if (framework == null) return false;
+        var uiModule = framework->UIModule;
+        if (uiModule == null) return false;
+        var agentModule = uiModule->GetAgentModule();
+        if (agentModule == null) return false;
+        var a = agentModule->GetAgentByInternalId(AgentId.Retainer);
+        if (a == null) return false;
         if (a->IsAgentActive())
         {
             a->Hide();

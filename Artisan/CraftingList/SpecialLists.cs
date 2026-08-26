@@ -46,7 +46,7 @@ namespace Artisan.CraftingLists
         public static void Draw()
         {
             ImGui.TextWrapped("This section is for building lists based on certain criteria rather than individually. Give your list a name and select your criteria from below then select \"Build List\" and a new list will be created with all items that match the criteria. If you do not select any checkboxes then that category will be treated as \"Any\" or \"All\" except for which job crafts it.".Loc());
-            ImGuiEx.TextWrapped("Job abbreviations: CRP - Carpenter; ARM - Armorer; LTW - Leatherworker; ALC - Alchemist; BSM - Blacksmith; GSM - Goldsmith; WVR - Weaver; CUL - Culinarian.".Loc());
+            ImGuiEx.TextWrapped(SharedText.JobAbbreviations.Loc());
 
             ImGui.Separator();
 
@@ -348,7 +348,7 @@ namespace Artisan.CraftingLists
                     return;
                 }
 
-                Notify.Info("Your list is being created. Please wait.".Loc());
+                Notify.Info(SharedText.ListBeingCreated.Loc());
                 Task.Run(() => CreateList(false)).ContinueWith(result => NotifySuccess(result));
             }
             if (ImGui.Button("Build List (with subcrafts)".Loc(), new System.Numerics.Vector2(ImGui.GetContentRegionAvail().X, 0)))
@@ -359,7 +359,7 @@ namespace Artisan.CraftingLists
                     return;
                 }
 
-                Notify.Info("Your list is being created. Please wait.".Loc());
+                Notify.Info(SharedText.ListBeingCreated.Loc());
                 Task.Run(() => CreateList(true)).ContinueWith(result => NotifySuccess(result));
             }
         }

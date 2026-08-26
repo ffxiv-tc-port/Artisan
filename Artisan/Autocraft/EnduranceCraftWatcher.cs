@@ -30,7 +30,12 @@ namespace Artisan.Autocraft
                 if (message.Payloads.Any(x => x.Type == PayloadType.Item))
                 {
                     var item = (ItemPayload)message.Payloads.First(x => x.Type == PayloadType.Item);
-                    if (Svc.Data.Excel.GetSheet<Item>().GetRow(item.Item.RowId).CanBeHq)
+                    // ItemPayload.Item 在 Kind == EventItem 時回傳的是 EventItem 的 RowRef，
+                    // 其 RowId 落在 2000000+ (台服 EventItem 為 2000000..2003789)，而 Item 表只有
+                    // 0..49200 —— 直接餵進去會擲 ArgumentOutOfRangeException。這裡是
+                    // Svc.Chat.ChatMessage 回呼，Dalamud 會逐個 handler 攔下例外並記錄，所以後果
+                    // 是每則符合條件的訊息都洗一次 log，不是帶崩；但仍應在來源擋掉。
+                    if (Svc.Data.Excel.GetSheet<Item>().TryGetRow(item.Item.RowId, out var craftedItem) && craftedItem.CanBeHq)
                     {
                         if (Endurance.Enable && P.Config.EnduranceStopNQ && !item.IsHQ)
                         {

@@ -29,11 +29,19 @@ public static unsafe class ActionManagerEx
         Svc.Log.Debug($"Using skill {skill}: {actionType} {actionId}");
         ActionManager.Instance()->UseAction(actionType, actionId);
         //Reset AFK timer
-        var module = UIModule.Instance()->GetInputTimerModule();
-        module->AfkTimer = 0;
-        module->ContentInputTimer = 0;
-        module->InputTimer = 0;
-        module->Unk1C = 0;
+        // UIModule.Instance() 是 Framework 的轉手,手寫成「framework == null ? null : ...」,
+        // 也就是它合法會回 null。沒判就 ->GetInputTimerModule() 是解參考 null =
+        // AccessViolationException(corrupted-state exception,try/catch 攔不到)。
+        // 技能在上面已經送出去了,所以取不到就只是跳過重設 AFK 計時器,照樣回報成功。
+        var uiModule = UIModule.Instance();
+        var module = uiModule == null ? null : uiModule->GetInputTimerModule();
+        if (module != null)
+        {
+            module->AfkTimer = 0;
+            module->ContentInputTimer = 0;
+            module->InputTimer = 0;
+            module->Unk1C = 0;
+        }
         return true;
     }
 

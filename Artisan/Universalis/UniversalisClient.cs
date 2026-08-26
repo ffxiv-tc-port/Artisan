@@ -191,7 +191,7 @@ namespace Artisan.Universalis
     {
         public static void Fetch(uint itemId, Action onFailed, Action<MarketboardData?> onComplete)
         {
-            var world = Svc.ClientState.LocalPlayer?.CurrentWorld.RowId;
+            var world = Svc.Objects.LocalPlayer?.CurrentWorld.RowId;
             P.UniversalsisClient.PlayerWorld = world;
             Task.Run(() =>
             {

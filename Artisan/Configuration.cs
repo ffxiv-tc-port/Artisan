@@ -123,6 +123,27 @@ namespace Artisan
         public bool SubtractOwnedFinishedProductFromIngredientTable = false;
         public bool RestockFinishedProductsFromRetainers = false;
 
+        /// <summary>
+        /// Whether retainer restocking may ask AutoRetainer to fire the game's retrieve command directly at a
+        /// slot instead of driving the retainer window. Defaults on because that is the whole point of the
+        /// integration; turning it off restores the window-driving path exactly as it was, and the path is
+        /// skipped automatically anyway whenever AutoRetainer is missing or too old.
+        /// </summary>
+        public bool UseDirectRetainerRetrieval = true;
+
+        /// <summary>
+        /// How many free player bag slots the retainer-window restock path must be able to see before it takes
+        /// a whole stack instead of only the amount still needed. Defaults to 2, which is the value the path
+        /// shipped with as a constant: a full stack landing on top of an existing partial stack of the same
+        /// item can split across two slots, so one spare slot is not always enough.
+        /// <para/>
+        /// Lower is more eager - fewer return trips to the retainer, but a nearly full bag can leave the
+        /// withdrawal short. Higher is more conservative. An unknown free-slot count (-1, e.g. while zoning)
+        /// always falls back to the exact amount no matter what this is set to, which is why the effective
+        /// value is clamped to at least 1 at the point of use.
+        /// </summary>
+        public int RestockFullStackFreeSlots = 2;
+
         public bool DefaultHideInventoryColumn = false;
         public bool DefaultHideRetainerColumn = false;
         public bool DefaultHideRemainingColumn = false;

@@ -7,20 +7,33 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # 讓 NuGet 把套件放進工作區底下，上面的 actions/cache 才快取得到。
+      # 預設是 %UserProfile%\.nuget\packages，那個路徑不在工作區、快取鍵也不好對。
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget-packages
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          token: ${{ secrets.PRIVATE_SUBMODULE_TOKEN }}
       - name: Install .NET
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 9.x
+      # NuGet 還原是 Build 之後第二耗時的步驟。快取路徑指向工作區底下的絕對路徑，
+      # 不用 ~/.nuget —— runner 上 ~ 的展開在不同 shell 下不一致，寫死比較可靠。
+      # 快取鍵用 lock 檔與 csproj 的雜湊：相依沒變就整包命中，一變就自動失效。
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.nuget-packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json', '**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
       - name: Download Dalamud (pinned TC-compatible build)
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri https://github.com/ffxiv-tc-port/DalamudPluginsTC/releases/download/dalamud-pin-v13.0.0.6/dalamud-api13-net9.zip -OutFile dalamud-pinned.zip
+          Invoke-WebRequest -Uri https://github.com/ffxiv-tc-port/DalamudPluginsTC/releases/download/dalamud-pin-v13.0.0.16/dalamud-api13-net9.zip -OutFile dalamud-pinned.zip
           Expand-Archive -Force dalamud-pinned.zip "$env:AppData\FFXIVSimpleLauncher\Dalamud\Injector\"
           Expand-Archive -Force dalamud-pinned.zip "$env:AppData\xivlauncher\Addon\Hooks\dev\"
       - name: Compute version
@@ -48,3 +61,5 @@ jobs:
             Artisan.zip
             Artisan/bin/Release/Artisan.json
           generate_release_notes: true
+
+# 2026-08-16: repo 重建後 workflow_dispatch-only workflow 未被 Actions 重新註冊,touch 本檔強制重掃

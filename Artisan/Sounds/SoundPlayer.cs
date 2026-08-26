@@ -1,4 +1,4 @@
-﻿using ECommons;
+using ECommons;
 using ECommons.DalamudServices;
 using NAudio.Wave;
 using System;
@@ -11,7 +11,22 @@ namespace Artisan.Sounds
     {
         private static readonly object _lockObj = new();
 
-        private static WaveOutEvent waveOut = new();
+        // A single shared WaveOutEvent used to be created once and Init()ed again for
+        // every sound. NAudio refuses that while the device is still playing:
+        //     Can't re-initialize during playback
+        //       at NAudio.Wave.WaveOutEvent.Init(IWaveProvider)
+        // which is exactly what a second notification arriving during the first one
+        // produced (reported on TC 2026-07-29).
+        //
+        // Two more leaks lived in the same method and go away with it:
+        //   - the Mp3FileReader was never disposed - one file handle per sound; and
+        //   - a PlaybackStopped handler was added on EVERY call and never removed, so
+        //     the handler list grew for the whole session, and the "restore the
+        //     previous volume" logic it carried ended up fighting itself (every
+        //     handler restored whatever the volume happened to be when IT was added).
+        // A fresh device per sound, torn down explicitly, has none of those problems.
+        private static WaveOutEvent? _device;
+        private static Mp3FileReader? _reader;
 
         public static void PlaySound()
         {
@@ -28,13 +43,18 @@ namespace Artisan.Sounds
                         string sound = "Time Up";
                         string path = Path.Combine(Svc.PluginInterface.AssemblyLocation.Directory.FullName, "Sounds", $"{sound}.mp3");
                         if (!File.Exists(path)) return;
-                        var reader = new Mp3FileReader(path);
 
-                        waveOut.Init(reader);
-                        var previousVol = waveOut.Volume;
-                        waveOut.Volume = P.Config.SoundVolume;
-                        waveOut.Play();
-                        waveOut.PlaybackStopped += (sender, args) => waveOut.Volume = previousVol;
+                        // Latest notification wins: stop whatever is still playing
+                        // instead of either throwing or overlapping.
+                        TearDown();
+
+                        var reader = new Mp3FileReader(path);
+                        var device = new WaveOutEvent { Volume = P.Config.SoundVolume };
+                        device.Init(reader);
+                        device.Play();
+
+                        _reader = reader;
+                        _device = device;
                     }
                     catch (Exception ex)
                     {
@@ -42,6 +62,32 @@ namespace Artisan.Sounds
                     }
                 }
             });
+        }
+
+        /// <summary>Stops and releases any current playback. Safe to call repeatedly.</summary>
+        public static void Dispose()
+        {
+            lock (_lockObj)
+                TearDown();
+        }
+
+        // Caller must hold _lockObj.
+        private static void TearDown()
+        {
+            try
+            {
+                _device?.Stop();
+            }
+            catch (Exception ex)
+            {
+                // Stopping a device that already finished on its own is not interesting.
+                Svc.Log.Debug($"SoundPlayer: stopping previous playback failed: {ex.Message}");
+            }
+
+            _device?.Dispose();
+            _reader?.Dispose();
+            _device = null;
+            _reader = null;
         }
     }
 }

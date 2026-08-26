@@ -45,7 +45,20 @@ public struct SolverRef
     }
 
     public Solver? Clone() => _solver?.Clone();
-    public bool IsType<T>() where T : Solver => _solver is T;
+    // note: look through the wrappers - callers care about what is actually driving the craft,
+    // and a raphael macro wrapped for condition awareness / material miracle is still a macro.
+    // ⚠️ 每加一層包裝就要在這裡加一層,漏了的失敗形式是靜默的:IsType<MacroSolver>() 回 false,
+    //    呼叫端(CraftingWindow 的祕籍提示)會安靜地走到另一條分支。
+    // 🔴 保留 `_solver is T` 這一項:拿掉的話 IsType<OpportunisticSolver>() 之類「問的就是包裝本身」
+    //    的呼叫會從 true 變 false,那是回退既有行為。
+    public bool IsType<T>() where T : Solver => _solver is T || Unwrap(_solver) is T;
+
+    private static Solver? Unwrap(Solver? s) => s switch
+    {
+        Solvers.MaterialMiracleSolver m => Unwrap(m.Inner),
+        Solvers.OpportunisticSolver o => Unwrap(o.Inner),
+        _ => s,
+    };
 
     public static implicit operator bool(SolverRef x) => x._solver != null;
 }

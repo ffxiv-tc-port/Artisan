@@ -51,6 +51,8 @@ namespace Artisan.RawInformation.Character
         ImmaculateMend = 100467, // Full durability, 112 cp
         TrainedPerfection = 100475, // Reduces next action durability loss to 0, 0 cp, once per craft
 
+        // 🔴 那個「45 秒」是全外掛唯一的來源:台服 Action 表沒有技能時長欄位,查不到、也驗不了。
+        //    要改的話改 Simulator.MaterialMiracleDurationSeconds(它從這裡抄過去,是唯一的硬編處)。
         MaterialMiracle = 41269, // Cosmic exploration, lasts 45s (ugh), converts normal crafting conditions into expert crafting conditions, only 1 version of this action
     }
 

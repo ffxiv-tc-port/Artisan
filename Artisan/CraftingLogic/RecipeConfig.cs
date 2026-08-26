@@ -14,6 +14,7 @@ using ECommons.LanguageHelpers;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -25,6 +26,40 @@ public class RecipeConfig
 {
     public const uint Default = 0;
     public const uint Disabled = 1;
+
+    // 臨時覆寫:只活在記憶體裡,不進設定檔(NonSerialized 擋欄位序列化、JsonIgnore 擋
+    // Newtonsoft)。由 Artisan.SetTemporary* 這組 IPC 設定,Artisan.ClearTemporary*
+    // 或 Artisan 卸載時清掉。
+    // 🔴 未設定時一律沿用既有欄位 —— 既有使用者的行為與設定檔內容都不變。
+    [NonSerialized, JsonIgnore]
+    public string TempSolverType = "";
+    [NonSerialized, JsonIgnore]
+    public int TempSolverFlavour = -1;
+    [NonSerialized, JsonIgnore]
+    public uint? TempRequiredFood;
+    [NonSerialized, JsonIgnore]
+    public bool TempRequiredFoodHQ;
+    [NonSerialized, JsonIgnore]
+    public uint? TempRequiredPotion;
+    [NonSerialized, JsonIgnore]
+    public bool TempRequiredPotionHQ;
+
+    public string CurrentSolverType => TempSolverType.Length > 0 ? TempSolverType : SolverType;
+    public int CurrentSolverFlavour => TempSolverFlavour >= 0 ? TempSolverFlavour : SolverFlavour;
+    public uint CurrentRequiredFood => TempRequiredFood ?? requiredFood;
+    public bool CurrentRequiredFoodHQ => TempRequiredFood.HasValue ? TempRequiredFoodHQ : requiredFoodHQ;
+    public uint CurrentRequiredPotion => TempRequiredPotion ?? requiredPotion;
+    public bool CurrentRequiredPotionHQ => TempRequiredPotion.HasValue ? TempRequiredPotionHQ : requiredPotionHQ;
+
+    public void ClearTemporaryOverrides()
+    {
+        TempSolverType = "";
+        TempSolverFlavour = -1;
+        TempRequiredFood = null;
+        TempRequiredFoodHQ = false;
+        TempRequiredPotion = null;
+        TempRequiredPotionHQ = false;
+    }
 
 
     public string SolverType = ""; // TODO: ideally it should be a Type?, but that causes problems for serialization
@@ -43,12 +78,12 @@ public class RecipeConfig
     public bool SquadronManualEnabled => RequiredSquadronManual != Disabled;
 
 
-    public uint RequiredFood => requiredFood == Default ? P.Config.DefaultConsumables.requiredFood : requiredFood;
-    public uint RequiredPotion => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotion : requiredPotion;
+    public uint RequiredFood => CurrentRequiredFood == Default ? P.Config.DefaultConsumables.requiredFood : CurrentRequiredFood;
+    public uint RequiredPotion => CurrentRequiredPotion == Default ? P.Config.DefaultConsumables.requiredPotion : CurrentRequiredPotion;
     public uint RequiredManual => requiredManual == Default ? P.Config.DefaultConsumables.requiredManual : requiredManual;
     public uint RequiredSquadronManual => requiredSquadronManual == Default ? P.Config.DefaultConsumables.requiredSquadronManual : requiredSquadronManual;
-    public bool RequiredFoodHQ => requiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : requiredFoodHQ;
-    public bool RequiredPotionHQ => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : requiredPotionHQ;
+    public bool RequiredFoodHQ => CurrentRequiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : CurrentRequiredFoodHQ;
+    public bool RequiredPotionHQ => CurrentRequiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : CurrentRequiredPotionHQ;
 
 
     public string FoodName => requiredFood == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.FoodName) : RequiredFood == Disabled ? "Disabled".Loc() :$"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
@@ -281,20 +316,58 @@ public class RecipeConfig
         {
             var recipe = craft.Recipe;
             var config = this;
-            var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor);
+            var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor, out var solverTooltip);
             var solver = CraftingProcessor.GetSolverForRecipe(config, craft);
 
+            // 🔑 「這個宇宙任務有奇蹟之材」以及「現在這個解算器到底會不會用它」必須在**列上**看得見。
+            //    改動前只有標準解算器那一條分支會講一句話,配方一旦(自動)切到 Raphael 就完全沒有提示 ——
+            //    使用者被靜默降級成「整場不用奇蹟之材」而無從得知。tooltip 藏的是「為什麼」,不是「有沒有問題」。
+            if (craft.MissionHasMaterialMiracle)
+            {
+                if (!P.Config.UseMaterialMiracle)
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "This mission grants Material Miracle, but it will not be used.".Loc());
+                    // 📌 這句原本無條件叫使用者「去把開關打開」;2026-08-07 因為標準解算器打開後
+                    //    做出來率 100%→46.1% 而改成反向警告。**那個代價 2026-08-15 已經修掉**
+                    //    (代打改成逐場過閘門,見 StandardSolver.ShouldDelegateDuringMiracle):
+                    //    在標準解算器真正搆得到的那 88 個非專家宇宙配方上重新量測(19 個抽樣 × 每格 500 次),
+                    //    做出來率 88.8%→94.5%、期望品質 81.4→91.8,且沒有任何一個配方比修改前差。
+                    //    ⇒ 警告已經沒有事實基礎,改回單純的建議。
+                    ImGuiEx.Tooltip("Turn on \"Use Material Miracle when available\" in the main settings to let solvers use it.".Loc());
+                }
+                else if (!Solvers.MaterialMiracleSolver.SolverUsesMaterialMiracle(solver))
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "This mission grants Material Miracle, but ?? will not use it.".Loc(solver.Name));
+                    ImGuiEx.Tooltip("Only the standard, expert and Raphael solvers know about Material Miracle. Pick one of those for this recipe to make use of it.".Loc());
+                }
+                else
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudWhite, "?? will use Material Miracle on this mission.".Loc(solver.Name));
+                    ImGuiEx.Tooltip("Material Miracle costs no step, no CP and no durability, and does not tick any buff down. While it is up every condition is a beneficial one.".Loc());
+                }
+            }
+
+            var showedDistribution = false;
             if (solver.Name != "Expert Recipe Solver".Loc())
             {
                 if (craft.MissionHasMaterialMiracle && solver.Name == "Standard Recipe Solver".Loc() && P.Config.UseMaterialMiracle)
                     ImGuiEx.TextWrapped("This would use Material Miracle, which is not compatible with the simulator.".Loc());
                 else
+                {
                     ImGuiEx.TextWrapped(hintColor, solverHint);
+                    showedDistribution = true;
+                }
             }
             else
-                ImGuiEx.TextWrapped("Please run this recipe in the simulator for results.".Loc());
+                ImGuiEx.TextWrapped(SharedText.RunInSimulatorForResults.Loc());
 
-            if (ImGui.IsItemClicked())
+            // ⚠️ 先把點擊狀態存下來再畫 tooltip —— ImGuiEx.Tooltip 會開一個新視窗,
+            //    之後的 IsItemClicked 就不再指向上面那段文字了。
+            var hintClicked = ImGui.IsItemClicked();
+            if (showedDistribution && solverTooltip.Length > 0)
+                ImGuiEx.Tooltip(solverTooltip);
+
+            if (hintClicked)
             {
                 P.PluginUi.OpenWindow = UI.OpenWindow.Simulator;
                 P.PluginUi.IsOpen = true;
@@ -315,17 +388,24 @@ public class RecipeConfig
                     SimulatorUI.SimFood.Stats = new ConsumableStats(config.RequiredFood, config.RequiredFoodHQ);
                 }
 
-                foreach (ref var gs in RaptureGearsetModule.Instance()->Entries)
+                // Instance() 沒登入/切場景時合法回 null,直接 ->Entries 就是解參考 null
+                // (AccessViolationException,try/catch 攔不到)。取不到就不挑裝備組,
+                // SimGS 維持原值 —— 下面的使用點本來就處理 SimGS 為 null 的情況。
+                var gearsetModule = RaptureGearsetModule.Instance();
+                if (gearsetModule != null)
                 {
-                    if ((Job)gs.ClassJob == (Job)((uint)Job.CRP + recipe.CraftType.RowId))
+                    foreach (ref var gs in gearsetModule->Entries)
                     {
-                        if (SimulatorUI.SimGS is null || (Job)SimulatorUI.SimGS.Value.ClassJob != (Job)((uint)Job.CRP + recipe.CraftType.RowId))
+                        if ((Job)gs.ClassJob == (Job)((uint)Job.CRP + recipe.CraftType.RowId))
                         {
-                            SimulatorUI.SimGS = gs;
-                        }
+                            if (SimulatorUI.SimGS is null || (Job)SimulatorUI.SimGS.Value.ClassJob != (Job)((uint)Job.CRP + recipe.CraftType.RowId))
+                            {
+                                SimulatorUI.SimGS = gs;
+                            }
 
-                        if (SimulatorUI.SimGS.Value.ItemLevel < gs.ItemLevel)
-                            SimulatorUI.SimGS = gs;
+                            if (SimulatorUI.SimGS.Value.ItemLevel < gs.ItemLevel)
+                                SimulatorUI.SimGS = gs;
+                        }
                     }
                 }
 

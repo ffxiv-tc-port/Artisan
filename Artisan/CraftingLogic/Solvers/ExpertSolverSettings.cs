@@ -45,19 +45,42 @@ public class ExpertSolverSettings
     public bool FinisherBaitGoodByregot = true; // if true, use careful observations to try baiting good byregot
     public bool EmergencyCPBaitGood = false; // if true, we allow spending careful observations to try baiting good for tricks when we really lack cp
     public bool UseMaterialMiracle = false;
+    // 🔴 預設 false = 完全維持現行行為。開啟後每一步會先用模擬器把「照現在的設定走完」與
+    //    「先把進度做完再回頭衝品質」兩條路各跑幾次到底,選期望收穫比較高的那條。
+    //    量測結果寫在 ExpertSolver.SolveAdaptive 的註解裡。
+    public bool AdaptiveProgressPriority = false;
 
     public ExpertSolverSettings()
     {
         // 移除构造函数中的图标加载
     }
 
+    /// 給 <see cref="ExpertSolver.SolveAdaptive"/> 用:複製一份只改一個旗標的設定,
+    /// 不動使用者原本那份(那份是 P.Config 裡的實體,改了會被存檔)。
+    public ExpertSolverSettings ShallowCopy() => (ExpertSolverSettings)MemberwiseClone();
+
     public bool Draw()
     {
         ImGui.TextWrapped("The expert recipe solver is not an alternative to the standard solver. This is used exclusively with expert recipes.".Loc());
         ImGui.TextWrapped("This solver only applies to recipes marked as expert recipes in the crafting log.".Loc());
         bool changed = false;
+
+        // 🔑 只有這一格留在最上層,其餘 32 個收進「進階」—— 這是 2026-08-07 離線量測的結果,不是版面偏好:
+        //    以使用者的能力值(工5624/加5293/製674)在 8 種宇宙專家配方 × 每格 1000 次製作上,
+        //    **只翻這一個旗標**就把期望品質 72.95 -> 90.19、做出來率 78.4% -> 99.1%。
+        //    而把量測中其餘「單獨翻轉也有顯著收益」的 7 個旗標再疊上去,一個百分點都沒有多拿
+        //    (自適應+集中製作 89.88、七個全開 89.58,兩者都比只開這一個**略低**)——
+        //    因為這個旗標是每一步自己重新判斷要不要改走「先做完進度」,已經涵蓋了那些靜態旗標想做的事。
+        //    另外 18 個旗標在全部 9 種量測情境下都測不出任何差異(其中 2 個連一個動作都沒改變)。
+        //    ⇒ 33 個選項裡真正需要使用者做的決定只有這一個,其餘是微調。
+        ImGui.TextWrapped("多數人只需要下面這一個選項,其餘都收在「進階」裡。");
+        changed |= ImGui.Checkbox("Adaptively switch to finishing progress first when the craft would otherwise be lost".Loc(), ref AdaptiveProgressPriority);
+        ImGuiComponents.HelpMarker("Before each action, simulate the rest of the craft both ways - as configured, and with \"Finish progress before starting quality\" turned on - and take whichever is expected to produce more. Costs a little CPU per action and only applies to expert recipes.".Loc());
+        ImGui.TextWrapped("離線量測(8 種宇宙專家配方,以你目前的能力值):開啟後期望品質 73 → 90、做出來率 78% → 99%。");
+        ImGui.Separator();
+
         ImGui.Indent();
-        if (ImGui.CollapsingHeader("Opener Settings".Loc()))
+        if (ImGui.CollapsingHeader("Opener Settings".Loc() + " —— 進階微調,多數人不需要動"))
         {
             changed |= ImGui.Checkbox("Use ?? instead of ?? for the opener".Loc(Skills.Reflect.NameOfAction(), Skills.MuscleMemory.NameOfAction()), ref UseReflectOpener);
             changed |= ImGui.Checkbox("Allow spending ?? on ?? (400%) rather than ?? (500%) if ?? ??".Loc(Skills.MuscleMemory.NameOfAction(), Skills.IntensiveSynthesis.NameOfAction(), Skills.RapidSynthesis.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString), ref MuMeIntensiveGood);
@@ -65,14 +88,14 @@ public class ExpertSolverSettings
             changed |= ImGui.Checkbox("If at last step of ?? and not ?? ??, use ?? (forcing via ?? if necessary)".Loc(Skills.MuscleMemory.NameOfAction(), Condition.Centered.ToLocalizedString(), ConditionString, Skills.IntensiveSynthesis.NameOfAction(), Skills.HeartAndSoul.NameOfAction()), ref MuMeIntensiveLastResort);
             changed |= ImGui.Checkbox("Use ?? on ?? ??, if ?? is already active".Loc(Skills.Manipulation.NameOfAction(), Condition.Primed.ToLocalizedString(), ConditionString, Skills.Veneration.NameOfAction()), ref MuMePrimedManip);
             changed |= ImGui.Checkbox("?? during unfavourable ?? instead of spending ?? on ??".Loc(Skills.Observe.NameOfAction(), ConditionString, DurabilityString, Skills.RapidSynthesis.NameOfAction()), ref MuMeAllowObserve);
-            ImGui.Text("Allow ?? only if more than this amount of steps remain on ??".Loc(Skills.Manipulation.NameOfAction(), Skills.MuscleMemory.NameOfAction()));
+            ImGui.Text(SharedText.AllowOnlyIfStepsRemain.Loc(Skills.Manipulation.NameOfAction(), Skills.MuscleMemory.NameOfAction()));
             ImGui.PushItemWidth(250);
             changed |= ImGui.SliderInt("###MumeMinStepsForManip", ref MuMeMinStepsForManip, 0, 5);
-            ImGui.Text("Allow ?? only if more than this amount of steps remain on ??".Loc(Skills.Veneration.NameOfAction(), Skills.MuscleMemory.NameOfAction()));
+            ImGui.Text(SharedText.AllowOnlyIfStepsRemain.Loc(Skills.Veneration.NameOfAction(), Skills.MuscleMemory.NameOfAction()));
             ImGui.PushItemWidth(250);
             changed |= ImGui.SliderInt("###MuMeMinStepsForVene", ref MuMeMinStepsForVene, 0, 5);
         }
-        if (ImGui.CollapsingHeader("Main Rotation Settings".Loc()))
+        if (ImGui.CollapsingHeader("Main Rotation Settings".Loc() + " —— 進階微調,多數人不需要動"))
         {
             ImGui.Text("Minimum ?? stacks to spend ?? on ?? (10 to disable)".Loc(Buffs.InnerQuiet.NameOfBuff(), Skills.HeartAndSoul.NameOfAction(), Skills.PreciseTouch.NameOfAction()));
             ImGui.PushItemWidth(250);

@@ -14,6 +14,7 @@ using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.GameHelpers;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
@@ -143,7 +144,7 @@ namespace Artisan.UI
                     ImGui.BeginTable("DebugeRcipeConfigs", 9);
                     ImGui.TableHeader("DebugRecipeConfigs");
                     ImGui.TableNextColumn();
-                    ImGui.Text("Item");
+                    ImGui.Text("Item".Loc());
                     ImGui.TableNextColumn();
                     ImGui.Text("requiredFood");
                     ImGui.TableNextColumn();
@@ -270,7 +271,7 @@ namespace Artisan.UI
                     {
                         Svc.PluginInterface.GetIpcSubscriber<bool, object>("Artisan.SetEnduranceStatus").InvokeAction(true);
                     }
-                    if (ImGui.Button("Disable"))
+                    if (ImGui.Button("Disable".Loc()))
                     {
                         Svc.PluginInterface.GetIpcSubscriber<bool, object>("Artisan.SetEnduranceStatus").InvokeAction(false);
                     }
@@ -332,8 +333,14 @@ namespace Artisan.UI
                 {
                     ImGui.TextUnformatted($"In-game stats: {CharacterInfo.Craftsmanship}/{CharacterInfo.Control}/{CharacterInfo.MaxCP}/{CharacterInfo.FCCraftsmanshipbuff}");
                     DrawEquippedGear();
-                    foreach (ref var gs in RaptureGearsetModule.Instance()->Entries)
-                        DrawGearset(ref gs);
+                    // 沒登入時 Instance() 合法回 null;直接 ->Entries 是解參考 null(AVE,攔不到)。
+                    // 取不到就把「取不到」畫出來,不要畫成空清單 —— 空清單會被讀成「沒有裝備組」。
+                    var gearsetModule = RaptureGearsetModule.Instance();
+                    if (gearsetModule == null)
+                        ImGui.TextUnformatted("Gearset module unavailable (not logged in?)");
+                    else
+                        foreach (ref var gs in gearsetModule->Entries)
+                            DrawGearset(ref gs);
                 }
 
                 if (ImGui.CollapsingHeader("Repairs"))
@@ -372,7 +379,18 @@ namespace Artisan.UI
                 ImGui.InputInt("Debug Value", ref DebugValue);
                 if (ImGui.Button($"Open Recipe"))
                 {
-                    PreCrafting.TaskSelectRecipe(Svc.Data.GetExcelSheet<Recipe>().GetRow((uint)DebugValue));
+                    // DebugValue 是上面那個 InputInt 的內容，也就是純粹的使用者輸入。
+                    // 台服 Recipe 表不連續（0..6407 與 30000..38000 之間是空洞），隨手輸入一個
+                    // 一萬多的數字就會讓裸 GetRow 擲例外；這是在 Draw 裡，Dalamud 攔到後會把
+                    // Artisan 的 Draw 委派設成 null，等於一個除錯按鍵就能關掉整個外掛介面。
+                    if (Svc.Data.GetExcelSheet<Recipe>().TryGetRow((uint)DebugValue, out var debugRecipe))
+                        PreCrafting.TaskSelectRecipe(debugRecipe);
+                    else
+                    {
+                        // 失敗要看得見：不能靜默什麼都不做，否則按了沒反應會被誤讀成功能壞掉。
+                        Notify.Error($"No recipe with row id {DebugValue}");
+                        Svc.Log.Information($"[Artisan] Debug「Open Recipe」：Recipe 資料表沒有列 {DebugValue}。");
+                    }
                 }
 
                 ImGui.Text($"Item Count? {CraftingListUI.NumberOfIngredient((uint)DebugValue)}");
@@ -412,8 +430,19 @@ namespace Artisan.UI
 
                 if (TryGetAddonByName<AtkUnitBase>("RetainerHistory", out var addon))
                 {
-                    var list = addon->UldManager.SearchNodeById(10)->GetAsAtkComponentList();
-                    ImGui.Text($"{list->ListLength}");
+                    // GetAsAtkComponentList() 是 [MemberFunction] 原生呼叫，對空節點就是 AVE；
+                    // 外層那個 try/catch 對 corrupted-state exception 完全無效，只能在呼叫前驗節點。
+                    var listNode = addon->UldManager.SearchNodeById(10);
+                    if (listNode == null)
+                    {
+                        // 讀不到就畫「?」——畫成 0 會被當成「已確認清單是空的」，那是把不知道畫成已知。
+                        ImGui.Text("?");
+                    }
+                    else
+                    {
+                        var list = listNode->GetAsAtkComponentList();
+                        ImGui.Text(list == null ? "?" : $"{list->ListLength}");
+                    }
                 }
 
             }
@@ -431,7 +460,22 @@ namespace Artisan.UI
                 TeleportToGCTown();
             }
 
-            Util.ShowStruct(WKSManager.Instance());
+            // 🔴 WKSManager.Instance() 的宣告是
+            //    [StaticAddress("48 89 05 ?? ?? ?? ?? 48 8B F8", 3, isPointer: true)] ——
+            //    產生器對 isPointer:true 產出的是「讀那個靜態槽的內容」,判空判的是**槽的位址**
+            //    (特徵碼有沒有解析成功),回傳的卻是**槽裡的內容**,而那個內容在沒進宇宙探索時
+            //    合法就是 null,從頭到尾沒被判過。
+            // 🔴 Dalamud 的 Util.ShowStruct<T>(T* obj) 進函式第一件事就是 `ShowStruct(*obj, ...)`
+            //    —— **在呼叫端來不及攔的地方當場解參考**。傳 null 進去是 AccessViolationException,
+            //    在 .NET Core 屬 corrupted-state exception,try/catch 與 ImGui 的繪製迴圈都攔不到。
+            //    這一行沒有任何前置條件,只要除錯頁開著而人不在宇宙探索區就會走到。
+            // 這是每幀路徑 ⇒ 不寫 log(會把整份 log 洗掉),改成把「取不到」畫在列上;
+            // 畫成空白會被讀成「這個結構是空的」,那是誤導。
+            var wksManager = WKSManager.Instance();
+            if (wksManager == null)
+                ImGui.TextUnformatted("WKSManager unavailable (not in Cosmic Exploration?)");
+            else
+                Util.ShowStruct(wksManager);
         }
 
         public unsafe static void TeleportToGCTown()
@@ -453,8 +497,16 @@ namespace Artisan.UI
                 3 => 21071u,
                 _ => 0u
             };
-            if (InventoryManager.Instance()->GetInventoryItemCount(ticket) > 0)
-                AgentInventoryContext.Instance()->UseItem(ticket);
+            // 🔴 AgentInventoryContext.Instance() 是產生器產出的取得子,本體即
+            //    「agentModule == null ? null : GetAgentByInternalId(...)」,兩層都能合法回 null。
+            //    裸解參考 = AccessViolationException,corrupted-state,try/catch 攔不到。
+            // fail-closed:取不到 agent 就退回傳送(else 分支本來就是這個道具沒有時的行為),
+            //    不要在未知狀態下對空指標呼叫 UseItem。
+            var invContext = InventoryManager.Instance()->GetInventoryItemCount(ticket) > 0
+                ? AgentInventoryContext.Instance()
+                : null;
+            if (invContext != null)
+                invContext->UseItem(ticket);
             else
                 Telepo.Instance()->Teleport(aetheryte, 0);
         }
@@ -516,7 +568,9 @@ namespace Artisan.UI
             ImGui.TextUnformatted($"Total stats: {stats.Craftsmanship}/{stats.Control}/{stats.CP}/{stats.SplendorCosmic}/{stats.Specialist}");
 
             var inventory = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
-            if (inventory == null)
+            // 同 CharacterStats.GetBaseStatsEquipped：== null 只擋了一半，
+            // Items 尚未配置時下面的 inventory->Items + i 會是小偏移假指標。
+            if (inventory == null || inventory->Items == null)
                 return;
 
             for (int i = 0; i < inventory->Size; ++i)

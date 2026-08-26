@@ -46,6 +46,11 @@ internal class ListEditor : Window, IDisposable
     private CancellationTokenSource source = new CancellationTokenSource();
     private CancellationToken token;
 
+    // Guards against a superseded background regeneration (see RefreshTable/
+    // GenerateTableAsync) still assigning Table/IngredientHelper after a newer one
+    // has already started.
+    private int tableGeneration;
+
     public bool Processing = false;
 
     internal List<uint> jobs = new();
@@ -118,39 +123,75 @@ internal class ListEditor : Window, IDisposable
         if (P.Config.DefaultColourValidation) ColourValidation = true;
     }
 
-    public async Task GenerateTableAsync(CancellationTokenSource source)
+    public async Task GenerateTableAsync(CancellationTokenSource generationSource, int generation)
     {
-        Table?.Dispose();
-        var list = await IngredientHelper.GenerateList(SelectedList, source);
-        if (list is null)
+        // Use a helper instance scoped to this generation attempt rather than the shared
+        // IngredientHelper field directly: if an older regeneration is still running when a
+        // newer one starts (RefreshTable only cancels, it can't interrupt a Task already past
+        // its next cancellation check), both would otherwise mutate the same IngredientHelpers
+        // object's CurrentIngredient/MaxIngredient/HelperList concurrently from two threads.
+        // Only publish this instance to the field if we're still the current generation, so the
+        // progress bar (read from IngredientHelper in DrawTotalIngredientsTable) reflects the
+        // in-flight generation, not a superseded one.
+        var helper = new IngredientHelpers();
+        if (generation == Volatile.Read(ref tableGeneration))
+            IngredientHelper = helper;
+
+        var list = await helper.GenerateList(SelectedList, generationSource);
+        if (list is null ||
+            generationSource.IsCancellationRequested ||
+            generation != Volatile.Read(ref tableGeneration))
         {
             Svc.Log.Debug($"Table list empty, aborting.");
             return;
         }
 
-        Table = new IngredientTable(list);
+        var table = new IngredientTable(list);
+        if (generationSource.IsCancellationRequested ||
+            generation != Volatile.Read(ref tableGeneration))
+        {
+            // A newer regeneration started while this one was building its table; discard
+            // this result instead of overwriting whatever the newer generation produces.
+            table.Dispose();
+            return;
+        }
+
+        Table = table;
     }
 
     public void RefreshTable(object? sender, bool e)
     {
-        token = source.Token;
-        Table = null;
-        P.UniversalsisClient.PlayerWorld = Svc.ClientState.LocalPlayer?.CurrentWorld.RowId;
-        if (RegenerateTask == null || RegenerateTask.IsCompleted)
-        {
-            Svc.Log.Debug($"Starting regeneration");
-            RegenerateTask = Task.Run(() => GenerateTableAsync(source), token);
-        }
-        else
-        {
-            Svc.Log.Debug($"Stopping and restarting regeneration");
-            if (source != null)
-                source.Cancel();
+        // The list editor can trigger a new regeneration (add/remove/skip a recipe) while a
+        // previous one is still running in the background. Tag each attempt with an
+        // Interlocked-incremented generation number so a superseded GenerateTableAsync call
+        // discards its result (checked via Volatile.Read against tableGeneration) instead of
+        // racing the newer one to assign Table/IngredientHelper.
+        var oldSource = source;
+        var oldTask = RegenerateTask;
+        source = new CancellationTokenSource();
+        var generationSource = source;
+        token = generationSource.Token;
+        var generation = Interlocked.Increment(ref tableGeneration);
 
-            source = new();
-            token = source.Token;
-            RegenerateTask = Task.Run(() => GenerateTableAsync(source), token);
-        }
+        oldSource.Cancel();
+        if (oldTask?.IsCompleted != false)
+            oldSource.Dispose();
+        else
+            // The old task may still be reading oldSource's token; don't dispose out from
+            // under it, defer disposal until it actually finishes.
+            _ = oldTask.ContinueWith(
+                _ => oldSource.Dispose(),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+
+        Table?.Dispose();
+        Table = null;
+        P.UniversalsisClient.PlayerWorld = Svc.Objects.LocalPlayer?.CurrentWorld.RowId;
+        Svc.Log.Debug($"Starting ingredient table regeneration {generation}");
+        RegenerateTask = Task.Run(
+            () => GenerateTableAsync(generationSource, generation),
+            token);
     }
 
     public override void PreDraw()
@@ -180,7 +221,15 @@ internal class ListEditor : Window, IDisposable
     private static bool MonsterLookup =>
         DalamudReflector.TryGetDalamudPlugin("Monster Loot Hunter", out var mlh, false, true);
 
-    private static unsafe void SearchItem(uint item) => ItemFinderModule.Instance()->SearchForItem(item);
+    // ItemFinderModule.Instance() 是 UIModule 的轉手,手寫成「uiModule == null ? null : ...」,
+    // 沒登入時合法回 null。沒判就 ->SearchForItem 是解參考 null = AccessViolationException,
+    // 攔不到。取不到就不搜尋(這是使用者按下去才會跑的路徑)。
+    private static unsafe void SearchItem(uint item)
+    {
+        var itemFinder = ItemFinderModule.Instance();
+        if (itemFinder != null)
+            itemFinder->SearchForItem(item);
+    }
 
     public class ListOrderCheck
     {
@@ -1155,7 +1204,7 @@ internal class ListEditor : Window, IDisposable
     }
     private void DrawTotalIngredientsTable()
     {
-        if (Table == null && RegenerateTask.IsCompleted)
+        if (Table == null && RegenerateTask?.IsCompleted == true)
         {
             if (ImGui.Button("Something went wrong creating the table. Try again?".Loc()))
             {
@@ -1274,7 +1323,9 @@ internal class ListEditor : Window, IDisposable
                 ImGui.Text(" - Combination of Retainer & Inventory has all required items".Loc());
             }
 
-            ImGui.PushStyleColor(ImGuiCol.Button, ImGuiColors.ParsedBlue);
+            // TankBlue, not ParsedBlue: IngredientTable's name column paints this row with ImGuiColors.TankBlue,
+            // so the legend swatch was a visibly different blue from the rows it is supposed to explain.
+            ImGui.PushStyleColor(ImGuiCol.Button, ImGuiColors.TankBlue);
             ImGui.BeginDisabled(true);
             ImGui.Button("", new Vector2(23, 23));
             ImGui.EndDisabled();
@@ -1282,6 +1333,7 @@ internal class ListEditor : Window, IDisposable
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() - 7);
             ImGui.Text(" - Combination of Inventory & Craftable has all required items.".Loc());
+            ImGuiComponents.HelpMarker("This is a per-item visual estimate only. Several items on the list can be planning to use the same raw materials, so this colour is deliberately not used to reduce the Remaining or shopping quantities.".Loc());
         }
 
 
@@ -1350,10 +1402,10 @@ internal class ListEditor : Window, IDisposable
         {
             ImGui.EndDisabled();
 
-            ImGuiComponents.HelpMarker("This character has not unlocked materia extraction. This setting will be ignored.".Loc());
+            ImGuiComponents.HelpMarker(SharedText.MateriaExtractionNotUnlocked.Loc());
         }
         else
-            ImGuiComponents.HelpMarker("Will automatically extract materia from any equipped gear once it's spiritbond is 100%".Loc());
+            ImGuiComponents.HelpMarker(SharedText.AutoMateriaExtractionHelp.Loc());
 
         var repair = SelectedList.Repair;
         if (ImGui.Checkbox("Automatic Repairs".Loc(), ref repair))
@@ -1362,7 +1414,7 @@ internal class ListEditor : Window, IDisposable
             P.Config.Save();
         }
 
-        ImGuiComponents.HelpMarker("If enabled, Artisan will automatically repair your gear when any piece reaches the configured repair threshold.\n\nCurrent min gear condition is ??% and cost to repair at a vendor is ?? gil.\n\nIf unable to repair with Dark Matter, will try for a nearby repair NPC.".Loc(RepairManager.GetMinEquippedPercent(), RepairManager.GetNPCRepairPrice()));
+        ImGuiComponents.HelpMarker(SharedText.AutoRepairHelp.Loc(RepairManager.GetMinEquippedPercent(), RepairManager.GetNPCRepairPrice()));
 
         if (SelectedList.Repair)
         {
@@ -1372,7 +1424,7 @@ internal class ListEditor : Window, IDisposable
                 P.Config.Save();
         }
 
-        if (ImGui.Checkbox("Set new items added to list as quick synth".Loc(), ref SelectedList.AddAsQuickSynth))
+        if (ImGui.Checkbox(SharedText.NewItemsAsQuickSynth.Loc(), ref SelectedList.AddAsQuickSynth))
             P.Config.Save();
 
         ImGui.EndChild();
@@ -1599,11 +1651,15 @@ internal class ListEditor : Window, IDisposable
 
         ImGui.Checkbox("Assume Max Starting Quality (for simulator)".Loc(), ref hqSim);
 
-        var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor, hqSim);
+        var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor, out var solverTooltip, hqSim);
         if (!recipe.IsExpert)
+        {
             ImGuiEx.TextWrapped(hintColor, solverHint);
+            if (solverTooltip.Length > 0)
+                ImGuiEx.Tooltip(solverTooltip);
+        }
         else
-            ImGuiEx.TextWrapped("Please run this recipe in the simulator for results.".Loc());
+            ImGuiEx.TextWrapped(SharedText.RunInSimulatorForResults.Loc());
     }
 
     private void DrawRecipeSettingsHeader()
@@ -1754,8 +1810,15 @@ internal class RecipeSelector : ItemSelector<ListItem>
         var ItemId = Items[idx];
         var itemCount = ItemId.Quantity;
         var yield = LuminaSheets.RecipeSheet[ItemId.ID].AmountResult * itemCount;
+
+        // 顯示成品目前持有數(含雇員,走 AllaganTools 快取),避免重複製作。
+        var resultItemId = LuminaSheets.RecipeSheet[ItemId.ID].ItemResult.RowId;
+        var owned = CraftingListUI.NumberOfIngredient(resultItemId);
+        if (RetainerInfo.ATools)
+            owned += RetainerInfo.GetRetainerItemCount(resultItemId);
+
         var label =
-            $"{idx + 1}. {ItemId.ID.NameOfRecipe()} x{itemCount}{(yield != itemCount ? " (?? total)".Loc(yield) : string.Empty)}";
+            $"{idx + 1}. {ItemId.ID.NameOfRecipe()} x{itemCount}{(yield != itemCount ? " (?? total)".Loc(yield) : string.Empty)}{" [have ??]".Loc(owned)}";
         maxSize = ImGui.CalcTextSize(label).X > maxSize ? ImGui.CalcTextSize(label).X : maxSize;
 
         if (ItemId.ListItemOptions is null)

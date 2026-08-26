@@ -46,6 +46,7 @@ public unsafe class Artisan : IDalamudPlugin
     public Artisan(IDalamudPluginInterface pluginInterface)
     {
         ECommonsMain.Init(pluginInterface, this, Module.All);
+        SvcEx.Init(pluginInterface);
         ECommons.LanguageHelpers.Localization.Init("ChineseTraditional");
         PunishLibMain.Init(pluginInterface, "Artisan", new AboutPlugin() { Sponsor = "https://ko-fi.com/taurenkey" });
         P = this;
@@ -186,8 +187,50 @@ public unsafe class Artisan : IDalamudPlugin
         DisableEndurance(0, 0);
     }
 
+    // RecipeNote appear/disappear watcher (diagnostic for the stuck crafting list).
+    private static bool _rnWasOpen;
+    private static DateTime _rnOpenedAt;
+    private static DateTime _rnLastLog = DateTime.MinValue;
+
+    private static unsafe void WatchRecipeNote()
+    {
+        var addonPtr = Svc.GameGui.GetAddonByName("RecipeNote", 1).Address;
+        var open = addonPtr != nint.Zero
+                   && ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)addonPtr)->IsVisible;
+        if (open == _rnWasOpen)
+            return;
+        _rnWasOpen = open;
+
+        // Rate cap so an open/close loop cannot flood the log.
+        var quiet = (DateTime.Now - _rnLastLog).TotalMilliseconds >= 300;
+        if (open)
+        {
+            _rnOpenedAt = DateTime.Now;
+            if (quiet)
+            {
+                _rnLastLog = DateTime.Now;
+                var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
+                var active = agent != null && agent->AgentInterface.IsAgentActive();
+                var agentAddonId = agent != null ? agent->AgentInterface.AddonId : 0;
+                Svc.Log.Information(
+                    $"Artisan: RecipeNote OPENED - addon=0x{addonPtr:X}, "
+                    + $"agentActive={active}, agentAddonId={agentAddonId}. "
+                    + "If this window is visibly on screen while agentActive=False, "
+                    + "AgentId.RecipeNote resolves to the wrong agent on this client.");
+            }
+        }
+        else if (quiet)
+        {
+            _rnLastLog = DateTime.Now;
+            var ms = (int)(DateTime.Now - _rnOpenedAt).TotalMilliseconds;
+            Svc.Log.Information($"Artisan: RecipeNote CLOSED after {ms} ms.");
+        }
+    }
+
     private void OnFrameworkUpdate(IFramework framework)
     {
+        WatchRecipeNote();
+
         if (!Svc.ClientState.IsLoggedIn)
         {
             Endurance.ToggleEndurance(false);
@@ -249,6 +292,7 @@ public unsafe class Artisan : IDalamudPlugin
             Svc.ClientState.Login -= DisableEndurance;
             Endurance.Dispose();
             RetainerInfo.Dispose();
+            Sounds.SoundPlayer.Dispose();
             IPC.IPC.Dispose();
         }
         ECommonsMain.Dispose();

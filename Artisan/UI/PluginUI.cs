@@ -614,10 +614,22 @@ namespace Artisan.UI
 
                 if (ImGuiEx.ButtonCtrl("Reset Cosmic Exploration Crafting Configs".Loc()))
                 {
+                    // c.Key 是使用者設定檔裡累積下來的配方 ID，不保證還存在於本地資料表：
+                    // 台服的 Recipe 表不連續（0..6407 與 30000..38000 之間有一段兩萬多的空洞），
+                    // 裸 GetRow 命中空洞就擲例外。這段在 Draw 裡，Dalamud 攔到之後會把 Artisan
+                    // 的 Draw 委派設成 null，整個外掛介面到重開遊戲前都不會再出現。
+                    // 查不到的項目「保留而不刪」：這裡是「重設宇宙探索設定」，把一筆讀不到的
+                    // 設定當成宇宙配方刪掉是猜測，留著並記一筆 Information 讓它可被回報。
+                    var recipeSheet = Svc.Data.GetExcelSheet<Recipe>();
                     var copy = P.Config.RecipeConfigs;
                     foreach (var c in copy)
                     {
-                        if (Svc.Data.GetExcelSheet<Recipe>().GetRow(c.Key).Number == 0)
+                        if (!recipeSheet.TryGetRow(c.Key, out var recipeRow))
+                        {
+                            Svc.Log.Information($"[Artisan] 設定檔中的配方 ID {c.Key} 不存在於本地 Recipe 資料表，重設宇宙探索設定時略過該筆。");
+                            continue;
+                        }
+                        if (recipeRow.Number == 0)
                             P.Config.RecipeConfigs.Remove(c.Key);
                     }
                 }
@@ -701,8 +713,22 @@ namespace Artisan.UI
 
                 ImGuiComponents.HelpMarker("This will switch the standard recipe solver to the expert solver for the duration of the buff. As this is a timed buff and not a permanent one with stacks, this will not give you correct simulator results as we can't really simulate it properly.".Loc());
 
+                // 🔴 上面那句 tooltip 說了「buff 期間換成專家解算器代打」,但**沒有說那要付多少代價**。
+                //    2026-08-07 離線量測(9 個宇宙配方 × 每格 1500 次製作,能力值 工5624/加5293/製674,
+                //    2x2 隔離出唯一變數就是這個旗標):對**標準解算器**在宇宙配方上是淨損失,
+                //    而且 9 個配方**每一個**的做出來率都變差 ——
+                //      旗標關:做出來 100.0% / 期望品質 56.2
+                //      旗標開:做出來  46.1% / 期望品質 35.5
+                //    把專家解算器的「先做完進度」自適應打開也只救回一半(46.1% -> 64.5%)。
+                //    最極端的是非專家的宇宙配方(#36214):100% -> 9%,因為專家解算器接手不了非專家配方。
+                //    ⚠️ 專家解算器與 Raphael 解算器**不受影響**(Raphael 那條有自己的安全閘門)。
+                //    「有沒有問題」要在列上看得見,tooltip 只放「為什麼」。
                 if (P.Config.UseMaterialMiracle)
                 {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow,
+                        "注意:這個選項會讓標準解算器在整段 buff 期間交給專家解算器代打。離線量測顯示宇宙配方的做出來率因此從 100% 掉到約 46%(專家解算器與 Raphael 解算器不受影響)。");
+                    ImGuiEx.Tooltip("量測條件:9 個宇宙配方、每個 1500 次模擬製作。把專家解算器的「先做完進度」自適應選項打開可回升到約 64%,仍低於不開這個選項。\n若你只是想在宇宙任務用奇蹟之材,把該配方指派給專家解算器或 Raphael 解算器不會有這個代價。");
+
                     ImGui.Indent();
                     if (ImGui.Checkbox("Use more than once per craft.".Loc(), ref P.Config.MaterialMiracleMulti))
                         P.Config.Save();
@@ -862,7 +888,7 @@ namespace Artisan.UI
                     }
                 }
 
-                if (ImGui.Checkbox("Set new items added to list as quick synth".Loc(), ref P.Config.DefaultListQuickSynth))
+                if (ImGui.Checkbox(SharedText.NewItemsAsQuickSynth.Loc(), ref P.Config.DefaultListQuickSynth))
                 {
                     P.Config.Save();
                 }
@@ -872,6 +898,22 @@ namespace Artisan.UI
 
                 if (ImGui.Checkbox("Restock finished products from retainers as well".Loc(), ref P.Config.RestockFinishedProductsFromRetainers))
                     P.Config.Save();
+
+                if (ImGui.Checkbox("Use AutoRetainer's fast item retrieval".Loc(), ref P.Config.UseDirectRetainerRetrieval))
+                    P.Config.Save();
+                ImGuiComponents.HelpMarker("When AutoRetainer is installed, restocking asks it to send the game's own retrieve command for each stack instead of clicking through the retainer window and its quantity dialog, which is several times faster. Whole stacks are taken rather than exact amounts. Turn this off to always drive the retainer window. Has no effect if AutoRetainer is missing or too old - the retainer window is used automatically in that case.".Loc());
+
+                // SetNextItemWidth rather than PushItemWidth: the surrounding block pushes widths without
+                // ever popping them, so adding a matching pop here would unbalance what follows.
+                ImGui.SetNextItemWidth(200f);
+                if (ImGui.SliderInt("Free bag slots needed to take a whole stack".Loc(), ref P.Config.RestockFullStackFreeSlots, 1, 10))
+                {
+                    if (P.Config.RestockFullStackFreeSlots < 1)
+                        P.Config.RestockFullStackFreeSlots = 1;
+                }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    P.Config.Save();
+                ImGuiComponents.HelpMarker("Only applies to the retainer window path, where restocking takes the whole stack instead of the exact amount still needed - but only while the bag has at least this many free slots, because a whole stack landing on an existing partial stack can split across two of them. Lower it to take whole stacks more often and make fewer return trips, at the risk of the withdrawal coming up short when the bag is nearly full. Raise it to be more cautious. While the free-slot count cannot be read at all, the exact amount is used regardless of this setting.".Loc());
 
                 ImGui.PushItemWidth(100);
                 if (ImGui.InputInt("Times to Add with Context Menu".Loc(), ref P.Config.ContextMenuLoops))

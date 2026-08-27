@@ -418,6 +418,12 @@ namespace Artisan.QuestSync
                         return "Große Flosse";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "おおなまずのまにまに";
+                    // 台服(繁中)暗號取自 TC sqpack quest/031/BanNam302_03104
+                    // 的 TEXT_BANNAM302_03104_SAYTODO_000_050 條目。
+                    // ClientLanguage 用數值比較(5/7)以相容 CI 釘的 13.0.0.6(列舉沒有 TraditionalChinese 這個名字)。
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "大鯰魚保佑";
                 }
             }
             if (questId == 1515)

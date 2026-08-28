@@ -102,6 +102,18 @@ namespace Artisan
         public bool PlaySoundFinishEndurance = false;
         public bool PlaySoundFinishList = false;
 
+        /// <summary>
+        /// 製作清單整份跑完時，透過 IPC 請 TataruPraise 念一句誇獎。
+        /// </summary>
+        /// <remarks>
+        /// 📌 預設 <c>true</c>：TataruPraise 沒安裝時整條路是靜默 no-op（IPC 擲 <c>IpcNotReadyError</c>
+        /// 被吃掉），而 TataruPraise 自己的總開關（預設關）與冷卻也還在，所以預設開不會讓任何人多聽到聲音。
+        /// ⚠️ 這是新加的欄位，既有使用者的設定檔裡沒有這個鍵 ⇒ 反序列化時保留欄位初始值，
+        /// 也就是既有使用者<b>拿得到</b>這個預設（與 ECommons EzConfig 的行為相反；Artisan 走的是
+        /// Dalamud 自己的 <c>SavePluginConfig</c>）。
+        /// </remarks>
+        public bool TataruPraiseFinishList = true;
+
         public float SoundVolume = 0.25f;
 
         public bool DefaultListMateria = false;

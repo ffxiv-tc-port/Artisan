@@ -1,6 +1,7 @@
 ﻿using Artisan.Autocraft;
 using Artisan.GameInterop;
 using Artisan.GameInterop.CSExt;
+using Artisan.IPC;
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using Dalamud.Game.ClientState.Conditions;
@@ -253,6 +254,13 @@ namespace Artisan.CraftingLists
 
                 if (P.Config.PlaySoundFinishList)
                     Sounds.SoundPlayer.PlaySound();
+
+                // 整份清單跑完的唯一收尾點（其餘把 Processing 設回 false 的地方都是登出／登入的
+                // 中止路徑，不是「做完了」）。刻意放在這裡而不是每件物品完成時，才不會一份清單念一串。
+                // ProcessList 是從 ProcessingWindow.Draw 每幀呼叫的 ⇒ 這裡就是主執行緒。
+                if (P.Config.TataruPraiseFinishList)
+                    TataruPraiseIPC.Praise(TataruPraiseIPC.CategoryCrafting);
+
                 return;
             }
 

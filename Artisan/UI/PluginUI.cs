@@ -621,6 +621,13 @@ namespace Artisan.UI
                         P.Config.Save();
                 }
 
+                // 放在音效兩項後面而不是中間：上面那個音量滑桿是那兩個勾選的附屬控制項，
+                // 插進去會把滑桿跟它的來源拆開。
+                if (ImGui.Checkbox("Ask Tataru to praise you when a list is complete (requires TataruPraise)".Loc(), ref P.Config.TataruPraiseFinishList))
+                    P.Config.Save();
+
+                ImGuiComponents.HelpMarker("Needs the TataruPraise plugin installed and its own master switch turned on. Without it this option does nothing at all - no error, no sound.".Loc());
+
                 if (ImGuiEx.ButtonCtrl("Reset Cosmic Exploration Crafting Configs".Loc()))
                 {
                     // c.Key 是使用者設定檔裡累積下來的配方 ID，不保證還存在於本地資料表：

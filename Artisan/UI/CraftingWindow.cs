@@ -61,10 +61,20 @@ namespace Artisan.UI
                 P.Style.Push();
                 P.StylePushed = true;
             }
+            // Dalamud 的 Window 基底類別在 PreDraw() 裡推每視窗不透明度(標題列右鍵選單的
+            // 「不透明度」滑桿)。這個 override 原本沒有呼叫 base，等於把那個內建功能對本
+            // 視窗靜默關掉了一半(ApplyConditionals 讀得到 internalAlpha 所以背景會變，
+            // 但內容不會)。
+            // 🔴 base 必須放在 P.Style.Push() **之後**:StyleModel.Push() 自己會推一個
+            // 絕對值的 ImGuiStyleVar.Alpha(Dalamud/Interface/Style/StyleModelV1.cs:263)，
+            // 先呼叫 base 再 Push 的話 base 推的不透明度會被主題的 Alpha 直接蓋掉。
+            base.PreDraw();
         }
 
         public override void PostDraw()
         {
+            // 後進先出:base 在 PreDraw 的最後才推，所以這裡要最先 pop。
+            base.PostDraw();
             if (P.StylePushed)
             {
                 P.Style.Pop();

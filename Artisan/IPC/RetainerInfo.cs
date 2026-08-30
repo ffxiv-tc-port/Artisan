@@ -135,11 +135,54 @@ namespace Artisan.IPC
             return true;
         }
 
+        // 除錯記錄節流：僱員背包的每一個 add/remove 事件都會清一次快取，逐筆印會在
+        // 僱員視窗開著時把整份 log 洗掉（實測 11.5 萬行、峰值 354 行/分，且成對重複）。
+        // 這裡只計數，等到某次清除「真的把快取裡的東西清掉了」才印，且每秒最多一行；
+        // 被壓下來的事件數會帶在那一行裡，所以資訊不會遺失。清快取的行為完全沒變。
+        private static int _cacheClearAdds;
+        private static int _cacheClearRemoves;
+        private static int _cacheClearEffective;
+        private static long _cacheClearNextLogTick;
+
+        private static bool HasCachedRetainerData()
+        {
+            foreach (var retainer in RetainerData)
+            {
+                if (retainer.Value.Count > 0)
+                    return true;
+            }
+            return false;
+        }
+
+        private static void NoteCacheCleared(bool added, bool hadCachedData)
+        {
+            if (added)
+                _cacheClearAdds++;
+            else
+                _cacheClearRemoves++;
+
+            // 快取本來就是空的，這次清除等於沒做事，不值得佔一行 log。
+            if (!hadCachedData)
+                return;
+
+            _cacheClearEffective++;
+
+            var now = Environment.TickCount64;
+            if (now < _cacheClearNextLogTick)
+                return;
+            _cacheClearNextLogTick = now + 1000;
+
+            Svc.Log.Debug($"Retainer cache cleared ({_cacheClearEffective}x effective) after {_cacheClearAdds} item added / {_cacheClearRemoves} item removed event(s)");
+            _cacheClearAdds = 0;
+            _cacheClearRemoves = 0;
+            _cacheClearEffective = 0;
+        }
+
         private static void OnItemAdded((uint, InventoryItem.ItemFlags, ulong, uint) tuple)
         {
             if (Svc.Condition[ConditionFlag.OccupiedSummoningBell])
             {
-                Svc.Log.Debug($"Item Added: Clearing cache");
+                NoteCacheCleared(true, HasCachedRetainerData());
                 ClearCache(null);
                 _InventoryChanged = true;
             }
@@ -149,7 +192,7 @@ namespace Artisan.IPC
         {
             if (Svc.Condition[ConditionFlag.OccupiedSummoningBell])
             {
-                Svc.Log.Debug($"Item Removed: Clearing cache");
+                NoteCacheCleared(false, HasCachedRetainerData());
                 ClearCache(null);
                 _InventoryChanged = true;
             }

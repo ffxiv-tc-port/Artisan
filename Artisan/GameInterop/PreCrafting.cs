@@ -489,6 +489,15 @@ public unsafe static class PreCrafting
             // 第 n 個選單項對應的事件編號是 7+n,所以 i<7 沒有對應的選單列;
             // 那種情況下 i-7 會是負數,而 p2=-1 對選單的語意是「關閉」——
             // 送出去等於在還沒找到裝備選項時就把選單關掉。
+            // 🔴 「送過就再也不碰它」:下面那發裝備 callback 的第二個參數 true 就是原生
+            // AtkUnitBase::FireCallback 的 close。close 為真且處理常式回非空值時,原生端會在
+            // 回到這裡之前就對這扇窗呼叫 vf6 Hide 或 vf4 Close(台服 7.20 反組譯:0x1406423C4 起),
+            // 而 AddonContextMenu 自己就是靠這條關窗的(它有三處 close = true 的 FireCallback、從不自己呼叫 Close)。
+            // ⇒ 送過一發之後,contextMenu 很可能已經是關閉中的窗,再送第二發就是對它解參考。
+            // 🔴 「重新 GetAddonByName 取址」擋不住:它掃的是 AllLoadedUnitsList(AtkUnitManager + 0x6900),
+            //    而 Close 只把窗從 UnitList16(+0x7920)移除 ⇒ 剛被關掉的窗照樣查得到、位址還一樣;
+            //    IsVisible / IsReady 三關同樣擋不住(艦隊已有實例)。唯一不依賴假設的做法就是不再碰。
+            var pressedThisPass = false;
             for (int i = 7; i < entryCount; i++)
             {
                 var firstEntryIsEquip = ctx->EventIds[i] == 25; // i'th entry will fire eventid 7+i; eventid 25 is 'equip'
@@ -497,12 +506,29 @@ public unsafe static class PreCrafting
                 {
                     Svc.Log.Debug($"Equipping item #{ItemId} from {pos.Value.inv} @ {pos.Value.slot}, index {i}");
                     Callback.Fire(contextMenu, true, 0, i - 7, 0, 0, 0); // p2=-1 is close, p2=0 is exec first command
+                    pressedThisPass = true;
+                    // 迴圈上界是選單的 AtkValuesCount 而不是真正的列數,EventIds 裡碰巧還有第二格
+                    // 是 25 的話,第二發就會落在已經被第一發關掉的選單上(守衛不擋:不同按法、同一幀)。
+                    break;
                 }
             }
             // 同一趟「先送裝備再送關閉」是刻意的正常流程(守衛對同一幀登記的不同按法不互擋);
             // 擋的是下一趟起對同一扇關閉中的選單再送任何東西(見上面的 IsClosing)。
-            if (AddonPressGuard.TryBeginPress("ContextMenu", contextMenu, AddonPressGuard.ClosePressKey, AddonPressGuard.RoutineRePressEscapeFrames))
-                Callback.Fire(contextMenu, true, 0, -1, 0, 0, 0);
+            // 🔴 但「守衛擋不擋」跟「第一發是不是已經把窗關掉了」是兩回事 —— 所以這一發只在
+            //    本趟一發都沒送過時才真的送(那種情況下窗是幾行前才解出來的,中間沒有原生程式碼碰過它)。
+            // ⚠️ 代價:原生端若沒替我們關窗,選單會多留在畫面上幾幀。那不會崩 ——
+            //    這就是「假設不成立也不會崩」的具體長相。
+            // 守衛的紀錄照樣登記(key 與逃生口都與原本逐字相同):下一趟的 IsClosing 要靠它才擋得住,
+            // equipAttemptLoops 也才不會在等待期間被灌到 5 而誤報 Abort。
+            var mayClose = AddonPressGuard.TryBeginPress("ContextMenu", contextMenu, AddonPressGuard.ClosePressKey, AddonPressGuard.RoutineRePressEscapeFrames);
+            if (mayClose)
+            {
+                if (pressedThisPass)
+                    // 使用者跑 LogLevel 2;若真的看到選單留在畫面上,log 裡有這一行對得上。
+                    Svc.Log.Information("[TaskEquipItem] 這一趟已經送過裝備 callback(close:true),不再對同一扇 ContextMenu 送關閉。");
+                else
+                    Callback.Fire(contextMenu, true, 0, -1, 0, 0, 0);
+            }
             equipAttemptLoops++;
 
             if (equipAttemptLoops >= 5)

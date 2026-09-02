@@ -31,7 +31,11 @@ namespace Artisan.Autocraft
             // 直接讀這個屬性等於 AccessViolationException；AVE 是 corrupted-state exception，
             // try/catch 與任何例外隔離包裝都攔不到，只能在讀取前擋。
             // IsComponentEnabled 會把 button 與 OwnerNode 兩層都驗過，任一層為空回 false ⇒ 這一幀不修理。
-            if (TryGetAddonByName<AddonRepair>("Repair", out var addon) && addon->AtkUnitBase.IsVisible && IsComponentEnabled(addon->RepairAllButton) && Throttler.Throttle(500))
+            // 守衛放在節流之後:被擋只多等一輪節流,不會留下「登記了卻沒按」的紀錄。修理窗按下「全部修理」不會關
+            // (它會彈 SelectYesno),所以是多次互動窗的 15 幀逃生口;真正要擋的是 UseRepair 關窗後(MarkClosing)
+            // 一次 ≥1000ms 的幀停頓讓下一輪正好落在關閉中的那幾幀。
+            if (TryGetAddonByName<AddonRepair>("Repair", out var addon) && addon->AtkUnitBase.IsVisible && IsComponentEnabled(addon->RepairAllButton) && Throttler.Throttle(500)
+                && AddonPressGuard.TryBeginPress("Repair", &addon->AtkUnitBase, "RepairAll", AddonPressGuard.RoutineRePressEscapeFrames))
             {
                 new AddonMaster.Repair((IntPtr)addon).RepairAll();
             }
@@ -47,7 +51,10 @@ namespace Artisan.Autocraft
                 // 其實沒擋到。IsComponentEnabled 是既有 null 檢查的超集（button != null && OwnerNode
                 // != null && IsEnabled），順帶把「讀兩次 YesButton」的 TOCTOU 也消掉。
                 IsComponentEnabled(addon->YesButton) &&
-                IsNode15Visible(addon))
+                IsNode15Visible(addon) &&
+                // 🔴 SelectYesno 按下「是」之後有幾幀「關閉中」仍然 IsVisible 且按鈕可用(Yes() 遇停用鈕還會強制啟用),
+                // 外層 _nextRetry 1000ms 是節流不是防護(一次幀停頓就失效)。同一扇窗只按一次,直到它真的收掉。
+                AddonPressGuard.TryBeginPress("SelectYesno", &addon->AtkUnitBase))
             {
                 new AddonMaster.SelectYesno((IntPtr)addon).Yes();
             }
@@ -256,7 +263,10 @@ namespace Artisan.Autocraft
                 if (TryGetAddonByName<AddonSelectIconString>("SelectIconString", out var addonSelectIconString))
                 {
                     var index = GenericHelpers.IndexOf(Svc.Data.Excel.GetSheet<ENpcBase>().GetRow(npc.BaseId).ENpcData, x => x.RowId == 720915);
-                    Callback.Fire(&addonSelectIconString->AtkUnitBase, true, index);
+                    // 選了項目 SelectIconString 就會關;DebugTab 那條路徑把本函式當輪詢任務每幀重跑(下面的
+                    // "AddonRepair" 名稱對不上任何 addon,回傳恆為 false),同一扇關閉中的選單會被逐幀重按。
+                    if (AddonPressGuard.TryBeginPress("SelectIconString", &addonSelectIconString->AtkUnitBase, $"T|{index}"))
+                        Callback.Fire(&addonSelectIconString->AtkUnitBase, true, index);
                 }
 
                 if (TryGetAddonByName<AddonRepair>("AddonRepair", out var addonRepair))
@@ -282,6 +292,8 @@ namespace Artisan.Autocraft
                     {
                         if (DebugTab.Debug) Svc.Log.Verbose("Repair visible");
                         if (DebugTab.Debug) Svc.Log.Verbose("Closing repair window");
+                        // UseRepair 在窗開著時就是關窗:記下來,之後對這一扇的 RepairAll／SelectYesno 不會落在關閉中那幾幀。
+                        AddonPressGuard.MarkClosing("Repair", &r->AtkUnitBase);
                         ActionManagerEx.UseRepair();
                     }
                     _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(1000));
@@ -307,6 +319,7 @@ namespace Artisan.Autocraft
 
                 if (!repairAllButton->IsEnabled)
                 {
+                    AddonPressGuard.MarkClosing("Repair", &repairAddon->AtkUnitBase);
                     ActionManagerEx.UseRepair();
                     _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(1000));
                     return false;

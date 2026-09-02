@@ -84,8 +84,11 @@ namespace Artisan.RawInformation
 
         public unsafe static void CloseMateriaMenu()
         {
-            if (Svc.GameGui.GetAddonByName("Materialize", 1) != IntPtr.Zero)
+            var materialize = (AtkUnitBase*)Svc.GameGui.GetAddonByName("Materialize", 1).Address;
+            if (materialize != null)
             {
+                // 切換動作在窗開著時就是關窗:記下來,之後對這一扇的 FireCallback 不會落在關閉中那幾幀。
+                AddonPressGuard.MarkClosing("Materialize", materialize);
                 ActionManagerEx.UseMateriaExtraction();
             }
         }
@@ -100,6 +103,11 @@ namespace Artisan.RawInformation
 
                 var materalizeWindow = (AtkUnitBase*)materializePTR.Address;
                 if (materalizeWindow == null)
+                    return;
+
+                // 🔴 MaterializeDialog 按下確認就關,關閉中那幾幀 GetAddonByName 仍非零、按鈕仍可用;
+                // 外層 _nextRetry 500ms 是節流不是防護,而這個 try/catch 對 AVE 完全無效。同一扇窗只按一次。
+                if (!AddonPressGuard.TryBeginPress("MaterializeDialog", materalizeWindow))
                     return;
 
                 new AddonMaster.MaterializeDialog(materializePTR).Materialize();
@@ -192,7 +200,10 @@ namespace Artisan.RawInformation
                             UInt = 0,
                         };
 
-                        materalizeWindow->FireCallback(1, values);
+                        // 精製窗本身不會因為這個 callback 而關(它只是開 MaterializeDialog),每顆魔晶石都會再送一次
+                        // ⇒ 多次互動窗的 15 幀逃生口;要擋的是 CloseMateriaMenu(MarkClosing)之後落在關閉中的那幾幀。
+                        if (AddonPressGuard.TryBeginPress("Materialize", materalizeWindow, "1|2|0", AddonPressGuard.RoutineRePressEscapeFrames))
+                            materalizeWindow->FireCallback(1, values);
 
 
 

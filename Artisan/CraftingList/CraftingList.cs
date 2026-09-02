@@ -683,9 +683,19 @@ namespace Artisan.CraftingLists
                     return false;
                 }
 
+                // 同一幀連按兩顆不同的鈕(NQ 全選、HQ 全選)是刻意的正常流程,兩顆各一把 key、互不擋;
+                // 筆記本身按了不會關(每一件都會再按 ⇒ 15 幀逃生口)。要擋的是 TaskExitCraft 對這一扇送過 Fire(-1)
+                // 之後它還在關閉中的那幾幀(IsVisible 那時仍為真)。先看再登記:任一顆被擋就整趟不按,
+                // 回 false 讓輪詢任務下個 tick 再來(與「筆記還沒開好」同一條路徑)。
+                if (AddonPressGuard.IsHeld("WKSRecipeNotebook", cosmicAddon, "NQAll")
+                    || AddonPressGuard.IsHeld("WKSRecipeNotebook", cosmicAddon, "HQAll"))
+                    return false;
+
                 Svc.Log.Information("Artisan: 指派宇宙製作素材(點擊 NQ/HQ 全選按鈕)");
-                nqBtn->ClickAddonButton(cosmicAddon);
-                hqBtn->ClickAddonButton(cosmicAddon);
+                if (AddonPressGuard.TryBeginPress("WKSRecipeNotebook", cosmicAddon, "NQAll", AddonPressGuard.RoutineRePressEscapeFrames))
+                    nqBtn->ClickAddonButton(cosmicAddon);
+                if (AddonPressGuard.TryBeginPress("WKSRecipeNotebook", cosmicAddon, "HQAll", AddonPressGuard.RoutineRePressEscapeFrames))
+                    hqBtn->ClickAddonButton(cosmicAddon);
 
                 return true;
             }
@@ -699,6 +709,8 @@ namespace Artisan.CraftingLists
             // 這裡是每幀輪詢的閘門：取不到就當成「還沒 ready」讓 && 短路成 false，不寫 log。
             if (TryGetAddonByName<AddonRecipeNote>("RecipeNote", out var addon) &&
                 addon->AtkUnitBase.IsVisible &&
+                // TaskExitCraft 對這一扇送過 Fire(-1)、它還在關閉中 ⇒ 這一輪整段不碰(IsVisible 在那幾幀仍為真)。
+                !AddonPressGuard.IsClosing("RecipeNote", &addon->AtkUnitBase) &&
                 AgentRecipeNote.Instance() != null &&
                 RaptureAtkModule.Instance() != null &&
                 RaptureAtkModule.Instance()->AtkModule.IsAddonReady(AgentRecipeNote.Instance()->AgentInterface.AddonId))
@@ -803,6 +815,14 @@ namespace Artisan.CraftingLists
                                     continue;
                                 }
 
+                                // 手帳上的 HQ 素材鈕按了不會關手帳(它開的是 ContextIconMenu),每一件都會再按 ⇒ 15 幀逃生口;
+                                // 每個素材格各一把 key,同一趟六格互不擋。
+                                if (!AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, $"HQMenu|{i}", AddonPressGuard.RoutineRePressEscapeFrames))
+                                {
+                                    diag.Append("(guard-held)");
+                                    continue;
+                                }
+
                                 try
                                 {
                                     // ⚠️ ClickAddonButton 的第一個參數是 by-value `this AtkComponentButton`
@@ -815,21 +835,33 @@ namespace Artisan.CraftingLists
                                     ex.Log();
                                 }
                                 var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextIconMenu").Address;
-                                if (contextMenu != null)
+                                // 選了項目 ContextIconMenu 就關。下一格若同幀又開到同一個位址(遊戲重用而不重建),
+                                // 帶的是不同素材 id ⇒ 不同 key、同幀不互擋;真正擋的是同一格對同一扇關閉中的選單再送。
+                                if (contextMenu != null
+                                    && AddonPressGuard.TryBeginPress("ContextIconMenu", contextMenu, $"T|0|0|0|{ingredient}|0", AddonPressGuard.RoutineRePressEscapeFrames))
                                 {
                                     Callback.Fire(contextMenu, true, 0, 0, 0, ingredient, 0);
                                 }
                             }
                             else
                             {
-                                for (int m = 0; m <= 100; m++)
+                                // 這兩個迴圈是刻意的飽和送法(同一參數組連送 101 次把該格填滿),手帳不會因此關閉。
+                                // 守衛以「整趟一次」為單位登記(每格 NQ／HQ 各一把 key、15 幀逃生口),迴圈內部照舊;
+                                // 擋的只有「同一格對同一扇手帳在 15 幀內再跑一整趟」與 TaskExitCraft 關閉中的那幾幀。
+                                if (AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, $"Material|{i}|NQ", AddonPressGuard.RoutineRePressEscapeFrames))
                                 {
-                                    new AddonMaster.RecipeNote((IntPtr)addon).Material((uint)i, false);
+                                    for (int m = 0; m <= 100; m++)
+                                    {
+                                        new AddonMaster.RecipeNote((IntPtr)addon).Material((uint)i, false);
+                                    }
                                 }
 
-                                for (int m = 0; m <= 100; m++)
+                                if (AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, $"Material|{i}|HQ", AddonPressGuard.RoutineRePressEscapeFrames))
                                 {
-                                    new AddonMaster.RecipeNote((IntPtr)addon).Material((uint)i, true);
+                                    for (int m = 0; m <= 100; m++)
+                                    {
+                                        new AddonMaster.RecipeNote((IntPtr)addon).Material((uint)i, true);
+                                    }
                                 }
                             }
 

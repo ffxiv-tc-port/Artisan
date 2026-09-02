@@ -229,6 +229,8 @@ public unsafe class Artisan : IDalamudPlugin
 
     private void OnFrameworkUpdate(IFramework framework)
     {
+        // 「這扇窗按過了」守衛的解除點:放最前面、不受登入與任何開關限制(理由見 AddonPressGuard.Tick)。
+        AddonPressGuard.Tick();
         WatchRecipeNote();
 
         if (!Svc.ClientState.IsLoggedIn)
@@ -295,6 +297,7 @@ public unsafe class Artisan : IDalamudPlugin
             Sounds.SoundPlayer.Dispose();
             IPC.IPC.Dispose();
         }
+        AddonPressGuard.ForceTeardown();
         ECommonsMain.Dispose();
         P = null!;
     }

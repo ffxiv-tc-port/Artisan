@@ -355,14 +355,20 @@ public unsafe static class PreCrafting
             case Crafting.State.IdleNormal:
                 return TaskResult.Done;
             case Crafting.State.IdleBetween:
+                // 🔴 這個任務回 Retry,而 retryDelay 在 StartCrafting 那條路徑是 default(=0,下一幀就重跑):
+                // 只看 IsVisible 的話,Fire(-1) 之後視窗關閉中的每一幀都會再 Fire(-1) 一次(IsVisible 在那幾幀仍為真)。
+                // 守衛記位址,同一扇窗只送一次關閉,之後的 Retry 輪只等狀態機離開 IdleBetween;
+                // 90 幀仍在才補送一次(寫 Information)。
                 var addon = (AddonRecipeNote*)Svc.GameGui.GetAddonByName("RecipeNote").Address;
-                if (addon != null && addon->AtkUnitBase.IsVisible)
+                if (addon != null && addon->AtkUnitBase.IsVisible
+                    && AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, AddonPressGuard.ClosePressKey))
                 {
                     Svc.Log.Debug("Closing recipe menu to exit crafting state");
                     Callback.Fire(&addon->AtkUnitBase, true, -1);
                 }
                 var addon2 = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook").Address;
-                if (addon2 != null && addon2->IsVisible)
+                if (addon2 != null && addon2->IsVisible
+                    && AddonPressGuard.TryBeginPress("WKSRecipeNotebook", addon2, AddonPressGuard.ClosePressKey))
                 {
                     Svc.Log.Debug("Closing recipe menu to exit crafting state");
                     Callback.Fire(addon2, true, -1);
@@ -466,6 +472,11 @@ public unsafe static class PreCrafting
         ctx->OpenForItemSlot(pos.Value.inv, pos.Value.slot, 0, addonId);
 
         var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu").Address;
+        // 上一趟才對這扇選單送過關閉(下面的 Fire(-1)),它還在 ＝ 正在關閉中(StartCrafting 那條路徑的 retryDelay
+        // 是 default=0,下一幀就會回到這裡)。這一趟當「選單還沒開好」處理:不按、也不算一次嘗試,與 contextMenu == null
+        // 走同一條既有路徑。選單真的重建時 PostSetup 會清掉紀錄,不會被白白擋住。
+        if (contextMenu != null && AddonPressGuard.IsClosing("ContextMenu", contextMenu))
+            return TaskResult.Retry;
         if (contextMenu != null)
         {
             // AtkValuesCount 是 ContextMenu 這個 addon 的 AtkValues 陣列長度,跟 agent 的
@@ -481,13 +492,17 @@ public unsafe static class PreCrafting
             for (int i = 7; i < entryCount; i++)
             {
                 var firstEntryIsEquip = ctx->EventIds[i] == 25; // i'th entry will fire eventid 7+i; eventid 25 is 'equip'
-                if (firstEntryIsEquip)
+                if (firstEntryIsEquip
+                    && AddonPressGuard.TryBeginPress("ContextMenu", contextMenu, $"T|0|{i - 7}|0|0|0", AddonPressGuard.RoutineRePressEscapeFrames))
                 {
                     Svc.Log.Debug($"Equipping item #{ItemId} from {pos.Value.inv} @ {pos.Value.slot}, index {i}");
                     Callback.Fire(contextMenu, true, 0, i - 7, 0, 0, 0); // p2=-1 is close, p2=0 is exec first command
                 }
             }
-            Callback.Fire(contextMenu, true, 0, -1, 0, 0, 0);
+            // 同一趟「先送裝備再送關閉」是刻意的正常流程(守衛對同一幀登記的不同按法不互擋);
+            // 擋的是下一趟起對同一扇關閉中的選單再送任何東西(見上面的 IsClosing)。
+            if (AddonPressGuard.TryBeginPress("ContextMenu", contextMenu, AddonPressGuard.ClosePressKey, AddonPressGuard.RoutineRePressEscapeFrames))
+                Callback.Fire(contextMenu, true, 0, -1, 0, 0, 0);
             equipAttemptLoops++;
 
             if (equipAttemptLoops >= 5)
@@ -719,7 +734,9 @@ public unsafe static class PreCrafting
             return TaskResult.Retry;
 
         if (TryGetAddonMaster<AddonMaster.WKSMissionInfomation>("WKSMissionInfomation", out var mission)
-            && mission.IsAddonReady)
+            && mission.IsAddonReady
+            // 任務面板按下「宇宙製作筆記」不會關(它開的是筆記),多次互動窗的 15 幀逃生口;被擋就當這輪面板還沒 ready。
+            && AddonPressGuard.TryBeginPress("WKSMissionInfomation", mission.Base, "CosmoCraftingLog", AddonPressGuard.RoutineRePressEscapeFrames))
         {
             _lastCosmicReopen = now;
             Svc.Log.Information(
@@ -1007,6 +1024,11 @@ public unsafe static class PreCrafting
             if (now - _lastCosmicSelect < TimeSpan.FromSeconds(CosmicSelectIntervalSeconds))
                 return TaskResult.Retry;
 
+            // 選取不會關筆記(多次互動窗,15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、
+            // 它還在關閉中的那幾幀。被擋就不記 _lastCosmicSelect,下一輪再來。
+            if (!AddonPressGuard.TryBeginPress("WKSRecipeNotebook", addon, $"F|0|{entry}", AddonPressGuard.RoutineRePressEscapeFrames))
+                return TaskResult.Retry;
+
             _lastCosmicSelect = now;
             Svc.Log.Information(
                 $"Artisan: 宇宙配方 {recipe.RowId}（{targetItemName}）在清單第 {entry} 項，送出選取。");
@@ -1081,6 +1103,11 @@ public unsafe static class PreCrafting
             if (cosmicAddon == null)
                 return TaskResult.Retry;
 
+            // 結構上這個任務只會 Fire 一次(Fire 完就 Done);守衛只是讓它與 TaskExitCraft 的關閉紀錄共用同一把鎖,
+            // 被擋時走與「addon 還沒出現」相同的 Retry 路徑。
+            if (!AddonPressGuard.TryBeginPress("WKSRecipeNotebook", cosmicAddon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
+                return TaskResult.Retry;
+
             Svc.Log.Debug($"Starting actual cosmic craft");
             Callback.Fire(cosmicAddon, true, 6);
 
@@ -1090,6 +1117,9 @@ public unsafe static class PreCrafting
 
         var addon = (AddonRecipeNote*)Svc.GameGui.GetAddonByName("RecipeNote").Address;
         if (addon == null)
+            return TaskResult.Retry;
+
+        if (!AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, $"T|{8 + (int)type}", AddonPressGuard.RoutineRePressEscapeFrames))
             return TaskResult.Retry;
 
         Svc.Log.Debug($"Starting {type} craft");

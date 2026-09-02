@@ -1,4 +1,5 @@
 ﻿using Artisan.CraftingLists;
+using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.Tasks;
 using Dalamud.Game.ClientState.Conditions;
@@ -673,7 +674,11 @@ namespace Artisan.IPC
 
             if (Svc.Condition[ConditionFlag.OccupiedSummoningBell])
             {
-                if (TryGetAddonByName<AddonTalk>("Talk", out var addon) && addon->AtkUnitBase.IsVisible)
+                // 🔴 這是每幀跑、零節流的按下點。Talk 按一次翻一頁、窗不消失,最後一頁那一下才是關閉,
+                // 而關閉中的幾幀 IsVisible 仍為真 ⇒ 沒有守衛時同一扇關閉中的 Talk 每幀吃三個 ReceiveEvent。
+                // 守衛記位址、15 幀逃生口(艦隊 Talk 政策):翻頁節奏每頁 +0.25s,關閉中的危險窗口 <10 幀不落在裡面。
+                if (TryGetAddonByName<AddonTalk>("Talk", out var addon) && addon->AtkUnitBase.IsVisible
+                    && AddonPressGuard.TryBeginPress("Talk", &addon->AtkUnitBase, escapeFrames: AddonPressGuard.RoutineRePressEscapeFrames))
                 {
                     new AddonMaster.Talk((IntPtr)addon).Click();
                 }

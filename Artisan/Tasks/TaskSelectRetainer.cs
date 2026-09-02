@@ -1,4 +1,5 @@
-﻿using Artisan.IPC;
+﻿using Artisan.GameInterop;
+using Artisan.IPC;
 using Artisan.RawInformation;
 using Dalamud.Game;
 using Dalamud.Game.ClientState.Conditions;
@@ -124,6 +125,8 @@ internal unsafe static class RetainerListHandlers
             var list = new AddonMaster.RetainerList(retainerList);
             foreach (var retainer in list.Retainers)
             {
+                // 讀窗文字做判定:讀到 U+FFFD 代表窗記憶體正在變動,這一幀不碰。
+                if (AddonPressGuard.IsTextCorrupt("RetainerList", retainer.Name)) return false;
                 if (retainer.Name == name)
                 {
                     if (RetainerInfo.GenericThrottle)
@@ -387,6 +390,8 @@ internal unsafe static class RetainerHandlers
                             continue;
 
                         var label = MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String)).ExtractText().Trim();
+                        // 讀窗文字做判定:讀到 U+FFFD 代表選單記憶體正在變動,這一幀不碰(回 false = 下一輪重來)。
+                        if (AddonPressGuard.IsTextCorrupt("ContextMenu", label)) return false;
                         labels[entry] = label;
 
                         if (indexOfRetrieveAll == -1 && retrieveAllText == label) indexOfRetrieveAll = entry;
@@ -470,7 +475,12 @@ internal unsafe static class RetainerHandlers
 
             var button = (AtkComponentButton*)component;
             var nodetext = MemoryHelper.ReadSeString(&labelTextNode->NodeText).GetText();
-            if (nodetext == text && progressNode->IsVisible() && IsComponentEnabled(button) && RetainerInfo.GenericThrottle)
+            // 讀窗文字做判定:讀到 U+FFFD 代表窗記憶體正在變動,這一幀不碰。
+            if (AddonPressGuard.IsTextCorrupt("RetainerItemTransferProgress", nodetext)) return false;
+            // 這顆是關閉鈕,按下窗就關;GenericThrottle 100ms(~6 幀)落在關閉中的窗口內,不是防護。
+            // 守衛放在節流之後,同一扇窗只按一次。
+            if (nodetext == text && progressNode->IsVisible() && IsComponentEnabled(button) && RetainerInfo.GenericThrottle
+                && AddonPressGuard.TryBeginPress("RetainerItemTransferProgress", addon))
             {
                 button->ClickAddonButton(addon);
                 return true;
@@ -512,6 +522,8 @@ internal unsafe static class RetainerHandlers
     {
         if (TryGetAddonByName<AddonSelectString>("SelectString", out var addon) && IsAddonReady(&addon->AtkUnitBase))
         {
+            // 讀窗文字做判定:任一列讀到 U+FFFD 代表窗記憶體正在變動,這一幀不碰。
+            if (GetEntries(addon).Any(x => AddonPressGuard.IsTextCorrupt("SelectString", x))) return false;
             var entry = GetEntries(addon).FirstOrDefault(x => x.StartsWithAny(text));
             if (entry != null)
             {

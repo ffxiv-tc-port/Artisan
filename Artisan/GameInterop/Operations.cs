@@ -21,7 +21,10 @@ public static unsafe class Operations
         {
             if (Throttler.Throttle(500))
             {
-                if (GenericHelpers.TryGetAddonByName<AddonRecipeNote>("RecipeNote", out var recipenote))
+                // 試作不會關製作手帳(它只是隱藏再回來),每一輪試作都會再送 ⇒ 多次互動窗的 15 幀逃生口;
+                // 要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、它還在關閉中的那幾幀。守衛放在節流之後。
+                if (GenericHelpers.TryGetAddonByName<AddonRecipeNote>("RecipeNote", out var recipenote)
+                    && AddonPressGuard.TryBeginPress("RecipeNote", &recipenote->AtkUnitBase, "T|10", AddonPressGuard.RoutineRePressEscapeFrames))
                 {
                     Callback.Fire(&recipenote->AtkUnitBase, true, 10);
                 }
@@ -55,12 +58,17 @@ public static unsafe class Operations
             if (addonPtr == null)
                 return;
 
+            // 開簡易製作對話框不會關製作手帳(15 幀逃生口);被擋就這次不開,呼叫端的 WaitStart 逾時後照既有路徑重排。
+            if (!AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, "T|9", AddonPressGuard.RoutineRePressEscapeFrames))
+                return;
+
             Svc.Log.Debug($"Starting quick craft");
             Callback.Fire(&addon->AtkUnitBase, true, 9);
 
             var quickSynthWindow = (AtkUnitBase*)Svc.GameGui.GetAddonByName("SynthesisSimpleDialog", 1).Address;
 
-            if (quickSynthWindow != null)
+            // 對話框送出數量就關 ⇒ 單答終結窗,同一扇只送一次。
+            if (quickSynthWindow != null && AddonPressGuard.TryBeginPress("SynthesisSimpleDialog", quickSynthWindow))
             {
                 var values = stackalloc AtkValue[2];
                 values[0] = new()
@@ -95,6 +103,11 @@ public static unsafe class Operations
 
                 var quickSynthWindow = (AtkUnitBase*)quickSynthPTR.Address;
                 if (quickSynthWindow == null)
+                    return;
+
+                // CanCancelQS 只在 WaitStart→QuickCraft 那一次轉換設真、Fire 完立刻設假,結構上每扇窗只會送一次關閉;
+                // 守衛只是把它納入同一把鎖,被擋時 CanCancelQS 維持原值、下一幀再來。
+                if (!AddonPressGuard.TryBeginPress("SynthesisSimple", quickSynthWindow, AddonPressGuard.ClosePressKey))
                     return;
 
                 Callback.Fire(quickSynthWindow, true, -1);
@@ -166,6 +179,11 @@ public static unsafe class Operations
             if (cosmicAddon == null)
                 return BlockedBy("WKSRecipeNotebook addon null");
 
+            // 開始製作不會關筆記(每一件都會再送 ⇒ 15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、
+            // 它還在關閉中的那幾幀。回 false 與其他 BlockedBy 走同一條輪詢路徑。
+            if (!AddonPressGuard.TryBeginPress("WKSRecipeNotebook", cosmicAddon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
+                return BlockedBy("AddonPressGuard WKSRecipeNotebook");
+
             Svc.Log.Debug($"Starting actual cosmic craft");
             Callback.Fire(cosmicAddon, true, 6);
             PreCrafting.Tasks.Clear();
@@ -192,6 +210,9 @@ public static unsafe class Operations
             var addon = (AddonRecipeNote*)Svc.GameGui.GetAddonByName("RecipeNote").Address;
             if (addon == null)
                 return BlockedBy("RecipeNote addon null");
+
+            if (!AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, "T|8", AddonPressGuard.RoutineRePressEscapeFrames))
+                return BlockedBy("AddonPressGuard RecipeNote");
 
             Svc.Log.Information($"Artisan: starting actual craft");
             Callback.Fire(&addon->AtkUnitBase, true, 8);

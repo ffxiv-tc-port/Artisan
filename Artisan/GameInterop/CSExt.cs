@@ -28,7 +28,9 @@ public unsafe struct RecipeNoteIngredientEntry
         NumAssignedHQ = assigning;
         NumAssignedNQ = (byte)Math.Min(NumAssignedNQ, NumTotal - assigning);
 
-        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon))
+        // 重新整理不會關手帳(15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、它還在關閉中的那幾幀。
+        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon)
+            && AddonPressGuard.TryBeginPress("RecipeNote", addon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
         {
             Callback.Fire(addon, true, 6);
         }
@@ -40,7 +42,9 @@ public unsafe struct RecipeNoteIngredientEntry
         NumAssignedNQ = assigning;
         NumAssignedHQ = (byte)Math.Min(NumAvailableHQ, NumTotal - assigning);
 
-        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon))
+        // 重新整理不會關手帳(15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、它還在關閉中的那幾幀。
+        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon)
+            && AddonPressGuard.TryBeginPress("RecipeNote", addon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
         {
             Callback.Fire(addon, true, 6);
         }
@@ -61,7 +65,9 @@ public unsafe struct RecipeNoteIngredientEntry
         if (NumAssignedNQ != NumTotal)
             NumAssignedHQ = (byte)Math.Min(NumTotal, Math.Min(NumAvailableHQ, hq));
 
-        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon))
+        // 重新整理不會關手帳(15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、它還在關閉中的那幾幀。
+        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon)
+            && AddonPressGuard.TryBeginPress("RecipeNote", addon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
         {
             Callback.Fire(addon, true, 6);
         }

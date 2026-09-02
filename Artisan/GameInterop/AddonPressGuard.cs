@@ -129,7 +129,7 @@ internal static unsafe class AddonPressGuard
     };
 
     /// <param name="Address">被按的那個實例的位址,<b>只做等值比較</b>。</param>
-    /// <param name="Frame">按下時的繪製幀號。</param>
+    /// <param name="Frame">按下時的 framework tick 幀號(見 <see cref="frameCount"/>)。</param>
     /// <param name="EscapeFrames">登記當時呼叫端給的逃生口。</param>
     private readonly record struct PressRecord(nint Address, long Frame, int EscapeFrames);
 
@@ -143,7 +143,33 @@ internal static unsafe class AddonPressGuard
     private static readonly HashSet<nint> PresentBuf = [];
     private static readonly List<string> KeysBuf = [];
 
-    private static long CurrentFrame => (long)Svc.PluginInterface.UiBuilder.FrameCount;
+    /// <summary>
+    /// 守衛自己的時鐘,單位是 <b>framework tick</b>(遊戲主迴圈每更新一次 +1),在 <see cref="Tick"/> 的最前面遞增。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 <b>刻意不用 <c>UiBuilder.FrameCount</c></b>(2026-09-02 換掉):那個計數器是在 Dalamud
+    /// <c>UiBuilder.OnDraw</c> 的<b>結尾</b>才 <c>++</c>,而 <c>OnDraw</c> 在「使用者隱藏 UI」、
+    /// 「<b>過場動畫</b>」(<c>ToggleUiHideDuringCutscenes</c>,<b>預設開</b>)、「GPose」三種情況下
+    /// 會在遞增之前就 <c>return</c> ⇒ <b>外掛 UI 被隱藏的整段期間繪製幀號完全停住</b>。
+    /// 拿它當時鐘的話,兩個逃生口(<see cref="DefaultEscapeFrames"/>／<see cref="RoutineRePressEscapeFrames"/>)
+    /// 在過場中<b>永遠不會到期</b>:守衛退化成永久封鎖 —— 不會崩(fail-closed),但「按一次翻一頁、
+    /// 窗不會消失」的站(僱員補貨對 <c>Talk</c> 的每幀點擊)會停在第一頁直到過場結束。
+    /// <para>
+    /// <c>Framework.Update</c> 掛在遊戲主迴圈的更新上,與繪製、與 UI 隱藏<b>完全無關</b>,過場中照跑
+    /// (Dalamud 那層唯一的閘門是 <c>DispatchUpdateEvents</c>,只有遊戲關閉時才會變 false)。
+    /// 📌 正常情況下遊戲每個 frame 更新一次也繪製一次,兩個計數器是 1:1,所以逃生口的幀數不必跟著調整;
+    /// 兩者唯一會分岔的方向就是上面那三種「繪製停、更新照跑」的情況,那正是要修的。
+    /// </para>
+    /// <para>
+    /// 🔴 <b>不變式:<see cref="Tick"/> 必須每個 framework tick 無條件被呼叫一次</b>
+    /// (<c>Artisan.OnFrameworkUpdate</c> 的第一個敘述,在登入判斷與所有開關之前)。
+    /// 把它移到任何條件底下,時鐘就會停,守衛會靜默退化成永久封鎖。
+    /// </para>
+    /// </remarks>
+    private static long frameCount;
+
+    /// <summary>目前的 framework tick 幀號(見 <see cref="frameCount"/>)。</summary>
+    private static long CurrentFrame => frameCount;
 
     /// <summary>
     /// 登記「即將對這扇視窗送出這一個按法」。<b>回 <see langword="false"/> ＝這一幀絕對不能送。</b>
@@ -302,17 +328,25 @@ internal static unsafe class AddonPressGuard
     }
 
     /// <summary>
-    /// 每幀從 <c>Artisan.OnFrameworkUpdate</c> 的最前面無條件呼叫:被記下的位址已經從該窗名的清單裡消失時解除封鎖。
+    /// 每幀從 <c>Artisan.OnFrameworkUpdate</c> 的最前面無條件呼叫,做兩件事:
+    /// (1) 讓守衛的時鐘 <see cref="frameCount"/> 前進一格;
+    /// (2) 被記下的位址已經從該窗名的清單裡消失時解除封鎖。
     /// </summary>
     /// <remarks>
     /// 🔴 只做位址等值比較,永遠不解參。
     /// ⚠️ 判準刻意<b>不</b>用「視窗看起來還 ready 嗎」:關閉中的那幾幀三關全過,拿那個當「窗不見了」
     /// 會在最危險的那幾幀把封鎖解除掉,等於沒有這道防線。
+    /// 🔴 <b>呼叫點必須無條件、每個 framework tick 一次</b>:除了解除封鎖,這裡還是守衛時鐘唯一的來源
+    /// (見 <see cref="frameCount"/>);挪到任何條件底下都會讓逃生口停止倒數。
     /// 放在 Tick 最前面且不受任何開關限制:解除點若只長在各自的分支裡,開關剛好在按下之後轉為關閉時
     /// 記號會一直留著,下一扇重用同一塊位址的窗會被白白擋到逃生口。
     /// </remarks>
     internal static void Tick()
     {
+        // 🔴 時鐘必須在這裡遞增,而且要在下面那個「沒有記號就回來」之前 ——
+        // 放到 early return 後面的話,沒有窗被記著時時鐘就停住,逃生口的幀數會被算少,等於沒修。
+        frameCount++;
+
         if (PressedByAddon.Count == 0) return;
 
         NamesBuf.Clear();

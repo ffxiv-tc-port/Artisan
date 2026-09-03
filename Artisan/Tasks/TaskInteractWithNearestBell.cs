@@ -26,8 +26,10 @@ internal unsafe static class TaskInteractWithNearestBell
 
 internal static class YesAlready
 {
-    internal static Version Version => Svc.PluginInterface.InstalledPlugins.FirstOrDefault(x => x.IsLoaded && x.InternalName == "YesAlready")?.Version ?? new();
-    internal static readonly Version NewVersion = new("1.4.0.0");
+    // 1.4.0.0 之前的 YesAlready 靠反射寫 Service.Configuration.Enabled 來抑制，
+    // 那條路已經兩層過期（內部名實際是 YesAlready 沒有空格，且 Service 上已經
+    // 沒有 Configuration 這個成員），只要真的跑到就是 NullReferenceException。
+    // 艦隊的 YesAlready 遠高於 1.4.0.0，一律走共享資料 StopRequests。
     internal static bool Reenable = false;
     internal static HashSet<string>? Data = null;
 
@@ -42,75 +44,34 @@ internal static class YesAlready
 
     internal static void Lock()
     {
-        if (Version != null)
+        GetData();
+        if (Data != null)
         {
-            if (Version < NewVersion)
-            {
-                if (DalamudReflector.TryGetDalamudPlugin("Yes Already", out var pl, false, true))
-                {
-                    Svc.Log.Information("Disabling Yes Already (old)");
-                    pl.GetStaticFoP("YesAlready.Service", "Configuration").SetFoP("Enabled", false);
-                    Reenable = true;
-                }
-            }
-            else
-            {
-                GetData();
-                if (Data != null)
-                {
-                    Svc.Log.Information("Disabling Yes Already (new)");
-                    Data.Add(Svc.PluginInterface.InternalName);
-                    Reenable = true;
-                }
-            }
+            Svc.Log.Information("Disabling Yes Already");
+            Data.Add(Svc.PluginInterface.InternalName);
+            Reenable = true;
         }
     }
 
     internal static void Unlock()
     {
-        if (Reenable && Version != null)
+        if (!Reenable) return;
+
+        GetData();
+        if (Data != null)
         {
-            if (Version < NewVersion)
-            {
-                if (DalamudReflector.TryGetDalamudPlugin("Yes Already", out var pl, false, true))
-                {
-                    Svc.Log.Information("Enabling Yes Already");
-                    pl.GetStaticFoP("YesAlready.Service", "Configuration").SetFoP("Enabled", true);
-                    Reenable = false;
-                }
-            }
-            else
-            {
-                GetData();
-                if (Data != null)
-                {
-                    Svc.Log.Information("Enabling Yes Already (new)");
-                    Data.Remove(Svc.PluginInterface.InternalName);
-                    Reenable = false;
-                }
-            }
+            Svc.Log.Information("Enabling Yes Already");
+            Data.Remove(Svc.PluginInterface.InternalName);
+            Reenable = false;
         }
     }
 
     internal static bool IsEnabled()
     {
-        if (Version != null)
+        GetData();
+        if (Data != null)
         {
-            if (Version < NewVersion)
-            {
-                if (DalamudReflector.TryGetDalamudPlugin("Yes Already", out var pl, false, true))
-                {
-                    return pl.GetStaticFoP("YesAlready.Service", "Configuration").GetFoP<bool>("Enabled");
-                }
-            }
-            else
-            {
-                GetData();
-                if (Data != null)
-                {
-                    return !Data.Contains(Svc.PluginInterface.InternalName);
-                }
-            }
+            return !Data.Contains(Svc.PluginInterface.InternalName);
         }
 
         return false;

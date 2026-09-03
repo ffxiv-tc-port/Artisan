@@ -99,10 +99,14 @@ namespace Artisan.RawInformation
             RecipeOnList = originList.Recipes.Any(x => LuminaSheets.RecipeSheet[x.ID].ItemResult.RowId == ItemId);
             if (P.Config.UseUniversalis && !P.Config.UniversalisOnDemand)
             {
-                if (P.Config.LimitUnversalisToDC)
-                    Task.Run(() => P.UniversalsisClient.GetDCData(ItemId, ref MarketboardData));
-                else
-                    Task.Run(() => P.UniversalsisClient.GetRegionData(ItemId, ref MarketboardData));
+                // Building a list creates one Ingredient per material, so this used to fire one
+                // simultaneous Universalis request per material. The client now coalesces and
+                // paces them, so kicking one off per ingredient is safe.
+                var limitToDC = P.Config.LimitUnversalisToDC;
+                var itemIdForPrice = ItemId;
+                _ = Task.Run(async () => MarketboardData = limitToDC
+                    ? await P.UniversalsisClient.GetDCDataAsync(itemIdForPrice).ConfigureAwait(false)
+                    : await P.UniversalsisClient.GetRegionDataAsync(itemIdForPrice).ConfigureAwait(false));
             }
             IngredientHelper = ingredientHelpers;
         }

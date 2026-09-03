@@ -201,7 +201,7 @@ namespace Artisan.CraftingLists
         private static string _lastBranch = "";
 
         // Names the guard branch that stopped ProcessList before it could reach
-        // recipe selection. Info level (the reporting user runs at LogLevel 2) and
+        // recipe selection. Info level (the reporting user runs at LogLevel 1; Debug is captured but drowned) and
         // throttled, but always logs immediately when the branch CHANGES so a loop
         // between two branches is visible rather than averaged away.
         private static void ReportBranch(string branch)
@@ -419,7 +419,7 @@ namespace Artisan.CraftingLists
             {
                 // This block CLOSES the recipe window (TaskExitCraft) and then returns,
                 // so recipe selection below never runs. If a flag never clears, that is
-                // the open/close loop the user hears. Info level (their LogLevel is 2),
+                // the open/close loop the user hears. Info level (their LogLevel is 1; Debug would be drowned),
                 // throttled, and only while actually stuck.
                 if ((DateTime.Now - _lastConsumableLog).TotalSeconds >= 3)
                 {

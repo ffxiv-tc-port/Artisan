@@ -82,8 +82,8 @@ public unsafe static class PreCrafting
     private static long _nextDetourErrorLogTick;
 
     /// <summary>
-    /// detour 內部出狀況時的節流記錄。**Information 級是刻意的** —— 使用者跑 LogLevel 2,
-    /// Debug/Verbose 收不到,而這正是我們要使用者回報的東西。
+    /// detour 內部出狀況時的節流記錄。**Information 級是刻意的** —— 使用者跑 LogLevel 1,
+    /// 盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒,而這正是我們要使用者回報的東西。
     /// </summary>
     private static void LogDetourIssue(string message, Exception? ex = null)
     {
@@ -524,7 +524,7 @@ public unsafe static class PreCrafting
             if (mayClose)
             {
                 if (pressedThisPass)
-                    // 使用者跑 LogLevel 2;若真的看到選單留在畫面上,log 裡有這一行對得上。
+                    // 使用者跑 LogLevel 1;若真的看到選單留在畫面上,log 裡有這一行對得上。
                     Svc.Log.Information("[TaskEquipItem] 這一趟已經送過裝備 callback(close:true),不再對同一扇 ContextMenu 送關閉。");
                 else
                     Callback.Fire(contextMenu, true, 0, -1, 0, 0, 0);
@@ -645,9 +645,10 @@ public unsafe static class PreCrafting
         _lastOpenAttempt = now;
         _openAttempts++;
 
-        // Info level on purpose: the reporting user runs at LogLevel 2, where
-        // Svc.Log.Debug is invisible - that is why the first round produced "no
-        // log at all". Fires a few times, only when something is actually wrong.
+        // Info level on purpose: the reporting user runs at LogLevel 1, where
+        // Svc.Log.Debug is captured but drowned in the 100k+ Debug lines a single log
+        // file holds - that is why the first round produced "no log at all". Fires a
+        // few times, only when something is actually wrong.
         //
         // Ptr()==0 alone is ambiguous: it is equally consistent with "the addon is
         // closed so RecipeList was freed" and with "the addon is open but we cannot

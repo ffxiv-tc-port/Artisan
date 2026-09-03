@@ -177,7 +177,7 @@ public static class CraftingProcessor
         // 奇蹟之材的閘門判定在上面那一行就跑完了。**在這裡**記 log 而不是在解算器內部,是因為
         // 同一個解算器也被配方視窗的提示取樣器拿去跑上百次模擬(見 SolverHintSampler),
         // 在裡面記會把 log 洗掉;而這裡保證是實機的那一場製作。
-        // Information 級是刻意的:使用者跑 LogLevel 2,Debug/Verbose 收不到。
+        // Information 級是刻意的:使用者跑 LogLevel 1,盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒。
         if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.LastGateExplanation is { Length: > 0 } mmWhy)
             Svc.Log.Information($"[MaterialMiracle] {mmWhy}");
         if (Simulator.CannotUseAction(craft, initialStep, _nextRec.Action, out string reason))
@@ -197,7 +197,7 @@ public static class CraftingProcessor
         _nextRec = _activeSolver.Solve(craft, step);
         // 標準解算器的「奇蹟之材期間要不要交給專家解算器代打」閘門是在製作**中途**(buff 生效那一步)
         // 才跑的,所以不能像 MaterialMiracleSolver 那樣只在 OnCraftStarted 讀一次。
-        // 讀走即清 ⇒ 一場製作只會印一行。Information 級是刻意的:使用者跑 LogLevel 2。
+        // 讀走即清 ⇒ 一場製作只會印一行。Information 級是刻意的:使用者跑 LogLevel 1。
         if (_activeSolver is Solvers.StandardSolver stdSolver && stdSolver.ConsumeGateExplanation() is { Length: > 0 } stdWhy)
             Svc.Log.Information($"[MaterialMiracle] {stdWhy}");
         Svc.Log.Debug($"Next rec is: {_nextRec.Action}");

@@ -426,7 +426,7 @@ internal static unsafe class AddonPressGuard
         return false;
     }
 
-    /// <summary>被擋那一幀的診斷:單答終結窗寫 Information(使用者跑 LogLevel 2),多次互動窗寫 Debug;每扇窗 1 秒節流免得洗版。</summary>
+    /// <summary>被擋那一幀的診斷:單答終結窗寫 Information(使用者跑 LogLevel 1),多次互動窗寫 Debug;每扇窗 1 秒節流免得洗版。</summary>
     private static void LogHold(string addonName, nint address, string pressKey, string blockingKey, bool routine)
     {
         if (!EzThrottler.Throttle($"AddonPressGuard-Hold-{addonName}", 1000)) return;

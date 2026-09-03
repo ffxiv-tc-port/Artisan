@@ -280,7 +280,7 @@ namespace Artisan.Autocraft
         //    2026-08-03 實機：Artisan 每次都只印一行 Debug「Endurance toggled off」就安靜了，
         //    ICE 那頭看到「Artisan 不忙了」立刻重下同一個指令 —— 靜默無限迴圈。
         //    現在改成收到就停、並且用 Information 級把「哪個配方、遊戲說了什麼」寫進 log
-        //    （使用者跑 LogLevel 2，Debug 收不到）。
+        //    （使用者跑 LogLevel 1，Debug 收得到但單檔數十萬行會淹沒）。
         private static void CheckCraftBlockingError(ref SeString message, ref bool isHandled)
         {
             if (!Enable && !CraftingListUI.Processing)

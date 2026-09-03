@@ -59,7 +59,7 @@ internal static class TataruPraiseIPC
         catch (Exception e)
         {
             // 其他狀況（對方在自己的回呼裡爆掉之類）記一筆就好，絕不要讓它往上冒
-            // 打斷「清單完成」的收尾流程。Information 級：回報用的使用者跑 LogLevel 2。
+            // 打斷「清單完成」的收尾流程。Information 級：回報用的使用者跑 LogLevel 1。
             PluginLog.Information($"[Artisan] 呼叫 TataruPraise 失敗（不影響製作）：{e.Message}");
             return false;
         }

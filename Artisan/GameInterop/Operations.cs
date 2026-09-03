@@ -125,9 +125,10 @@ public static unsafe class Operations
     // them is permanently true, task ListCraft burns its 10s timeout, the list loop
     // restarts, and the window is opened again - which is what the user sees.
     //
-    // Logged at INFORMATION, not Debug: the reporting user runs at LogLevel 2, which
-    // is exactly why the previous round produced no usable log. Throttled to once a
-    // second and only emitted while something is actually blocking.
+    // Logged at INFORMATION, not Debug: the reporting user runs at LogLevel 1, so Debug
+    // is captured but drowned in the 100k+ Debug lines a single log file holds - which is
+    // why the previous round produced no usable log. Throttled to once a second and only
+    // emitted while something is actually blocking.
     private static DateTime _lastBlockLog = DateTime.MinValue;
 
     private static bool BlockedBy(string reason)

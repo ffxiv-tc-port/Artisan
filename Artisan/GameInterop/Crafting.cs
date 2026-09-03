@@ -652,8 +652,8 @@ public static unsafe class Crafting
     private static long _nextDetourErrorLogTick;
 
     /// <summary>
-    /// detour 內部出受管理例外時的節流記錄。**Information 級是刻意的** —— 使用者跑 LogLevel 2,
-    /// Debug/Verbose 收不到,而這正是我們要使用者回報的東西。
+    /// detour 內部出受管理例外時的節流記錄。**Information 級是刻意的** —— 使用者跑 LogLevel 1,
+    /// 盲區只有 Verbose,Debug 收得到但單檔數十萬行會淹沒,而這正是我們要使用者回報的東西。
     /// </summary>
     private static void LogDetourException(string what, Exception ex)
     {

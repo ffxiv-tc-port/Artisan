@@ -10,6 +10,7 @@ using ECommons.Logging;
 using OtterGui;
 using OtterGui.Extensions;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace Artisan.IPC
@@ -67,6 +68,8 @@ namespace Artisan.IPC
             Svc.PluginInterface.GetIpcProvider<uint, string[]>("Artisan.GetAvailableSolvers").RegisterFunc(GetAvailableSolvers);
             Svc.PluginInterface.GetIpcProvider<bool, uint[]>("Artisan.GetAvailableFood").RegisterFunc(GetAvailableFood);
             Svc.PluginInterface.GetIpcProvider<bool, uint[]>("Artisan.GetAvailablePots").RegisterFunc(GetAvailablePots);
+
+            Svc.PluginInterface.GetIpcProvider<List<(string, int)>>("Artisan.ReturnMacroInfo").RegisterFunc(ReturnMacroInfo);
         }
 
         internal static void Dispose()
@@ -92,6 +95,8 @@ namespace Artisan.IPC
             Svc.PluginInterface.GetIpcProvider<uint, string[]>("Artisan.GetAvailableSolvers").UnregisterFunc();
             Svc.PluginInterface.GetIpcProvider<bool, uint[]>("Artisan.GetAvailableFood").UnregisterFunc();
             Svc.PluginInterface.GetIpcProvider<bool, uint[]>("Artisan.GetAvailablePots").UnregisterFunc();
+
+            Svc.PluginInterface.GetIpcProvider<List<(string, int)>>("Artisan.ReturnMacroInfo").UnregisterFunc();
 
             // 卸載時把臨時覆寫清乾淨。它們不進設定檔,但 P.Config 的 RecipeConfig 物件
             // 在同一個 session 內是活的,留著會讓下次載入沿用上次的臨時設定。
@@ -320,6 +325,25 @@ namespace Artisan.IPC
             var job = (Job)((uint)Job.CRP + recipe.CraftType.RowId);
             craft = Crafting.BuildCraftStateForRecipe(CharacterStats.GetBaseStatsForClassHeuristic(job), job, recipe);
             return craft != null;
+        }
+
+        /// <summary>
+        /// 回傳目前 Artisan 裡所有巨集的（名稱, ID）。
+        /// 使用者可以在巨集編輯器裡自訂名稱，
+        /// 呼叫端（例如宇宙探索）靠這個把名稱對回 ID。
+        /// </summary>
+        public static List<(string, int)> ReturnMacroInfo()
+        {
+            List<(string, int)> macros = new();
+
+            var macroList = P.Config.MacroSolverConfig.Macros;
+            if (macroList.Count > 0)
+            {
+                foreach (var macro in macroList)
+                    macros.Add(new(macro.Name, macro.ID));
+            }
+
+            return macros;
         }
 
         public enum ArtisanMode

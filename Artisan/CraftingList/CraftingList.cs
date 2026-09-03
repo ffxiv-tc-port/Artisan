@@ -368,7 +368,7 @@ namespace Artisan.CraftingLists
 
             if (Svc.Objects.LocalPlayer.Level < recipe.RecipeLevelTable.Value.ClassJobLevel - 5 && Svc.Objects.LocalPlayer.ClassJob.RowId == recipe.CraftType.Value.RowId + 8 && !isCrafting && !preparing)
             {
-                DuoLog.Error("Insufficient level to craft this item. Moving on.");
+                DuoLog.Error($"Insufficient level for {recipe.ItemResult.Value.Name}. Moving on.");
                 var currentRecipe = selectedList.ExpandedList[CurrentIndex];
 
                 while (currentRecipe == selectedList.ExpandedList[CurrentIndex])

@@ -288,7 +288,7 @@ namespace Artisan.UI
 
                     if (ImGui.Button($"Stop Navmesh"))
                     {
-                        Svc.PluginInterface.GetIpcSubscriber<object>("vnavmesh.Stop").InvokeAction();
+                        Svc.PluginInterface.GetIpcSubscriber<object>("vnavmesh.Path.Stop").InvokeAction();
                     }
 
                     ImGui.Text($"ATools Installed: {RetainerInfo.AToolsInstalled}");

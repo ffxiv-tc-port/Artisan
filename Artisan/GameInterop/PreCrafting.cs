@@ -477,6 +477,13 @@ public unsafe static class PreCrafting
         // 走同一條既有路徑。選單真的重建時 PostSetup 會清掉紀錄,不會被白白擋住。
         if (contextMenu != null && AddonPressGuard.IsClosing("ContextMenu", contextMenu))
             return TaskResult.Retry;
+        // 🔴 ContextMenu 是「常駐窗」(顯示/隱藏,不是建立/銷毀),守衛對它的解除條件是「連續隱藏 N 幀」,
+        //    而放行條件是「可見」—— 兩者互為反面才構成防護(理由見 AddonPressGuard.HiddenReleaseFrames)。
+        //    守衛自己也會做這道檢查,這裡多擋一次是為了**不要把等待燒進 equipAttemptLoops**:
+        //    選單不可見時下面那整段會一發都送不出去,卻照樣 equipAttemptLoops++,五幀就會誤報 Abort。
+        //    回 Retry 與上面 IsClosing 那條、以及 contextMenu == null 走的是同一條既有路徑。
+        if (contextMenu != null && !IsAddonReady(contextMenu))
+            return TaskResult.Retry;
         if (contextMenu != null)
         {
             // AtkValuesCount 是 ContextMenu 這個 addon 的 AtkValues 陣列長度,跟 agent 的

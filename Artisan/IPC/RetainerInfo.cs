@@ -327,7 +327,7 @@ namespace Artisan.IPC
                     // below - this method is called once per material when a list is restocked, so the old
                     // Where().Select().ToArray()[i] allocated ten arrays per material for no reason.
                     var configuredRetainerIds = P.Config.RetainerIDs
-                        .Where(x => x.Value == SvcEx.PlayerState.ContentId)
+                        .Where(x => x.Value == Svc.PlayerState.ContentId)
                         .Select(x => x.Key)
                         .ToArray();
 
@@ -354,11 +354,11 @@ namespace Artisan.IPC
 
                         if (retainer is not null)
                         {
-                            if (retainer->RetainerId > 0 && !P.Config.RetainerIDs.Any(x => x.Key == retainer->RetainerId && x.Value == SvcEx.PlayerState.ContentId))
+                            if (retainer->RetainerId > 0 && !P.Config.RetainerIDs.Any(x => x.Key == retainer->RetainerId && x.Value == Svc.PlayerState.ContentId))
                             {
                                 if (retainer->Available)
                                 {
-                                    P.Config.RetainerIDs.Add(retainer->RetainerId, SvcEx.PlayerState.ContentId);
+                                    P.Config.RetainerIDs.Add(retainer->RetainerId, Svc.PlayerState.ContentId);
                                     P.Config.Save();
                                 }
                             }

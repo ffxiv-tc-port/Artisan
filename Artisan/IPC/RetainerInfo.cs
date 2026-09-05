@@ -32,8 +32,8 @@ namespace Artisan.IPC
         private static ICallGateSubscriber<ulong?, bool>? _OnRetainerChanged;
         private static ICallGateSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>? _OnItemAdded;
         private static ICallGateSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>? _OnItemRemoved;
-        private static ICallGateSubscriber<uint, ulong, uint, uint>? _ItemCount;
-        private static ICallGateSubscriber<uint, ulong, uint, uint>? _ItemCountHQ;
+        private static ICallGateSubscriber<uint, ulong, int, uint>? _ItemCount;
+        private static ICallGateSubscriber<uint, ulong, int, uint>? _ItemCountHQ;
         private static ICallGateSubscriber<bool, bool>? _Initialized;
         private static ICallGateSubscriber<bool>? _IsInitialized;
         private static bool _InventoryChanged;
@@ -102,8 +102,14 @@ namespace Artisan.IPC
             _OnItemAdded = Svc.PluginInterface.GetIpcSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>("AllaganTools.ItemAdded");
             _OnItemRemoved = Svc.PluginInterface.GetIpcSubscriber<(uint, InventoryItem.ItemFlags, ulong, uint), bool>("AllaganTools.ItemRemoved");
 
-            _ItemCount = Svc.PluginInterface.GetIpcSubscriber<uint, ulong, uint, uint>("AllaganTools.ItemCount");
-            _ItemCountHQ = Svc.PluginInterface.GetIpcSubscriber<uint, ulong, uint, uint>("AllaganTools.ItemCountHQ");
+            // 🔴 第 3 個參數（inventoryType）在 AllaganTools 端宣告的是 int，不是 uint
+            //    （InventoryTools/IPC/IPCService.cs 的 ItemCount(uint, ulong, int)）。
+            //    宣告成 uint 不會炸：Dalamud 的 CallGateChannel.CheckAndConvertArgs 在型別不同時
+            //    會用 Newtonsoft 把引數 JSON 來回轉一次 —— 但那是**每次呼叫每個引數**都要付的代價，
+            //    而這兩支是 GetRetainerInventoryItem 的熱路徑（每個材料每個僱員 8~15 次）。
+            //    ⚠️ 而且轉換只對 <= int.MaxValue 的值成立，超過會擲 IpcTypeMismatchError。
+            _ItemCount = Svc.PluginInterface.GetIpcSubscriber<uint, ulong, int, uint>("AllaganTools.ItemCount");
+            _ItemCountHQ = Svc.PluginInterface.GetIpcSubscriber<uint, ulong, int, uint>("AllaganTools.ItemCountHQ");
             _OnItemAdded.Subscribe(OnItemAdded);
             _OnItemRemoved.Subscribe(OnItemRemoved);
             TM.TimeoutSilently = true;
@@ -248,7 +254,7 @@ namespace Artisan.IPC
                             _ItemCount.InvokeFunc(ItemId, retainerId, 10004) +
                             _ItemCount.InvokeFunc(ItemId, retainerId, 10005) +
                             _ItemCount.InvokeFunc(ItemId, retainerId, 10006) +
-                            _ItemCount.InvokeFunc(ItemId, retainerId, (uint)InventoryType.RetainerCrystals);
+                            _ItemCount.InvokeFunc(ItemId, retainerId, (int)InventoryType.RetainerCrystals);
                 }
                 else
                 {

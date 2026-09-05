@@ -425,6 +425,16 @@ internal unsafe static class RetainerHandlers
                             Svc.Log.Warning($"Artisan: context menu entry {index} (\"{labels[index]}\") is disabled, retrieving item {ItemId} will probably do nothing.");
 
                         Svc.Log.Debug($"Artisan: firing retainer context menu entry {index} (\"{labels[index]}\") for item {ItemId}");
+                        // 🔴 送出前登記「這扇窗按過了」。沒有這道守衛時,本輪送出後遊戲還沒處理完,
+                        //    下一幀重新走到這裡會對同一扇窗再送一發 —— 打在正在拆除的窗上就是
+                        //    存取違規,而 AccessViolationException 在 .NET Core 是 corrupted-state exception,
+                        //    try/catch 與 HookSafety.ExecuteSafe 都攔不到。
+                        // 📌 pressKey 用預設的空字串:Artisan 對一扇 ContextMenu 只會按一個項目,
+                        //    「整扇窗只有一種按法」正是這裡的語意。下一扇選單開起來時由 PostSetup 解除。
+                        // 📌 前面沒有消耗型節流,所以直接放在送出動作前面(見 TryBeginPress 的 remarks)。
+                        // 🔴 被擋要回 false 讓呼叫端下一輪重試,不能回 true —— true 代表「已經送出」。
+                        if (!AddonPressGuard.TryBeginPress("ContextMenu", contextMenu))
+                            return false;
                         Callback.Fire(contextMenu, true, 0, index, 0, 0, 0);
                         return true;
                     }

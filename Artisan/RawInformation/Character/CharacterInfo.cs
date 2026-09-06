@@ -40,7 +40,61 @@ namespace Artisan.RawInformation.Character
 
         public static unsafe Dalamud.Game.ClientState.Statuses.Status? FCCraftsmanshipbuff;
 
-        public static unsafe int JobLevel(Job job) => PlayerState.Instance()->ClassJobLevels[Svc.Data.GetExcelSheet<ClassJob>()?.GetRow((uint)job).ExpArrayIndex ?? 0];
+        /// <summary>
+        /// 取得指定職業的等級。查無此列、或該職業沒有經驗值欄位時回 0(未知)。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 <c>ExpArrayIndex</c> 是 <c>sbyte</c>,而<b>第 0 列(冒險者/ADV)是 -1</b>
+        /// —— 那是台服 7.20 ClassJob 表 46 列裡唯一的負值(其餘 0..31,2026-09-07 離線查表確認)。
+        /// <c>ClassJobLevels</c> 是 <c>FixedSizeArray35</c>,索引 -1 會擲
+        /// <see cref="IndexOutOfRangeException"/>。
+        /// <br/><br/>
+        /// 🔴 舊寫法的 <c>?? 0</c> 綁在<b>整張表為 null</b> 上,不是綁在 <c>ExpArrayIndex</c> 上
+        /// —— 表存在而該列的 <c>ExpArrayIndex</c> 是 -1 會原樣穿過去。
+        /// <br/><br/>
+        /// 🔴 退路回 0 而不是索引 0:第 0 格是格鬥士/武僧(PGL/MNK)的等級,
+        /// 拿它當未知職業的等級是<b>安靜的錯答案</b>。
+        /// <br/><br/>
+        /// 📌 <c>GetRow</c> 改成 <c>GetRowOrDefault</c>:前者對表上沒有的 id 會擲
+        /// <see cref="ArgumentOutOfRangeException"/>,那同樣會炸掉呼叫端。
+        /// </remarks>
+        public static unsafe int JobLevel(Job job)
+        {
+            int expArrayIndex = Svc.Data.GetExcelSheet<ClassJob>()?.GetRowOrDefault((uint)job)?.ExpArrayIndex ?? -1;
+
+            var levels = PlayerState.Instance()->ClassJobLevels;
+            if (expArrayIndex < 0 || expArrayIndex >= levels.Length)
+            {
+                LogBadExpArrayIndexOnce(job, expArrayIndex, levels.Length);
+                return 0;
+            }
+
+            return levels[expArrayIndex];
+        }
+
+        private static readonly HashSet<Job> LoggedBadExpArrayIndex = new();
+
+        /// <summary>
+        /// 同一個 <see cref="Job"/> 只寫一行 <c>Information</c>,之後靜默。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 用鎖而不是裸 <see cref="HashSet{T}"/>:<see cref="JobLevel"/> 的呼叫點同時有
+        /// framework 路徑(<c>Crafting</c> 狀態機)與 <c>RepairManager</c>,並行插入的失敗形式
+        /// 是集合本身壞掉,不是「拿到舊值」。只有失敗路徑會進到這裡,鎖是無競爭的。
+        /// 🔴 <c>Svc.Log</c> 的呼叫刻意放在鎖外(鎖內不做 I/O);
+        /// 用 <c>Information</c> 而不是 <c>DuoLog</c>:後者每個等級都會無條件洗使用者的聊天視窗。
+        /// </remarks>
+        private static void LogBadExpArrayIndexOnce(Job job, int expArrayIndex, int arrayLength)
+        {
+            lock (LoggedBadExpArrayIndex)
+            {
+                if (!LoggedBadExpArrayIndex.Add(job))
+                    return;
+            }
+
+            Svc.Log.Information($"[CharacterInfo] ClassJob {(uint)job} ({job}) 的 ExpArrayIndex 是 {expArrayIndex}," +
+                                $"不在 0..{arrayLength - 1} 內(冒險者/ADV 是 -1);等級以 0 回報。");
+        }
 
         internal static bool IsManipulationUnlocked(Job job) =>  job switch
         {

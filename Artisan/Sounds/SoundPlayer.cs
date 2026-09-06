@@ -36,30 +36,50 @@ namespace Artisan.Sounds
             // the way Dalamud's D3D11 texture APIs are, so backgrounding it entirely is safe.
             Task.Run(() =>
             {
-                lock (_lockObj)
+                // Nothing is logged while _lockObj is held: Svc.Log goes through Dalamud's
+                // Serilog sink, which does file I/O and takes locks of its own, and Dispose()
+                // takes the same lock. Each line is recorded at exactly the point that used to
+                // write it and emitted once the lock is released - same level, same text, same
+                // trigger. The emit sits in a finally so that an exception on the way out still
+                // writes whatever had already been produced.
+                string? pendingTearDownMessage = null;
+                Exception? pendingError = null;
+
+                try
                 {
-                    try
+                    lock (_lockObj)
                     {
-                        string sound = "Time Up";
-                        string path = Path.Combine(Svc.PluginInterface.AssemblyLocation.Directory.FullName, "Sounds", $"{sound}.mp3");
-                        if (!File.Exists(path)) return;
+                        try
+                        {
+                            string sound = "Time Up";
+                            string path = Path.Combine(Svc.PluginInterface.AssemblyLocation.Directory.FullName, "Sounds", $"{sound}.mp3");
+                            if (!File.Exists(path)) return;
 
-                        // Latest notification wins: stop whatever is still playing
-                        // instead of either throwing or overlapping.
-                        TearDown();
+                            // Latest notification wins: stop whatever is still playing
+                            // instead of either throwing or overlapping.
+                            TearDown(out pendingTearDownMessage);
 
-                        var reader = new Mp3FileReader(path);
-                        var device = new WaveOutEvent { Volume = P.Config.SoundVolume };
-                        device.Init(reader);
-                        device.Play();
+                            var reader = new Mp3FileReader(path);
+                            var device = new WaveOutEvent { Volume = P.Config.SoundVolume };
+                            device.Init(reader);
+                            device.Play();
 
-                        _reader = reader;
-                        _device = device;
+                            _reader = reader;
+                            _device = device;
+                        }
+                        catch (Exception ex)
+                        {
+                            pendingError = ex;
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        ex.Log();
-                    }
+                }
+                finally
+                {
+                    if (pendingTearDownMessage is not null)
+                        Svc.Log.Debug(pendingTearDownMessage);
+
+                    if (pendingError is not null)
+                        pendingError.Log();
                 }
             });
         }
@@ -67,13 +87,28 @@ namespace Artisan.Sounds
         /// <summary>Stops and releases any current playback. Safe to call repeatedly.</summary>
         public static void Dispose()
         {
-            lock (_lockObj)
-                TearDown();
+            string? pendingTearDownMessage = null;
+
+            try
+            {
+                lock (_lockObj)
+                    TearDown(out pendingTearDownMessage);
+            }
+            finally
+            {
+                if (pendingTearDownMessage is not null)
+                    Svc.Log.Debug(pendingTearDownMessage);
+            }
         }
 
-        // Caller must hold _lockObj.
-        private static void TearDown()
+        // Caller must hold _lockObj. The one line this can produce is handed back instead of
+        // written: every caller holds the lock, and Svc.Log does file I/O behind locks of its
+        // own. Keeping the write out of this method also means nothing reachable from inside
+        // _lockObj can log, not even by accident.
+        private static void TearDown(out string? pendingMessage)
         {
+            pendingMessage = null;
+
             try
             {
                 _device?.Stop();
@@ -81,7 +116,7 @@ namespace Artisan.Sounds
             catch (Exception ex)
             {
                 // Stopping a device that already finished on its own is not interesting.
-                Svc.Log.Debug($"SoundPlayer: stopping previous playback failed: {ex.Message}");
+                pendingMessage = $"SoundPlayer: stopping previous playback failed: {ex.Message}";
             }
 
             _device?.Dispose();

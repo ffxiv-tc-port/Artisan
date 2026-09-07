@@ -44,11 +44,29 @@ public class RecipeConfig
     [NonSerialized, JsonIgnore]
     public bool TempRequiredPotionHQ;
 
+    // 🔴 這一整組唯讀計算屬性都掛 [JsonIgnore],理由是「臨時覆寫絕對不能落地」。
+    //    上面那六個 Temp* 欄位掛了 [NonSerialized, JsonIgnore],**但那不夠** ——
+    //    Newtonsoft 的 DefaultContractResolver(Dalamud 的 SavePluginConfig 走的就是它,
+    //    PluginConfigurations.cs 沒有指定 ContractResolver)**會序列化公開的唯讀屬性**,
+    //    而下面每一個的值都是從 Temp* 算出來的 ⇒ 別的外掛透過 IPC 設了臨時解算器/食物之後,
+    //    只要使用者動到任何別的設定觸發一次 Save(),臨時值就會透過這些屬性寫進設定檔。
+    //    ⚠️ 失敗形式是靜默的:唯讀屬性**寫得出去、讀不回來**(反序列化找不到 setter 就跳過),
+    //    所以檔案裡多了幾個永遠不會被讀回的鍵,而那些鍵記錄的是別的外掛的暫時意圖。
+    //    2026-09-08 用 tools/dotnet/jsoncontract 對建置好的 Artisan.dll 實測確認(不是推論)。
+    //    📌 拿掉這些鍵不會改變任何載入行為:它們本來就沒有 setter,一直都是寫出去就丟掉。
+    //    📌 RequiredManual／RequiredSquadronManual 那一組沒有臨時覆寫,不在這條的範圍內,
+    //       刻意不動。
+    [JsonIgnore]
     public string CurrentSolverType => TempSolverType.Length > 0 ? TempSolverType : SolverType;
+    [JsonIgnore]
     public int CurrentSolverFlavour => TempSolverFlavour >= 0 ? TempSolverFlavour : SolverFlavour;
+    [JsonIgnore]
     public uint CurrentRequiredFood => TempRequiredFood ?? requiredFood;
+    [JsonIgnore]
     public bool CurrentRequiredFoodHQ => TempRequiredFood.HasValue ? TempRequiredFoodHQ : requiredFoodHQ;
+    [JsonIgnore]
     public uint CurrentRequiredPotion => TempRequiredPotion ?? requiredPotion;
+    [JsonIgnore]
     public bool CurrentRequiredPotionHQ => TempRequiredPotion.HasValue ? TempRequiredPotionHQ : requiredPotionHQ;
 
     public void ClearTemporaryOverrides()
@@ -72,21 +90,29 @@ public class RecipeConfig
     public bool requiredPotionHQ = true;
 
 
+    [JsonIgnore]
     public bool FoodEnabled => RequiredFood != Disabled;
+    [JsonIgnore]
     public bool PotionEnabled => RequiredPotion != Disabled;
     public bool ManualEnabled => RequiredManual != Disabled;
     public bool SquadronManualEnabled => RequiredSquadronManual != Disabled;
 
 
+    [JsonIgnore]
     public uint RequiredFood => CurrentRequiredFood == Default ? P.Config.DefaultConsumables.requiredFood : CurrentRequiredFood;
+    [JsonIgnore]
     public uint RequiredPotion => CurrentRequiredPotion == Default ? P.Config.DefaultConsumables.requiredPotion : CurrentRequiredPotion;
     public uint RequiredManual => requiredManual == Default ? P.Config.DefaultConsumables.requiredManual : requiredManual;
     public uint RequiredSquadronManual => requiredSquadronManual == Default ? P.Config.DefaultConsumables.requiredSquadronManual : requiredSquadronManual;
+    [JsonIgnore]
     public bool RequiredFoodHQ => CurrentRequiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : CurrentRequiredFoodHQ;
+    [JsonIgnore]
     public bool RequiredPotionHQ => CurrentRequiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : CurrentRequiredPotionHQ;
 
 
+    [JsonIgnore]
     public string FoodName => requiredFood == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.FoodName) : RequiredFood == Disabled ? "Disabled".Loc() :$"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
+    [JsonIgnore]
     public string PotionName => requiredPotion == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.PotionName) : RequiredPotion == Disabled ? "Disabled".Loc() :$"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
     public string ManualName => requiredManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.ManualName) : RequiredManual == Disabled ? "Disabled".Loc() :$"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
     public string SquadronManualName => requiredSquadronManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.SquadronManualName) : RequiredSquadronManual == Disabled ? "Disabled".Loc() :$"{ConsumableChecker.SquadronManuals.FirstOrDefault(x => x.Id == RequiredSquadronManual).Name}";

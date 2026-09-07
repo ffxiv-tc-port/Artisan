@@ -61,6 +61,14 @@ namespace Artisan.IPC
 
             // 每配方的「臨時」工藝設定:只活在記憶體裡,不寫進設定檔,Artisan 卸載時清空。
             Svc.PluginInterface.GetIpcProvider<uint, string, bool>("Artisan.SetTemporarySolver").RegisterFunc(SetTemporarySolver);
+            // 🔴 用「型別全名」而不是顯示名指定解算器。舊的 Artisan.SetTemporarySolver 比對的是
+            //    ISolverDefinition.Desc.Name,而那是**在地化後**的字串(RaphaelSolver.cs 的
+            //    "Raphael Recipe Solver".Loc()) —— 繁中介面下呼叫端傳英文名一定零命中,
+            //    而且失敗形式是「回 false」不是例外。型別全名不隨介面語言變,也正好與
+            //    RecipeConfig.SolverType 存的是同一種字串(CraftingProcessor.FindSolver 就是拿它比對)。
+            //    🔑 舊端點刻意保留不動:換形狀時「換新名字」比「同名改語意」安全。
+            Svc.PluginInterface.GetIpcProvider<uint, string, bool>("Artisan.SetTemporarySolverByType").RegisterFunc(SetTemporarySolverByType);
+            Svc.PluginInterface.GetIpcProvider<uint, string[]>("Artisan.GetAvailableSolverTypes").RegisterFunc(GetAvailableSolverTypes);
             Svc.PluginInterface.GetIpcProvider<uint, uint, bool, bool>("Artisan.SetTemporaryFood").RegisterFunc(SetTemporaryFood);
             Svc.PluginInterface.GetIpcProvider<uint, uint, bool, bool>("Artisan.SetTemporaryPotion").RegisterFunc(SetTemporaryPotion);
             Svc.PluginInterface.GetIpcProvider<uint, object>("Artisan.ClearTemporaryRecipeSettings").RegisterAction(ClearTemporaryRecipeSettings);
@@ -88,6 +96,8 @@ namespace Artisan.IPC
             Svc.PluginInterface.GetIpcProvider<bool>("Artisan.IsBusy").UnregisterFunc();
 
             Svc.PluginInterface.GetIpcProvider<uint, string, bool>("Artisan.SetTemporarySolver").UnregisterFunc();
+            Svc.PluginInterface.GetIpcProvider<uint, string, bool>("Artisan.SetTemporarySolverByType").UnregisterFunc();
+            Svc.PluginInterface.GetIpcProvider<uint, string[]>("Artisan.GetAvailableSolverTypes").UnregisterFunc();
             Svc.PluginInterface.GetIpcProvider<uint, uint, bool, bool>("Artisan.SetTemporaryFood").UnregisterFunc();
             Svc.PluginInterface.GetIpcProvider<uint, uint, bool, bool>("Artisan.SetTemporaryPotion").UnregisterFunc();
             Svc.PluginInterface.GetIpcProvider<uint, object>("Artisan.ClearTemporaryRecipeSettings").UnregisterAction();
@@ -254,6 +264,73 @@ namespace Artisan.IPC
             return true;
         }
 
+        /// <summary>
+        /// 用解算器定義的<b>型別全名</b>指定臨時解算器,例如
+        /// <c>Artisan.CraftingLogic.Solvers.RaphaelSolverDefintion</c>(注意上游把 Definition 拼成
+        /// Defintion,這裡逐字照抄實際型別名)或 <c>Artisan.CraftingLogic.Solvers.ExpertSolverDefinition</c>。
+        /// 可用的名單向 <c>Artisan.GetAvailableSolverTypes</c> 拿,不要寫死。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 與 <c>Artisan.SetTemporarySolver</c> 的差別在於比對的東西:那一支比的是
+        /// <c>Desc.Name</c>,而 <c>Name</c> 是<b>在地化後</b>的顯示字串,繁中介面下傳英文名恆為 false。
+        /// <br/>
+        /// ⚠️ 一個定義可以提供多個 flavour(巨集解算器是每個巨集一個),型別全名只認得到定義,
+        /// 所以這一支取的是<b>該定義目前第一個可用的 flavour</b>。要指定到特定巨集請用舊端點。
+        /// <br/>
+        /// 📌 設定的是 <c>TempSolverType</c>／<c>TempSolverFlavour</c>,兩者都掛著
+        /// <c>[NonSerialized, JsonIgnore]</c> ⇒ <b>絕不會被寫進設定檔</b>;
+        /// <c>Artisan.ClearTemporaryRecipeSettings</c>／<c>Artisan.ClearAllTemporarySettings</c>
+        /// 與 Artisan 卸載都會把它清掉(走的是同一組欄位、同一支 ClearTemporaryOverrides)。
+        /// </remarks>
+        private static bool SetTemporarySolverByType(uint recipeId, string solverTypeFullName)
+            => IpcFrameworkGate.Get<bool>("Artisan.SetTemporarySolverByType", () => SetTemporarySolverByTypeCore(recipeId, solverTypeFullName), false);
+
+        private static bool SetTemporarySolverByTypeCore(uint recipeId, string solverTypeFullName)
+        {
+            if (string.IsNullOrEmpty(solverTypeFullName))
+            {
+                PluginLog.Information($"[Artisan IPC] SetTemporarySolverByType:配方 {recipeId} 收到空的解算器型別名,已拒絕。");
+                return false;
+            }
+
+            if (!TryBuildCraft(recipeId, out var craft, quiet: true))
+                return false;
+
+            // ⚠️ GetAvailableSolversForRecipe 在每個定義之後會 yield 一個 default 當分隔,
+            //    那一筆的 Def 是 null —— 先濾掉再取 FullName,否則會 NRE。
+            var selectedSolver = CraftingProcessor.GetAvailableSolversForRecipe(craft, false)
+                .FirstOrDefault(x => x.Def != null && string.Equals(x.Def.GetType().FullName, solverTypeFullName, StringComparison.Ordinal));
+            if (selectedSolver.Def == null)
+            {
+                // 失敗寫 Information 不寫 DuoLog:DuoLog 每一級都無條件印到使用者的聊天視窗,
+                // 而這條路徑可能被別的外掛在無人看畫面時反覆呼叫。
+                PluginLog.Information($"[Artisan IPC] SetTemporarySolverByType:配方 {recipeId} 目前沒有可用的解算器「{solverTypeFullName}」。目前可用:{string.Join(", ", AvailableSolverTypes(craft))}");
+                return false;
+            }
+
+            var config = GetOrCreateRecipeConfig(recipeId);
+            config.TempSolverType = selectedSolver.Def.GetType().FullName!;
+            config.TempSolverFlavour = selectedSolver.Flavour;
+            return true;
+        }
+
+        /// <summary>
+        /// 這個配方目前可用的解算器<b>型別全名</b>清單,可直接餵給
+        /// <c>Artisan.SetTemporarySolverByType</c>。與 <c>Artisan.GetAvailableSolvers</c> 的差別是
+        /// 後者回的是在地化後的顯示名(給人看的),這一支回的是不隨語言變的識別字串(給程式用的)。
+        /// </summary>
+        private static string[] GetAvailableSolverTypes(uint recipeId)
+            => IpcFrameworkGate.Get<string[]>("Artisan.GetAvailableSolverTypes",
+                () => TryBuildCraft(recipeId, out var craft, quiet: true) ? AvailableSolverTypes(craft) : [],
+                []);
+
+        private static string[] AvailableSolverTypes(CraftState craft)
+            => CraftingProcessor.GetAvailableSolversForRecipe(craft, false)
+                .Where(x => x.Def != null)
+                .Select(x => x.Def.GetType().FullName!)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
         // ConsumableChecker.GetFood(true, ...) 解 InventoryManager.Instance()->（原生指標）。
         private static bool SetTemporaryFood(uint recipeId, uint itemId, bool hq)
             => IpcFrameworkGate.Get<bool>("Artisan.SetTemporaryFood", () => SetTemporaryFoodCore(recipeId, itemId, hq), false);
@@ -353,12 +430,20 @@ namespace Artisan.IPC
             return false;
         }
 
-        private static bool TryBuildCraft(uint recipeId, out CraftState craft)
+        /// <param name="quiet">
+        /// true 時把「找不到配方」寫 <c>Information</c> 而不是 <c>DuoLog.Error</c>。
+        /// DuoLog 每一級都無條件印到使用者的聊天視窗,而新的查詢型端點可能被反覆呼叫。
+        /// 預設 false ＝ 既有呼叫端行為逐字不變。
+        /// </param>
+        private static bool TryBuildCraft(uint recipeId, out CraftState craft, bool quiet = false)
         {
             craft = null!;
             if (!LuminaSheets.RecipeSheet!.TryGetValue(recipeId, out var recipe))
             {
-                DuoLog.Error($"找不到配方 {recipeId}。");
+                if (quiet)
+                    PluginLog.Information($"[Artisan IPC] 找不到配方 {recipeId}。");
+                else
+                    DuoLog.Error($"找不到配方 {recipeId}。");
                 return false;
             }
 

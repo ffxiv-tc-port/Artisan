@@ -987,7 +987,14 @@ internal class ListEditor : Window, IDisposable
         if (P.Config.ShowOnlyCraftable && !RetainerInfo.CacheBuilt)
         {
             if (RetainerInfo.ATools)
-                ImGui.TextWrapped("Building Retainer Cache: ??/??".Loc(RetainerInfo.RetainerData.Values.Any() ? RetainerInfo.RetainerData.FirstOrDefault().Value.Count : "0", LuminaSheets.RecipeSheet!.Select(x => x.Value).SelectMany(x => x.Ingredients()).Where(x => x.Item.RowId != 0 && x.Amount > 0).DistinctBy(x => x.Item.RowId).Count()));
+            {
+                // 一次取快照。改動前是 Values.Any() 與 FirstOrDefault() 兩次獨立取值：兩次之間
+                // 快取若被清空（登出、LoadCache、AllaganTools 事件排乾），FirstOrDefault() 回的是
+                // default(KeyValuePair)，.Value 為 null ⇒ 繪製執行緒擲 NullReferenceException。
+                // 顯示語意不變：沒有任何僱員資料時照樣顯示「0」。
+                var firstRetainerCache = RetainerInfo.RetainerData.FirstOrDefault().Value;
+                ImGui.TextWrapped("Building Retainer Cache: ??/??".Loc(firstRetainerCache is null ? "0" : firstRetainerCache.Count, LuminaSheets.RecipeSheet!.Select(x => x.Value).SelectMany(x => x.Ingredients()).Where(x => x.Item.RowId != 0 && x.Amount > 0).DistinctBy(x => x.Item.RowId).Count()));
+            }
             ImGui.TextWrapped("Building Craftable Items List: ??/??".Loc(CraftingListUI.CraftableItems.Count, LuminaSheets.RecipeSheet.Count));
             ImGui.Spacing();
         }

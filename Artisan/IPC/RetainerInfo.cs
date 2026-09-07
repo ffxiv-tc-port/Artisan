@@ -542,11 +542,25 @@ namespace Artisan.IPC
             }
         }
 
+        /// <summary>
+        /// 依快取判斷「這個僱員身上有沒有這個物品的 HQ 版本」。
+        /// <para/>
+        /// 🔴 改動前四個呼叫點都是 <c>RetainerData[retainerId]</c> 索引子 —— 快取在
+        /// 判斷的那一刻剛好被清空（登出、<c>LoadCache</c>、AllaganTools 事件排乾）就是
+        /// <c>KeyNotFoundException</c>，而這四個點全都在取回流程的中途。
+        /// <para/>
+        /// ⚠️ 快取裡沒有這個僱員時回 <c>false</c>，與「有這個僱員但沒有 HQ」同義：兩者都讓
+        /// 取回路徑去找任意品質，那正是快取還沒建起來時本來就有的行為。
+        /// </summary>
+        private static bool WantsHQFromRetainer(ulong retainerId, uint itemId)
+            => RetainerData.TryGetValue(retainerId, out var retainerCache)
+               && retainerCache.Values.Any(x => x.ItemId == itemId && x.HQQuantity > 0);
+
         public static bool ExtractSingular(uint ItemId, int howManyToGet, ulong retainerKey)
         {
             if (howManyToGet != 0 && RetainerDirectFetch.Available)
             {
-                bool wantHQ = RetainerData[retainerKey].Values.Any(x => x.ItemId == ItemId && x.HQQuantity > 0);
+                bool wantHQ = WantsHQFromRetainer(retainerKey, ItemId);
                 EnqueueDirectExtract(ItemId, wantHQ, howManyToGet, (gained, fallBack) =>
                 {
                     var remaining = Math.Max(0, howManyToGet - gained);
@@ -566,7 +580,7 @@ namespace Artisan.IPC
             Svc.Log.Debug($"{howManyToGet}");
             if (howManyToGet != 0)
             {
-                bool lookingForHQ = RetainerData[retainerKey].Values.Any(x => x.ItemId == ItemId && x.HQQuantity > 0);
+                bool lookingForHQ = WantsHQFromRetainer(retainerKey, ItemId);
                 TM.DelayNextImmediate("WaitOnRetainerInventory", 500);
                 TM.EnqueueImmediate(() => RetainerHandlers.OpenItemContextMenu(ItemId, lookingForHQ, out firstFoundQuantity), 300);
                 TM.DelayNextImmediate("WaitOnNumericPopup", 200);
@@ -858,7 +872,7 @@ namespace Artisan.IPC
                     {
                         var wanted = requiredItems[item.Key];
                         if (wanted <= 0) return true;
-                        var wantHQ = RetainerData[key].Values.Any(x => x.ItemId == item.Key && x.HQQuantity > 0);
+                        var wantHQ = WantsHQFromRetainer(key, (uint)item.Key);
                         EnqueueDirectExtract((uint)item.Key, wantHQ, wanted, (gained, fallBack) =>
                         {
                             requiredItems[item.Key] = Math.Max(0, wanted - gained);
@@ -890,7 +904,7 @@ namespace Artisan.IPC
                 // calls per retainer - up to ~150 round trips - on every single recursion, even though the only
                 // value read afterwards is RetainerData[key] for the retainer whose window is open right now.
                 TM.EnqueueImmediate(() => RefreshRetainerItem((uint)item.Key, key));
-                bool lookingForHQ = RetainerData[key].Values.Any(x => x.ItemId == item.Key && x.HQQuantity > 0);
+                bool lookingForHQ = WantsHQFromRetainer(key, (uint)item.Key);
                 Svc.Log.Debug($"HQ?: {lookingForHQ}");
                 TM.DelayNextImmediate("WaitOnRetainerInventory", 500);
                 TM.EnqueueImmediate(() => RetainerHandlers.OpenItemContextMenu((uint)item.Key, lookingForHQ, out firstFoundQuantity), 300);

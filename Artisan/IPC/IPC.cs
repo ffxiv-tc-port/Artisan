@@ -100,7 +100,7 @@ namespace Artisan.IPC
 
             // 卸載時把臨時覆寫清乾淨。它們不進設定檔,但 P.Config 的 RecipeConfig 物件
             // 在同一個 session 內是活的,留著會讓下次載入沿用上次的臨時設定。
-            ClearAllTemporarySettings();
+            ClearAllTemporarySettingsCore();
         }
 
         static bool GetEnduranceStatus()
@@ -108,10 +108,9 @@ namespace Artisan.IPC
             return Endurance.Enable;
         }
 
+        // ToggleEndurance 會 PreCrafting.Tasks.Clear()（裸 List，framework 獨佔）。
         static void SetEnduranceStatus(bool s)
-        {
-            Endurance.ToggleEndurance(s);
-        }
+            => IpcFrameworkGate.Run("Artisan.SetEnduranceStatus", () => Endurance.ToggleEndurance(s));
 
         static bool IsListRunning()
         {
@@ -124,27 +123,42 @@ namespace Artisan.IPC
         }
 
         static void SetListPause(bool s)
-        {
-            if (IsListPaused())
-                CraftingListFunctions.Paused = s;
-        }
+            => IpcFrameworkGate.Run("Artisan.SetListPause", () =>
+            {
+                if (IsListPaused())
+                    CraftingListFunctions.Paused = s;
+            });
 
         static bool GetStopRequest()
         {
             return StopCraftingRequest;
         }
 
+        // StopCraftingRequest 的 setter 會讀原生的 Svc.Condition、走 StopCrafting()
+        //（Operations.CloseQuickSynthWindow 解 addon 指標、PreCrafting.Tasks 增刪），
+        // 而 DuoLog 每一級都無條件寫使用者的聊天視窗（裸 Queue）。整支交回主執行緒。
         static void SetStopRequest(bool s)
-        {
-            if (s)
-                DuoLog.Information("Artisan has been requested to stop by an external plugin.");
-            else
-                DuoLog.Information("Artisan has been requested to restart by an external plugin.");
+            => IpcFrameworkGate.Run("Artisan.SetStopRequest", () =>
+            {
+                if (s)
+                    DuoLog.Information("Artisan has been requested to stop by an external plugin.");
+                else
+                    DuoLog.Information("Artisan has been requested to restart by an external plugin.");
 
-            StopCraftingRequest = s;
-        }
+                StopCraftingRequest = s;
+            });
 
-        public unsafe static void CraftX(ushort recipeId, int amount)
+        /// <summary>
+        /// <c>Artisan.CraftItem</c> 端點。整支交回主執行緒：它會動 <c>PreCrafting.Tasks</c>
+        /// 與 <c>P.TM</c>（兩者都是 framework 獨佔的裸 List）、寫 <c>P.Config</c>、印 DuoLog。
+        /// <para/>
+        /// 📌 找不到配方時擲的 <c>Exception</c> 照樣原型別傳回呼叫端：閘門用
+        /// <c>GetAwaiter().GetResult()</c> 重擲，不會包成 <c>AggregateException</c>。
+        /// </summary>
+        public static void CraftX(ushort recipeId, int amount)
+            => IpcFrameworkGate.Run("Artisan.CraftItem", () => CraftXCore(recipeId, amount));
+
+        private unsafe static void CraftXCore(ushort recipeId, int amount)
         {
             if (LuminaSheets.RecipeSheet!.FindFirst(x => x.Value.RowId == recipeId, out var recipe))
             {
@@ -215,7 +229,13 @@ namespace Artisan.IPC
             return Endurance.Enable || CraftingListUI.Processing || P.TM.NumQueuedTasks > 0 || P.CTM.NumQueuedTasks > 0 || !(Crafting.CurState is Crafting.State.IdleBetween or Crafting.State.IdleNormal);
         }
 
+        // TryBuildCraft 走 CharacterStats.GetBaseStatsForClassHeuristic ——
+        // 它解 RaptureGearsetModule.Instance()->Entries（原生指標），而寫入端是
+        // P.Config.RecipeConfigs（裸 Dictionary）。整支交回主執行緒。
         private static bool SetTemporarySolver(uint recipeId, string solverName)
+            => IpcFrameworkGate.Get<bool>("Artisan.SetTemporarySolver", () => SetTemporarySolverCore(recipeId, solverName), false);
+
+        private static bool SetTemporarySolverCore(uint recipeId, string solverName)
         {
             if (!TryBuildCraft(recipeId, out var craft))
                 return false;
@@ -234,7 +254,11 @@ namespace Artisan.IPC
             return true;
         }
 
+        // ConsumableChecker.GetFood(true, ...) 解 InventoryManager.Instance()->（原生指標）。
         private static bool SetTemporaryFood(uint recipeId, uint itemId, bool hq)
+            => IpcFrameworkGate.Get<bool>("Artisan.SetTemporaryFood", () => SetTemporaryFoodCore(recipeId, itemId, hq), false);
+
+        private static bool SetTemporaryFoodCore(uint recipeId, uint itemId, bool hq)
         {
             if (!RecipeExists(recipeId))
                 return false;
@@ -251,7 +275,11 @@ namespace Artisan.IPC
             return true;
         }
 
+        // ConsumableChecker.GetPots(true, ...) 解 InventoryManager.Instance()->（原生指標）。
         private static bool SetTemporaryPotion(uint recipeId, uint itemId, bool hq)
+            => IpcFrameworkGate.Get<bool>("Artisan.SetTemporaryPotion", () => SetTemporaryPotionCore(recipeId, itemId, hq), false);
+
+        private static bool SetTemporaryPotionCore(uint recipeId, uint itemId, bool hq)
         {
             if (!RecipeExists(recipeId))
                 return false;
@@ -269,18 +297,30 @@ namespace Artisan.IPC
         }
 
         private static void ClearTemporaryRecipeSettings(uint recipeId)
-        {
-            if (P.Config.RecipeConfigs.TryGetValue(recipeId, out var config))
-                config.ClearTemporaryOverrides();
-        }
+            => IpcFrameworkGate.Run("Artisan.ClearTemporaryRecipeSettings", () =>
+            {
+                if (P.Config.RecipeConfigs.TryGetValue(recipeId, out var config))
+                    config.ClearTemporaryOverrides();
+            });
 
         private static void ClearAllTemporarySettings()
+            => IpcFrameworkGate.Run("Artisan.ClearAllTemporarySettings", ClearAllTemporarySettingsCore);
+
+        /// <summary>
+        /// ⚠️ <c>Dispose()</c> 直接走這一支、不經閘門：外掛卸載時 framework 可能已經在收攤，
+        /// 讓卸載路徑去等主執行緒最多 5 秒沒有好處，而卸載本來就不與 IPC 呼叫並行。
+        /// 這一支的走訪已經先 <c>ToArray()</c> 拍快照，行為與改動前逐字相同。
+        /// </summary>
+        private static void ClearAllTemporarySettingsCore()
         {
             foreach (var config in P.Config.RecipeConfigs.Values.ToArray())
                 config.ClearTemporaryOverrides();
         }
 
         private static string[] GetAvailableSolvers(uint recipeId)
+            => IpcFrameworkGate.Get<string[]>("Artisan.GetAvailableSolvers", () => GetAvailableSolversCore(recipeId), []);
+
+        private static string[] GetAvailableSolversCore(uint recipeId)
             => TryBuildCraft(recipeId, out var craft)
                 ? CraftingProcessor.GetAvailableSolversForRecipe(craft, false)
                     .Where(x => !string.IsNullOrEmpty(x.Name))
@@ -290,10 +330,10 @@ namespace Artisan.IPC
                 : [];
 
         private static uint[] GetAvailableFood(bool hq)
-            => ConsumableChecker.GetFood(true, hq).Select(x => x.Id).Distinct().ToArray();
+            => IpcFrameworkGate.Get<uint[]>("Artisan.GetAvailableFood", () => ConsumableChecker.GetFood(true, hq).Select(x => x.Id).Distinct().ToArray(), []);
 
         private static uint[] GetAvailablePots(bool hq)
-            => ConsumableChecker.GetPots(true, hq).Select(x => x.Id).Distinct().ToArray();
+            => IpcFrameworkGate.Get<uint[]>("Artisan.GetAvailablePots", () => ConsumableChecker.GetPots(true, hq).Select(x => x.Id).Distinct().ToArray(), []);
 
         private static RecipeConfig GetOrCreateRecipeConfig(uint recipeId)
         {
@@ -333,6 +373,10 @@ namespace Artisan.IPC
         /// 呼叫端（例如宇宙探索）靠這個把名稱對回 ID。
         /// </summary>
         public static List<(string, int)> ReturnMacroInfo()
+            => IpcFrameworkGate.Get<List<(string, int)>>("Artisan.ReturnMacroInfo", ReturnMacroInfoCore, []);
+
+        // 走訪 P.Config.MacroSolverConfig.Macros（裸 List，巨集編輯器會增刪）。
+        private static List<(string, int)> ReturnMacroInfoCore()
         {
             List<(string, int)> macros = new();
 

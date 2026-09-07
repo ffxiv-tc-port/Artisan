@@ -58,10 +58,16 @@ namespace Artisan.CraftingLogic.Solvers
                 // still filters this out of every picker (it passes returnUnsupported: false), but FindSolver
                 // now returns it for a recipe explicitly assigned to Raphael, so CraftingProcessor raises
                 // SolverFailed with this reason instead of silently starting on the standard solver.
-                yield return new(this, 3, 0, "Raphael Recipe Solver".Loc(),
-                    RaphaelCache.DescribeIgnoredSolution(craft) is { Length: > 0 } why
-                        ? "No Raphael solution matches your current stats: ??".Loc(why)
-                        : "No Raphael solution has been generated for this recipe.".Loc());
+                var ignored = RaphaelCache.DescribeIgnoredSolution(craft);
+                var failed = RaphaelCache.DescribeFailure(craft);
+                // 三種「沒有解」要分得開:①有解但能力值對不上 ②這個 session 已經求解失敗過
+                // ③根本還沒產生過。②以前完全講不出來,SolverFailed 只會說「沒有產生過」。
+                var reason = ignored.Length > 0
+                    ? "No Raphael solution matches your current stats: ??".Loc(ignored)
+                    : failed.Length > 0
+                        ? failed
+                        : "No Raphael solution has been generated for this recipe.".Loc();
+                yield return new(this, 3, 0, "Raphael Recipe Solver".Loc(), reason);
             }
         }
     }
@@ -72,12 +78,76 @@ namespace Artisan.CraftingLogic.Solvers
         [NonSerialized]
         public static Dictionary<string, RaphaelSolutionConfig> TempConfigs = new();
 
+        /// <summary>
+        /// 這個 session 裡已知求解不出來的組合(配方＋職業等級＋能力值)。
+        /// 🔴 為什麼需要:唯一會「自動」呼叫 <see cref="Build"/> 的地方是
+        /// <see cref="DrawRaphaelDropdown"/>,而它是 <c>RecipeConfig.Draw</c> 的一部分 ——
+        /// 那是 ImGui 的繪製路徑,<b>每一幀都會跑一次</b>。舊碼唯一的守衛是「Tasks 裡還有沒有
+        /// 這個 key」,所以 raphael-cli 一失敗、key 在 finally 被移掉,下一幀就又 spawn 一次。
+        /// 實機 log(2026-09-04)是 17 秒內 53 次 <c>Spawning Raphael process</c>、
+        /// 53 次 <c>Failed to solve: NoSolution</c>,節奏就等於「一次求解耗時」而不是幀率。
+        /// 把失敗記下來之後,同一組條件在同一個 session 內只會試一次。
+        /// 使用者按「Build Raphael Solution」等於明確要求重試 —— 那顆按鈕會先清掉這裡的紀錄。
+        /// </summary>
+        internal static readonly ConcurrentDictionary<string, string> FailedSolves = [];
+
+        /// <summary>
+        /// 失敗快取的鍵。與 <see cref="GetKey"/> 是不同的東西:那個是「解的形狀」
+        /// (等級/進度/品質/耐久…),這個是「這次求解請求的身分」—— 配方、職業等級、
+        /// 能力值或起始品質任一改變都應該重新試一次。
+        /// </summary>
+        internal static string GetFailureKey(CraftState craft)
+            => $"{craft.RecipeId}/{craft.StatLevel}/{craft.StatCraftsmanship}/{craft.StatControl}/{craft.StatCP}/{craft.InitialQuality}";
+
+        /// <summary>這組條件上次求解失敗的原因;沒失敗過就回空字串。</summary>
+        internal static string DescribeFailure(CraftState craft)
+            => FailedSolves.TryGetValue(GetFailureKey(craft), out var reason) ? reason : "";
+
+        /// <summary>
+        /// 「職業等級根本不夠,送去 raphael-cli 一定是白跑」的判斷。
+        /// 實機案例:分身的鍊金術士 0 級,而配方 2777(硬銀附魔墨水)的需求等級不是 0,
+        /// 於是每次都送出 <c>--level 0</c>、每次都拿回 <c>Failed to solve: NoSolution</c>。
+        /// 回傳非 null 就代表不該 spawn,字串是要給使用者看的原因。
+        /// ⚠️ 用 <c>craft.CraftLevel</c> 當需求等級是刻意的:它就是
+        /// <c>Recipe.RecipeLevelTable.ClassJobLevel</c>,而宇宙配方(Number == 0)那條路徑
+        /// 在 <c>BuildCraftStateForRecipe</c> 已經改成依玩家等級選 RecipeLevelTable,
+        /// 兩者相等 ⇒ 這個閘門對宇宙製作不會誤擋。
+        /// </summary>
+        internal static string? DescribeLevelGate(CraftState craft)
+        {
+            if (craft.StatLevel > 0 && craft.StatLevel >= craft.CraftLevel)
+                return null;
+
+            var jobName = LuminaSheets.ClassJobSheet != null
+                && LuminaSheets.ClassJobSheet.TryGetValue(craft.Recipe.CraftType.RowId + 8, out var classJob)
+                    ? classJob.Name.ToString()
+                    : $"CraftType {craft.Recipe.CraftType.RowId}";
+            var recipeName = craft.Recipe.ItemResult.Value.Name.ToString();
+
+            return $"{jobName}等級 {craft.StatLevel} 低於配方需求 {craft.CraftLevel},無法求解「{recipeName}」(配方 {craft.RecipeId})。";
+        }
+
         public static void Build(CraftState craft, RaphaelSolutionConfig config)
         {
             var key = GetKey(craft);
 
             if (CLIExists() && !Tasks.ContainsKey(key))
             {
+                // 🔴 這兩道閘門是「每幀重試」的剎車 —— 呼叫端是每一幀都會重畫的 UI。
+                var failKey = GetFailureKey(craft);
+                if (FailedSolves.ContainsKey(failKey))
+                    return;
+
+                // 等級不夠時連 spawn 都不必:raphael-cli 收到 --level 0 只會回 NoSolution。
+                var levelGate = DescribeLevelGate(craft);
+                if (levelGate != null)
+                {
+                    // TryAdd 保證同一組條件只寫一行 log(不然這裡每幀都會印一次)。
+                    if (FailedSolves.TryAdd(failKey, levelGate))
+                        Svc.Log.Information($"Raphael:{levelGate}不送出求解。");
+                    return;
+                }
+
                 P.Config.RaphaelSolverCacheV3.TryRemove(key, out _);
 
                 Svc.Log.Information("Spawning Raphael process");
@@ -166,7 +236,10 @@ namespace Artisan.CraftingLogic.Solvers
                         var error = process.StandardError.ReadToEnd().Trim();
                         if (process.ExitCode != 0)
                         {
-                            DuoLog.Error(DescribeCliFailure(error, process.ExitCode));
+                            var failure = DescribeCliFailure(error, process.ExitCode);
+                            // 記下來:同一組條件在這個 session 內不再重複 spawn。
+                            FailedSolves[failKey] = failure;
+                            DuoLog.Error(failure);
                             cts.Cancel();
                             AbortWaitingAutomation();
                             return;
@@ -209,6 +282,7 @@ namespace Artisan.CraftingLogic.Solvers
                                 $"\n- You cancelled the generation." +
                                 $"\n- Raphael just gave up after not finding a result.{(P.Config.RaphaelSolverConfig.AutoGenerate ? "\nAutomatic generation will be disabled as a result." : "")}");
                             P.Config.RaphaelSolverConfig.AutoGenerate = false;
+                            FailedSolves[failKey] = "Raphael 沒有產生可用的巨集(求解器放棄了,或求解被取消)。";
                             cts.Cancel();
                             AbortWaitingAutomation();
                             return;
@@ -247,6 +321,8 @@ namespace Artisan.CraftingLogic.Solvers
                                 }
                             }
                         }
+                        // 成功了就讓這組條件恢復成「可以再試」。
+                        FailedSolves.TryRemove(failKey, out _);
                         P.Config.Save();
                     }
                     catch (OperationCanceledException)
@@ -546,6 +622,15 @@ namespace Artisan.CraftingLogic.Solvers
                         ImGuiEx.Tooltip(ignored + "\n\n" + "Rebuild the solution with your current gear, or restore the stats it was generated for.".Loc());
                     }
 
+                    // 求解失敗過的話,那件事本身要在**列上**看得見 —— 否則使用者只會看到
+                    // 「沒有 Raphael 解」,分不出「還沒解」與「解不出來而且已經不再重試」。
+                    var failedReason = DescribeFailure(craft);
+                    if (failedReason.Length > 0)
+                    {
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, "Raphael 求解失敗,已停止自動重試。");
+                        ImGuiEx.Tooltip(failedReason + "\n\n" + "按下方的按鈕會清掉這個結果並重新求解一次。");
+                    }
+
                     // 臨時解算器生效中就不要自動產生 Raphael 解:那是別的外掛透過 IPC 指定的,
                     // 自動產生會在使用者沒看畫面時把設定檔的解算器解算起來、蓋掉臨時指定的意圖。
                     if (config.TempSolverType.Length == 0 && liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
@@ -580,6 +665,8 @@ namespace Artisan.CraftingLogic.Solvers
                 {
                     if (ImGui.Button("Build Raphael Solution".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
                     {
+                        // 使用者明確要求重新求解 —— 先清掉「已知失敗」,不然 Build 會直接短路。
+                        FailedSolves.TryRemove(GetFailureKey(craft), out _);
                         Build(craft, TempConfigs[key]);
                     }
                 }
@@ -684,6 +771,8 @@ namespace Artisan.CraftingLogic.Solvers
             if (ImGui.Button("Clear raphael macro cache (Currently ?? stored)".Loc(P.Config.RaphaelSolverCacheV3.Count)))
             {
                 P.Config.RaphaelSolverCacheV3.Clear();
+                // 連「這個 session 求解失敗過」的紀錄一起清掉,不然按了清除還是不會重新求解。
+                RaphaelCache.FailedSolves.Clear();
                 changed |= true;
             }
 

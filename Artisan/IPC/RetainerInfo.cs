@@ -151,6 +151,21 @@ namespace Artisan.IPC
         private static int _cacheClearEffective;
         private static long _cacheClearNextLogTick;
 
+        // 🔴 AllaganTools 的 ItemAdded／ItemRemoved 回呼跑在「對方外掛的執行緒」上
+        //    （InventoryTools 的 InventoryMonitor／CharacterMonitor），而 Dalamud 的
+        //    CallGateChannel.SendMessage 對訂閱者是裸 DynamicInvoke、完全不攔例外
+        //    （Dalamud/Plugin/Ipc/Internal/CallGateChannel.cs:98-107）⇒ 從這裡擲出去的例外
+        //    會傳回 InventoryTools 自己的事件迴圈，把它後面的訂閱者一起打斷。
+        //
+        //    🔑 所以回呼只做兩件事：Interlocked 計數 + try/catch 兜底。原本在這裡做的
+        //    Svc.Condition 原生讀取、RetainerData 走訪（HasCachedRetainerData）與 ClearCache
+        //    全部移到 DrainInventoryEvents()，由 Artisan.OnFrameworkUpdate 在框架執行緒排乾。
+        //    RetainerData 是裸 Dictionary：從對方的執行緒清它，正在走訪它的框架／繪製執行緒
+        //    會擲 InvalidOperationException，而那個例外會被 GetRetainerItemCount 的 catch
+        //    吞成「回 0」——失敗形式是數量靜默變成 0，不是報錯。
+        private static int _pendingItemAdded;
+        private static int _pendingItemRemoved;
+
         private static bool HasCachedRetainerData()
         {
             foreach (var retainer in RetainerData)
@@ -161,12 +176,10 @@ namespace Artisan.IPC
             return false;
         }
 
-        private static void NoteCacheCleared(bool added, bool hadCachedData)
+        private static void NoteCacheCleared(int added, int removed, bool hadCachedData)
         {
-            if (added)
-                _cacheClearAdds++;
-            else
-                _cacheClearRemoves++;
+            _cacheClearAdds += added;
+            _cacheClearRemoves += removed;
 
             // 快取本來就是空的，這次清除等於沒做事，不值得佔一行 log。
             if (!hadCachedData)
@@ -187,22 +200,49 @@ namespace Artisan.IPC
 
         private static void OnItemAdded((uint, InventoryItem.ItemFlags, ulong, uint) tuple)
         {
-            if (Svc.Condition[ConditionFlag.OccupiedSummoningBell])
+            try
             {
-                NoteCacheCleared(true, HasCachedRetainerData());
-                ClearCache(null);
-                _InventoryChanged = true;
+                Interlocked.Increment(ref _pendingItemAdded);
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Warning($"[Artisan] AllaganTools ItemAdded 事件處理失敗：{ex.Message}");
             }
         }
 
         private static void OnItemRemoved((uint, InventoryItem.ItemFlags, ulong, uint) tuple)
         {
-            if (Svc.Condition[ConditionFlag.OccupiedSummoningBell])
+            try
             {
-                NoteCacheCleared(false, HasCachedRetainerData());
-                ClearCache(null);
-                _InventoryChanged = true;
+                Interlocked.Increment(ref _pendingItemRemoved);
             }
+            catch (Exception ex)
+            {
+                Svc.Log.Warning($"[Artisan] AllaganTools ItemRemoved 事件處理失敗：{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 把 AllaganTools 事件回呼記下的待處理筆數在框架執行緒上排乾：判斷條件旗標、清僱員快取。
+        /// <para/>
+        /// 由 <c>Artisan.OnFrameworkUpdate</c> 每幀無條件呼叫（含未登入時），所以計數不會累積跨越登入。
+        /// ⚠️ 與舊版的唯一行為差異：<c>OccupiedSummoningBell</c> 改成在排乾的那一刻取樣，
+        /// 不是事件抵達的那一刻 —— 兩者最多差一幀。同一幀進來的多筆事件合併成一次清除
+        /// （ClearCache 本來就是等冪的），但 add／remove 的筆數仍逐筆計入診斷行。
+        /// </summary>
+        internal static void DrainInventoryEvents()
+        {
+            var added = Interlocked.Exchange(ref _pendingItemAdded, 0);
+            var removed = Interlocked.Exchange(ref _pendingItemRemoved, 0);
+            if (added == 0 && removed == 0)
+                return;
+
+            if (!Svc.Condition[ConditionFlag.OccupiedSummoningBell])
+                return;
+
+            NoteCacheCleared(added, removed, HasCachedRetainerData());
+            ClearCache(null);
+            _InventoryChanged = true;
         }
 
         internal static void Dispose()

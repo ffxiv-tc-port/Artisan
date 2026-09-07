@@ -230,6 +230,9 @@ public unsafe class Artisan : IDalamudPlugin
     {
         // 「這扇窗按過了」守衛的解除點:放最前面、不受登入與任何開關限制(理由見 AddonPressGuard.Tick)。
         AddonPressGuard.Tick();
+        // AllaganTools 的物品事件回呼跑在對方的執行緒上，只在那裡記筆數；真正的條件判斷與
+        // 僱員快取清除在這裡做。放在登入檢查之前：排乾一定會發生，計數不會跨登入累積。
+        RetainerInfo.DrainInventoryEvents();
         WatchRecipeNote();
 
         if (!Svc.ClientState.IsLoggedIn)

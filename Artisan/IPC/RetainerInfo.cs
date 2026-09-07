@@ -17,6 +17,7 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using Lumina.Excel.Sheets;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -137,8 +138,16 @@ namespace Artisan.IPC
                 }
             }
 
-            ClearCache(null);
-            CacheBuilt = true;
+            // 🔴 上面那個迴圈的 await Task.Run 之後，這裡已經在執行緒池上：Dalamud 外掛沒有
+            //    SynchronizationContext，await 的接續不會回到框架執行緒。ClearCache 會走訪整份
+            //    RetainerData，CacheBuilt 又是繪製執行緒每幀在讀的旗標 —— 兩者一起交回框架執行緒。
+            // 📌 沒進到那個迴圈時（ShowOnlyCraftable 關著且非 onLoad）這裡仍在框架執行緒上：
+            //    RunOnFrameworkThread 會就地執行，await 一個已完成的工作不換執行緒，零額外延遲。
+            await Svc.Framework.RunOnFrameworkThread(() =>
+            {
+                ClearCache(null);
+                CacheBuilt = true;
+            });
             return true;
         }
 
@@ -259,14 +268,43 @@ namespace Artisan.IPC
             _ItemCount = null;
         }
 
-        public static Dictionary<ulong, Dictionary<uint, ItemInfo>> RetainerData = new Dictionary<ulong, Dictionary<uint, ItemInfo>>();
+        /// <summary>
+        /// 僱員背包快取。
+        /// <para/>
+        /// 🔴 為什麼是 <see cref="ConcurrentDictionary{TKey,TValue}"/> 而不是 <c>Dictionary</c>：
+        /// 這份資料同時被三條執行緒碰 ——
+        /// ①框架／繪製執行緒（材料表、<c>Framework.Update</c> 上的排乾與 TaskManager）；
+        /// ②執行緒池：<c>CraftingListUI.cs</c> 與 <c>ListEditor.cs</c> 兩個「從僱員取回」按鈕都是
+        /// <c>Task.Run(() =&gt; RestockFromRetainers(...))</c>，而它會呼叫 <c>GetRetainerItemCount</c>（寫）
+        /// 並走訪整份快取（讀）；
+        /// ③同樣是執行緒池：<c>LoadCache</c> 迴圈裡的 <c>await Task.Run(...)</c> 走 <c>CheckForIngredients</c>
+        /// → <c>GetRetainerItemCount</c>（寫）。
+        /// <para/>
+        /// 裸 <c>Dictionary</c> 在這種形狀下的失敗形式<b>不是「拿到舊值」而是字典本身壞掉</b>，
+        /// 而走訪中的並行改動會擲 <c>InvalidOperationException</c> —— 那個例外會被
+        /// <c>GetRetainerItemCount</c> 自己的 <c>catch</c> 吞成「回 0」，使用者看到的是僱員持有量
+        /// 莫名其妙變成 0，log 上一片安靜。
+        /// <para/>
+        /// ⚠️ 換成 <c>ConcurrentDictionary</c> 之後 LINQ 走訪是<b>弱一致</b>的：不會擲例外，但
+        /// 讀到的可能是走訪期間的混合快照。對這裡的用途（估算持有量、決定要拜訪哪些僱員）
+        /// 與改動前「剛好沒撞到」時拿到的結果同級，而改動前撞到的那一次是例外不是舊值。
+        /// </summary>
+        public static ConcurrentDictionary<ulong, ConcurrentDictionary<uint, ItemInfo>> RetainerData = new();
+
+        /// <summary>
+        /// 單一僱員身上單一物品的數量快照。
+        /// <para/>
+        /// 🔑 三個屬性刻意<b>沒有 setter</b>：更新一律整份換掉（<c>ret[id] = new ItemInfo(...)</c>）。
+        /// 就地改欄位的話，讀取端可能看到「新的 Quantity ＋ 舊的 HQQuantity」這種撕裂組合
+        /// —— 參考指派本身是不可分割的，三個獨立的 uint 寫入不是。
+        /// </summary>
         public class ItemInfo
         {
-            public uint ItemId { get; set; }
+            public uint ItemId { get; }
 
-            public uint Quantity { get; set; }
+            public uint Quantity { get; }
 
-            public uint HQQuantity { get; set; }
+            public uint HQQuantity { get; }
 
             public ItemInfo(uint itemId, uint quantity, uint hqQuantity)
             {
@@ -322,24 +360,14 @@ namespace Artisan.IPC
 
             try
             {
-                if (!RetainerData.TryGetValue(retainerId, out var ret))
-                {
-                    ret = new Dictionary<uint, ItemInfo>();
-                    RetainerData[retainerId] = ret;
-                }
+                // GetOrAdd 取代「TryGetValue 不中就自己建一個再指派」：後者在兩條執行緒同時
+                // 走到時會各自建一份，其中一份連同已經寫進去的項目一起被覆蓋掉。
+                var ret = RetainerData.GetOrAdd(retainerId, static _ => new ConcurrentDictionary<uint, ItemInfo>());
 
                 var quantity = GetRetainerInventoryItem(ItemId, retainerId);
                 var hq = GetRetainerInventoryItem(ItemId, retainerId, true);
-                if (ret.TryGetValue(ItemId, out var info))
-                {
-                    info.ItemId = ItemId;
-                    info.Quantity = quantity;
-                    info.HQQuantity = hq;
-                }
-                else
-                {
-                    ret[ItemId] = new ItemInfo(ItemId, quantity, hq);
-                }
+                // 兩條分支（有舊值／沒有舊值）本來就寫出同一組值，整份替換之後合而為一。
+                ret[ItemId] = new ItemInfo(ItemId, quantity, hq);
             }
             catch (Exception ex)
             {
@@ -429,36 +457,20 @@ namespace Artisan.IPC
 
                         if (retainerId > 0 && !P.Config.UnavailableRetainerIDs.Any(x => x == retainerId))
                         {
-                            if (RetainerData.ContainsKey(retainerId))
+                            // 改動前這裡是「有這個僱員」與「沒有這個僱員」兩段一模一樣的複製貼上，
+                            // 而 else 那段先 TryAdd 再用索引子取回 —— 中間若有人 Clear() 就是
+                            // KeyNotFoundException。GetOrAdd 一次搞定，兩段合一，結果逐字相同。
+                            var ret = RetainerData.GetOrAdd(retainerId, static _ => new ConcurrentDictionary<uint, ItemInfo>());
+                            if (ret.TryGetValue(ItemId, out var item))
                             {
-                                var ret = RetainerData[retainerId];
-                                if (ret.ContainsKey(ItemId))
-                                {
-                                    var item = ret[ItemId];
-                                    item.ItemId = ItemId;
-                                    item.Quantity = GetRetainerInventoryItem(ItemId, retainerId);
-
-                                }
-                                else
-                                {
-                                    ret.TryAdd(ItemId, new ItemInfo(ItemId, GetRetainerInventoryItem(ItemId, retainerId), GetRetainerInventoryItem(ItemId, retainerId, true)));
-                                }
+                                // ⚠️ 只更新 Quantity、沿用舊的 HQQuantity 是改動前就有的行為
+                                //（原本是 item.Quantity = ... 而完全沒碰 item.HQQuantity），逐字保留：
+                                // 改成一併更新會多送一輪 AllaganTools IPC，也不是這次要改的東西。
+                                ret[ItemId] = new ItemInfo(ItemId, GetRetainerInventoryItem(ItemId, retainerId), item.HQQuantity);
                             }
                             else
                             {
-                                RetainerData.TryAdd(retainerId, new Dictionary<uint, ItemInfo>());
-                                var ret = RetainerData[retainerId];
-                                if (ret.ContainsKey(ItemId))
-                                {
-                                    var item = ret[ItemId];
-                                    item.ItemId = ItemId;
-                                    item.Quantity = GetRetainerInventoryItem(ItemId, retainerId);
-
-                                }
-                                else
-                                {
-                                    ret.TryAdd(ItemId, new ItemInfo(ItemId, GetRetainerInventoryItem(ItemId, retainerId), GetRetainerInventoryItem(ItemId, retainerId, true)));
-                                }
+                                ret.TryAdd(ItemId, new ItemInfo(ItemId, GetRetainerInventoryItem(ItemId, retainerId), GetRetainerInventoryItem(ItemId, retainerId, true)));
                             }
                         }
                     }

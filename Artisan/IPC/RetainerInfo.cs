@@ -113,6 +113,10 @@ namespace Artisan.IPC
             _ItemCountHQ = Svc.PluginInterface.GetIpcSubscriber<uint, ulong, int, uint>("AllaganTools.ItemCountHQ");
             _OnItemAdded.Subscribe(OnItemAdded);
             _OnItemRemoved.Subscribe(OnItemRemoved);
+            // 🔴 逾時訊息刻意留在 Verbose（使用者的 LogLevel 收不到 Verbose），
+            //    但補回來的不是原本那一行 —— 見 ReportTaskTimeouts()：
+            //    由我方在 Tick 觀測任務交接，用 Information 印出「是哪一個任務」。
+            //    把這裡改回 false 只會讓同一件事印兩遍，所以不要改。
             TM.TimeoutSilently = true;
         }
 
@@ -724,6 +728,8 @@ namespace Artisan.IPC
 
         private static unsafe void Tick(IFramework framework)
         {
+            ReportTaskTimeouts();
+
             // Watchdog. The restock chain ends with tasks that unlock YesAlready, un-suppress AutoRetainer and
             // detach this handler - but TaskManager.Abort() (fired explicitly on early completion, and by any
             // task enqueued with abortOnTimeout: true) clears the whole queue, so those trailing tasks can
@@ -757,6 +763,55 @@ namespace Artisan.IPC
             }
         }
 
+        /// <summary>上一幀在 <see cref="TM"/> 上看到的具名任務，<c>null</c> 代表當時沒有具名任務在跑。</summary>
+        private static string? LastSeenTaskName = null;
+
+        /// <summary>上一幀看到的那個具名任務的時限截止點（<see cref="Environment.TickCount64"/> 刻度），0 代表沒有。</summary>
+        private static long LastSeenTaskAbortAt = 0;
+
+        /// <summary>
+        /// 把 ECommons 導進 Verbose 的逾時訊息，用 Information 在這裡補一則帶任務名的。
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// 由來：<c>TM.TimeoutSilently = true</c> 讓 <c>LegacyTaskManager</c> 的逾時訊息走 <c>PluginLog.Verbose</c>，
+        /// 而 Verbose 是使用者的 log 等級唯一收不到的一級 ⇒ 僱員鏈的某一步逾時被跳過時，log 上一個字都沒有。
+        /// 🔴 刻意<b>不</b>把 <c>TimeoutSilently</c> 改回 <c>false</c>：那會讓同一件事印兩遍。
+        /// 🔴 也刻意<b>不</b>改 ECommons —— 全艦隊二十幾個消費端共用那份。
+        /// </para>
+        /// <para>
+        /// 做法：本方法在 <see cref="Tick"/> 開頭執行，而 <see cref="TM"/> 自己的 <c>Framework.Update</c> 處理器
+        /// 是在它的建構子裡掛上的（靜態欄位初始式，遠早於本檔把 <see cref="Tick"/> 掛上去）⇒ 每一幀都是
+        /// TaskManager 先跑、本方法後跑，所以這裡看到的是「這一幀處理完之後」的狀態。
+        /// 具名任務從「是它」變成「不是它」的那一幀，若當下已經越過它自己的時限，就是逾時被跳過。
+        /// </para>
+        /// <para>
+        /// ⚠️ 兩個已知的界限，都是「少報」而不是「亂報」：
+        /// ①<c>CurrentTaskName</c> 對<b>沒有取名字</b>的任務回 <c>null</c>（與「沒有任務」分不出來）⇒ 匿名任務不在覆蓋範圍內；
+        /// ②連續兩個<b>同名</b>任務之間的交接看不出來。
+        /// ⚠️ 反過來唯一的誤報形狀：一個任務剛好在越過時限的那一幀才回報成功（<c>result == true</c> 不看時限）。
+        /// 窗口只有一幀，所以訊息寫成「拖過時限才結束」而不是斷言「逾時」。
+        /// </para>
+        /// </remarks>
+        private static void ReportTaskTimeouts()
+        {
+            var name = TM.CurrentTaskName;
+            if (name == LastSeenTaskName)
+            {
+                if (name != null) LastSeenTaskAbortAt = TM.AbortAt;
+                return;
+            }
+
+            if (LastSeenTaskName != null && LastSeenTaskAbortAt != 0 && Environment.TickCount64 > LastSeenTaskAbortAt)
+            {
+                Svc.Log.Information($"[Artisan][Restock] 任務「{LastSeenTaskName}」拖過自己的時限才結束（超出 " +
+                                    $"{Environment.TickCount64 - LastSeenTaskAbortAt}ms），最可能的原因是逾時被跳過，" +
+                                    $"接下來的步驟會在錯的畫面上執行。ECommons 把逾時訊息導到 Verbose，所以在這裡補一則。");
+            }
+
+            LastSeenTaskName = name;
+            LastSeenTaskAbortAt = name == null ? 0 : TM.AbortAt;
+        }
         /// <summary>Tick count at which the current restock chain started, 0 when idle. Diagnostics only.</summary>
         private static long RestockStartedAt = 0;
 

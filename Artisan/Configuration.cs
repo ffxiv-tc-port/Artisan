@@ -114,6 +114,28 @@ namespace Artisan
         /// </remarks>
         public bool TataruPraiseFinishList = true;
 
+        /// <summary>
+        /// 耐力模式<b>自己跑到結束</b>時（份數做完、或素材用完），請 TataruPraise 說一句。
+        /// </summary>
+        /// <remarks>
+        /// 📌 走的是跟 <see cref="TataruPraiseFinishList"/> <b>同一個</b>「製作」情境，
+        /// 所以既有使用者本來就有語音，開了馬上就會響。
+        /// 🔴 一輪最多說一句（去重在 <c>Artisan.IPC.TataruPraiseIPC</c> 的 <c>stopNoticeArmed</c>）。
+        /// ⚠️ 使用者自己把耐力模式關掉、或取消一次製作，都<b>不算</b>「跑完了」，不會說。
+        /// </remarks>
+        public bool TataruPraiseFinishEndurance = true;
+
+        /// <summary>
+        /// 製作<b>被迫停下</b>時，請 TataruPraise 說一句「需要幫忙」。
+        /// </summary>
+        /// <remarks>
+        /// 📌 只在「不是你要的停止」時響：十秒內連續五次錯誤、遊戲回報這個製作不可能成功、
+        /// 缺少要求的食物或藥水、連續五次開不了製作，以及你自己設定的「失敗就停／非 HQ 就停」真的觸發。
+        /// 正常做完走 <see cref="TataruPraiseFinishEndurance"/>——兩件事說同一句話等於沒講。
+        /// 🔴 一輪最多說一句，而且清單模式與耐力模式共用同一個閘門。
+        /// </remarks>
+        public bool TataruPraiseCraftNeedHelp = true;
+
         public float SoundVolume = 0.25f;
 
         public bool DefaultListMateria = false;

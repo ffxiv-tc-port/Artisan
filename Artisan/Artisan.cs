@@ -242,6 +242,12 @@ public unsafe class Artisan : IDalamudPlugin
             return;
         }
 
+        // 掛著的製作還在跑 ⇒ 把「停下來時說一句」重新舉起。耐力模式的中止路徑有十條，
+        // 這個「每幀重舉、送出即放下」的旗標是「一輪只說一句」唯一的保證。
+        // 🔴 只是一個 bool 指派，不做任何 IPC、不讀遊戲結構。
+        if (Endurance.Enable || CraftingListUI.Processing)
+            TataruPraiseIPC.ArmStopNotice();
+
         CharacterInfo.UpdateCharaStats();
         Crafting.Update();
         SimpleTweaks.DisableImprovedLogTweak();

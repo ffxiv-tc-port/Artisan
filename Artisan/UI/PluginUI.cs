@@ -628,6 +628,18 @@ namespace Artisan.UI
 
                 ImGuiComponents.HelpMarker("Needs the TataruPraise plugin installed and its own master switch turned on. Without it this option does nothing at all - no error, no sound.".Loc());
 
+                // 📌 這兩項與上面那個「清單完成」是三件不同的事：清單跑完、耐力模式跑完、
+                //    以及製作被迫停下。前兩者共用 TataruPraise 的「製作」情境，第三個走「需要幫忙」。
+                if (ImGui.Checkbox("Ask Tataru to praise you when endurance mode finishes (requires TataruPraise)".Loc(), ref P.Config.TataruPraiseFinishEndurance))
+                    P.Config.Save();
+
+                ImGuiComponents.HelpMarker("Said once per endurance run, when it stops on its own - the Craft X counter reached zero, or you ran out of ingredients. Turning endurance off yourself does not count. Uses the same \"製作\" category as the option above, so it works right away. Needs TataruPraise installed with its own master switch on; without it this does nothing at all.".Loc());
+
+                if (ImGui.Checkbox("Ask Tataru to call for help when crafting is forced to stop (requires TataruPraise)".Loc(), ref P.Config.TataruPraiseCraftNeedHelp))
+                    P.Config.Save();
+
+                ImGuiComponents.HelpMarker("Said once per run, only when crafting had to stop for a reason you did not ask for: five errors within ten seconds, a craft the game says can never succeed, missing food or medicine, five failed attempts to start, or your own \"stop on failure / stop on non-HQ\" rules firing. Uses TataruPraise's \"需要幫忙\" category. Needs TataruPraise installed with its own master switch on; without it this does nothing at all.".Loc());
+
                 if (ImGuiEx.ButtonCtrl("Reset Cosmic Exploration Crafting Configs".Loc()))
                 {
                     // c.Key 是使用者設定檔裡累積下來的配方 ID，不保證還存在於本地資料表：

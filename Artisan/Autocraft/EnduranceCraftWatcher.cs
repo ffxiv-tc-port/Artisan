@@ -10,6 +10,7 @@ using ECommons.Logging;
 using Dalamud.Game.Text.SeStringHandling;
 using System.Linq;
 using Lumina.Excel.Sheets;
+using Artisan.IPC;
 
 namespace Artisan.Autocraft
 {
@@ -42,6 +43,7 @@ namespace Artisan.Autocraft
                             Endurance.ToggleEndurance(false);
                             Svc.Toasts.ShowError("You crafted a non-HQ item. Disabling Endurance.");
                             DuoLog.Error("You crafted a non-HQ item. Disabling Endurance.");
+                            TataruPraiseIPC.NotifyCraftNeedsHelp("做出了非 HQ 的成品（你設定了遇到就停）");
                         }
                     }
                 }
@@ -86,6 +88,7 @@ namespace Artisan.Autocraft
                     Endurance.ToggleEndurance(false);
                     Svc.Toasts.ShowError("You failed a craft. Disabling Endurance.");
                     DuoLog.Error("You failed a craft. Disabling Endurance.");
+                    TataruPraiseIPC.NotifyCraftNeedsHelp("製作失敗（你設定了遇到就停）");
                 }
                 else if (P.Config.CraftingX && P.Config.CraftX > 0)
                 {
@@ -97,6 +100,7 @@ namespace Artisan.Autocraft
                         if (P.Config.PlaySoundFinishEndurance)
                             SoundPlayer.PlaySound();
                         DuoLog.Information("Craft X has completed.");
+                        TataruPraiseIPC.NotifyEnduranceFinished("指定的份數做完了");
 
                     }
                 }

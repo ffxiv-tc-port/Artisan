@@ -21,6 +21,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using static ECommons.GenericHelpers;
+using Artisan.IPC;
 
 namespace Artisan.Autocraft
 {
@@ -320,6 +321,7 @@ namespace Artisan.Autocraft
                 $"Artisan: game reported \"{text}\" (LogMessage {matched}) for recipe {RecipeID} ({itemName}). "
                 + "This is terminal - retrying cannot change the outcome, so crafting is being stopped.");
             DuoLog.Error($"Artisan: {text} [recipe {RecipeID} - {itemName}]");
+            TataruPraiseIPC.NotifyCraftNeedsHelp("遊戲回報這個製作不可能成功");
 
             Errors.Clear();
             if (enable)
@@ -345,6 +347,7 @@ namespace Artisan.Autocraft
                     SoundPlayer.PlaySound();
 
                 ToggleEndurance(false);
+                TataruPraiseIPC.NotifyEnduranceFinished("素材用完了");
             }
         }
 
@@ -376,6 +379,9 @@ namespace Artisan.Autocraft
                     if (P.Config.PlaySoundFinishEndurance)
                         SoundPlayer.PlaySound();
 
+                    // 🔴 刻意在 if 外面：提示音是使用者另外一個開關，這一句不受它管。
+                    TataruPraiseIPC.NotifyEnduranceFinished("指定的份數做完了");
+
                     return;
                 }
 
@@ -384,6 +390,7 @@ namespace Artisan.Autocraft
                     Svc.Toasts.ShowError(SharedText.EnduranceNoRecipeSet.Loc());
                     DuoLog.Error(SharedText.EnduranceNoRecipeSet.Loc());
                     ToggleEndurance(false);
+                    TataruPraiseIPC.NotifyCraftNeedsHelp("沒有選配方");
                     return;
                 }
 
@@ -424,6 +431,7 @@ namespace Artisan.Autocraft
                 {
                     PreCrafting.MissingConsumablesMessage(recipe, config);
                     ToggleEndurance(false);
+                    TataruPraiseIPC.NotifyCraftNeedsHelp("缺少要求的食物或藥水");
                     return;
                 }
 
@@ -485,6 +493,7 @@ namespace Artisan.Autocraft
                                                 DuoLog.Error("Something has gone wrong whilst another plugin tried to control Artisan. Disabling Endurance.".Loc());
                                             }
                                             ToggleEndurance(false);
+                                            TataruPraiseIPC.NotifyCraftNeedsHelp("連續五次開不了製作");
                                         }
                                     }
                                     else
@@ -528,6 +537,7 @@ namespace Artisan.Autocraft
                 {
                     Svc.Toasts.ShowError(SharedText.CraftingModeChangedTooManyErrors.Loc(Enable ? "disabled".Loc() : "paused".Loc()));
                     DuoLog.Error(SharedText.CraftingModeChangedTooManyErrors.Loc(Enable ? "disabled".Loc() : "paused".Loc()));
+                    TataruPraiseIPC.NotifyCraftNeedsHelp("十秒內連續五次錯誤");
                     if (enable)
                         ToggleEndurance(false);
                     if (CraftingListUI.Processing)

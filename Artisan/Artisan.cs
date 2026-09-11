@@ -230,6 +230,11 @@ public unsafe class Artisan : IDalamudPlugin
     {
         // 「這扇窗按過了」守衛的解除點:放最前面、不受登入與任何開關限制(理由見 AddonPressGuard.Tick)。
         AddonPressGuard.Tick();
+        // Artisan.IsBusy 是別的外掛高頻輪詢的 IPC 端點,不能讓它從呼叫端執行緒直接讀
+        // TaskManager 的裸 List,也不能用五秒逾時的閘門把呼叫端卡住 ⇒ 由這裡每幀推一份快照。
+        // 🔴 放在登入檢查之前、不受任何開關限制:登出那一幀也要發佈,
+        //    否則快照會永遠停在登出前的「忙」。
+        IPC.IPC.PublishBusySnapshot();
         // AllaganTools 的物品事件回呼跑在對方的執行緒上，只在那裡記筆數；真正的條件判斷與
         // 僱員快取清除在這裡做。放在登入檢查之前：排乾一定會發生，計數不會跨登入累積。
         RetainerInfo.DrainInventoryEvents();

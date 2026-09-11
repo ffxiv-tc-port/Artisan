@@ -114,6 +114,43 @@ internal unsafe static class RetainerListHandlers
     }
 
 
+    /// <summary>
+    /// 讀僱員清單某一列的名字，<b>剝掉 SeString payload</b> 之後回純文字。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 不用 <c>ReaderRetainerList.Retainer.Name</c>：它走 <c>AtkReader.ReadString</c> →
+    /// <c>MemoryHelper.ReadStringNullTerminated</c>，把整段位元組原樣當 UTF-8 解。
+    /// SeString payload 的位元組不是合法 UTF-8 ⇒ 解出來會夾著 <c>U+FFFD</c>。
+    /// 而這個字串緊接著就餵給 <see cref="AddonPressGuard.IsTextCorrupt"/>，那道守衛的判準正是
+    /// 「含 U+FFFD ⇒ 這一幀不碰」⇒ 名字一旦帶 payload，守衛會<b>永遠成立</b>，
+    /// 選僱員這一步就靜默地一直回 false 重試到逾時，而 log 上只會看到守衛自己那一行。
+    /// <para/>
+    /// 📌 僱員名實務上是純文字，所以目前沒有觀察到觸發；這裡改掉的是<b>形狀</b>不是已知症狀。
+    /// ⚠️ <c>AtkReader.ReadSeString</c> 是 <c>protected</c>，Artisan 拿不到 ⇒ 改用它公開的
+    /// <c>AtkReaderParams</c> 自己讀同一格 <c>AtkValue</c>，三道守衛（判空／界限／型別）
+    /// 逐字照抄 <c>ReadString</c>，只把最後一步換成 SeString 解析。
+    /// 🔑 讀的格子與 <c>Name =&gt; ReadString(0)</c> 完全相同：<c>BeginOffset + 0</c>。
+    /// </remarks>
+    private static string ReadRetainerEntryName(AddonMaster.RetainerList.Entry retainer)
+    {
+        var (unitBasePtr, beginOffset) = retainer.AtkReaderParams;
+        if (unitBasePtr == 0) return "";
+
+        var unitBase = (AtkUnitBase*)unitBasePtr;
+        var index = beginOffset;
+        if (unitBase->AtkValues == null || index < 0 || index >= unitBase->AtkValuesCount) return "";
+
+        var value = unitBase->AtkValues[index];
+        if (value.Type is not (FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
+                or FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String8
+                or FFXIVClientStructs.FFXIV.Component.GUI.ValueType.WideString
+                or FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)) return "";
+        // 型別對不代表指標非空；從位址 0 起掃 null 結尾就是 AccessViolationException（攔不到）。
+        if (value.String.Value == null) return "";
+
+        return MemoryHelper.ReadSeStringNullTerminated((nint)value.String.Value).GetText();
+    }
+
     internal static bool? SelectRetainerByName(string name)
     {
         if (string.IsNullOrEmpty(name))
@@ -125,13 +162,14 @@ internal unsafe static class RetainerListHandlers
             var list = new AddonMaster.RetainerList(retainerList);
             foreach (var retainer in list.Retainers)
             {
+                var retainerName = ReadRetainerEntryName(retainer);
                 // 讀窗文字做判定:讀到 U+FFFD 代表窗記憶體正在變動,這一幀不碰。
-                if (AddonPressGuard.IsTextCorrupt("RetainerList", retainer.Name)) return false;
-                if (retainer.Name == name)
+                if (AddonPressGuard.IsTextCorrupt("RetainerList", retainerName)) return false;
+                if (retainerName == name)
                 {
                     if (RetainerInfo.GenericThrottle)
                     {
-                        Svc.Log.Debug($"Selecting retainer {retainer.Name} with index {retainer.Index}");
+                        Svc.Log.Debug($"Selecting retainer {retainerName} with index {retainer.Index}");
                         retainer.Select();
                         return true;
                     }

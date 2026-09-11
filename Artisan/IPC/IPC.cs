@@ -234,9 +234,39 @@ namespace Artisan.IPC
             }
         }
 
-        public static bool IsBusy()
+        /// <summary>
+        /// 框架執行緒每幀發佈的「Artisan 現在忙不忙」快照。<see cref="IsBusy"/> 從別的執行緒
+        /// 被呼叫時讀的就是這一份。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 這個端點刻意<b>不</b>走 <see cref="IpcFrameworkGate"/>：它是別的外掛<b>高頻輪詢</b>的，
+        /// 而閘門的逾時是 <see cref="IpcFrameworkGate.TimeoutMs"/> 毫秒 —— 遊戲一讀取畫面，
+        /// 每一次輪詢都會把呼叫端整整卡住五秒。
+        /// <para/>
+        /// 🔑 輪詢型端點的正解是「框架執行緒推快照、端點只讀快照」：非阻塞、最多差一幀（約 16ms）。
+        /// 原本的寫法是從呼叫端的執行緒直接讀 <c>P.TM.NumQueuedTasks</c>，而那是
+        /// <c>LegacyTaskManager</c> 裸 <c>List</c> 的 <c>Count</c> ——「差一幀」與原本讀到的
+        /// 「某一瞬間的值」同級，不改變任何呼叫端的判斷。
+        /// <para/>
+        /// 📌 還沒發佈過任何一幀時是 <see langword="false"/>＝「不忙」，而那一刻 Artisan 確實
+        /// 什麼都還沒做（快照的發佈點在 <c>Artisan.OnFrameworkUpdate</c> 最前面，
+        /// 登出那一幀也會發佈，所以不會停在登出前的「忙」）。
+        /// 📌 呼叫端已經在框架執行緒上時仍然現算，行為與改動前逐字相同。
+        /// </remarks>
+        private static volatile bool busySnapshot;
+
+        /// <summary>由 <c>Artisan.OnFrameworkUpdate</c> 每幀無條件呼叫一次。</summary>
+        internal static void PublishBusySnapshot() => busySnapshot = IsBusyCore();
+
+        /// <summary>現算版本。<b>只在框架執行緒上呼叫</b>（讀 TaskManager 的裸 List）。</summary>
+        private static bool IsBusyCore()
         {
             return Endurance.Enable || CraftingListUI.Processing || P.TM.NumQueuedTasks > 0 || P.CTM.NumQueuedTasks > 0 || !(Crafting.CurState is Crafting.State.IdleBetween or Crafting.State.IdleNormal);
+        }
+
+        public static bool IsBusy()
+        {
+            return Svc.Framework.IsInFrameworkUpdateThread ? IsBusyCore() : busySnapshot;
         }
 
         // TryBuildCraft 走 CharacterStats.GetBaseStatsForClassHeuristic ——

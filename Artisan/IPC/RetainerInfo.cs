@@ -496,7 +496,26 @@ namespace Artisan.IPC
             return 0;
         }
 
+        /// <summary>
+        /// 單一物品的「從僱員取回」。整支交回遊戲主執行緒之後才開始排任務。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 方法體十餘次 <c>TM.Enqueue</c>／<c>TM.DelayNext</c>／<c>TM.EnqueueImmediate</c>
+        /// 動的是 <c>LegacyTaskManager</c> 的 <c>Tasks</c> 與 <c>ImmediateTasks</c> ——
+        /// 兩個都是<b>裸 <c>List</c></b>（ECommons 自己的註解明寫
+        /// "only ever do that from Framework.Update event"），而框架執行緒每一幀都在走訪它們。
+        /// 並行插入的失敗形式<b>不是「拿到舊值」而是集合本身壞掉</b>，走訪中的並行改動則擲
+        /// <c>InvalidOperationException</c>。
+        /// <para/>
+        /// 📌 目前兩個呼叫點（<c>IngredientTable</c> 的右鍵項、<c>CraftingListContextMenu</c> 的
+        /// 「從僱員取出」）本來就在遊戲主執行緒上 ⇒ 閘門就地執行，行為逐字不變、不多花一幀。
+        /// 這一層擋的是「哪天有人跟著清單版那兩個按鈕也包一層 <c>Task.Run</c>」。
+        /// </remarks>
         public static void RestockFromRetainers(uint ItemId, int howManyToGet)
+            => IpcFrameworkGate.Run("RetainerInfo.RestockFromRetainers(單品)", () => RestockSingleCore(ItemId, howManyToGet));
+
+        /// <summary><b>只能在框架執行緒上呼叫</b>，由上面那層閘門保證。</summary>
+        private static void RestockSingleCore(uint ItemId, int howManyToGet)
         {
             if (RetainerData.SelectMany(x => x.Value).Any(x => x.Value.ItemId == ItemId && x.Value.Quantity > 0))
             {
@@ -682,6 +701,22 @@ namespace Artisan.IPC
                 }
             }
 
+            // 🔴 這一行是「背景」與「主執行緒」的分界。
+            //    上面那段（列材料、比對背包、GetRetainerItemCount）每個材料都要走十個僱員、
+            //    每個僱員 8~15 次 AllaganTools IPC，長清單會跑上好幾秒 —— 那才是
+            //    CraftingListUI 與 ListEditor 兩顆按鈕用 Task.Run 包起來的真正理由，所以留在背景。
+            //    下面那段只是把任務推進 TaskManager 的裸 List，本來就不阻塞，
+            //    但必須在框架執行緒上做（理由見 RestockFromRetainers(uint,int) 的 remarks）。
+            IpcFrameworkGate.Run("RetainerInfo.RestockFromRetainers(清單)", () => EnqueueListRestock(requiredItems, planStartedAt));
+        }
+
+        /// <summary>
+        /// 把「清單取回」的整條任務鏈推進 <see cref="TM"/>。
+        /// <b>只能在框架執行緒上呼叫</b>，由 <see cref="RestockFromRetainers(NewCraftingList)"/>
+        /// 那一層的 <see cref="IpcFrameworkGate"/> 保證。
+        /// </summary>
+        private static void EnqueueListRestock(Dictionary<int, int> requiredItems, long planStartedAt)
+        {
             if (RetainerData.SelectMany(x => x.Value).Any(x => requiredItems.Any(y => y.Key == x.Value.ItemId)))
             {
                 Svc.Log.Debug($"Processing Retainer Data");

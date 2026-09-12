@@ -495,7 +495,17 @@ namespace Artisan.CraftingLists
         /// </summary>
         /// <remarks>
         /// 🔴 閘門<b>包住整批</b>而不是每個道具包一次 —— 那正是這支存在的理由。
-        /// ⚠️ 逾時／卸載期時該批完全不讀,已經讀到的批次保留;缺的鍵查出來是 0(安全方向)。
+        /// <para/>
+        /// 🔴🔴 閘門裡的委派<b>絕不可以就地寫外面那個 <c>result</c> 字典</b>。
+        /// <c>IpcFrameworkGate</c> 逾時時只會把「還沒開始跑」的工作標成放棄 ——
+        /// <b>已經開始跑的會照常跑完</b>(它自己的 <c>ReportTimeout</c> 訊息就是這樣寫的)。
+        /// 那種寫法下呼叫端會在主執行緒還在寫同一個 <c>Dictionary</c> 時繼續往前跑,
+        /// 而裸 <c>Dictionary</c> 並行改動的失敗形式<b>不是「拿到舊值」而是字典本身壞掉</b>。
+        /// 🔑 所以每一批在閘門內只寫<b>自己的區域陣列</b>再整份回傳,由呼叫端在
+        /// <c>Task.WaitAny</c> 回來之後才合併;逾時時回 <c>null</c>,那一批被丟掉,
+        /// 被遺棄的委派只會寫它自己那個沒人看的陣列。
+        /// <para/>
+        /// ⚠️ 逾時／卸載期時該批完全不採用,已經讀到的批次保留;缺的鍵查出來是 0(安全方向)。
         /// </remarks>
         private static Dictionary<uint, int> SnapshotCounts(IEnumerable<uint> itemIds, string endpoint, Func<uint, int> readOne, int batchSize)
         {
@@ -509,12 +519,18 @@ namespace Artisan.CraftingLists
                 if (batch.Count == 0) return;
                 var pending = batch.ToArray();
                 batch.Clear();
-                IpcFrameworkGate.Get(endpoint, () =>
+
+                var values = IpcFrameworkGate.Get<int[]?>(endpoint, () =>
                 {
-                    foreach (var id in pending)
-                        result[id] = readOne(id);
-                    return true;
-                }, false);
+                    var read = new int[pending.Length];
+                    for (var i = 0; i < pending.Length; i++)
+                        read[i] = readOne(pending[i]);
+                    return read;
+                }, null);
+
+                if (values is null) return;
+                for (var i = 0; i < pending.Length; i++)
+                    result[pending[i]] = values[i];
             }
 
             foreach (var id in itemIds)

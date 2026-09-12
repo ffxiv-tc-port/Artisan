@@ -185,12 +185,6 @@ namespace Artisan.CraftingLists
         /// 🔴 <c>Crafting.CraftFinished</c> 是從 <c>Crafting.Update()</c> 發出的,而那支掛在
         /// <c>Artisan.OnFrameworkUpdate</c> 上 ⇒ <b>進到這裡時已經在遊戲主執行緒上</b>。
         /// 所以能力值快照在 <c>Task.Run</c> <b>之前</b>就地讀好,背景那側只拿純量。
-        /// 改動前 <c>GetCraftDuration</c> 是在執行緒池上解
-        /// <c>RaptureGearsetModule.Instance()-&gt;Entries</c>／<c>InventoryManager</c>／
-        /// <c>PlayerState</c>／<c>Status-&gt;Param</c> —— 那是 AccessViolationException 的形狀,
-        /// 而 AVE 在 .NET Core 攔不到,使用者看到的是整個遊戲崩掉。
-        /// 📌 快照之後時序完全沒變:同一個 <c>Task.Run</c>、同一個迴圈、
-        /// 同一個 <c>CraftingListFunctions.ListEndTime</c> 賦值點。
         /// </remarks>
         public static void UpdateListTimer(Recipe recipe, CraftState craft, StepState finalStep, bool cancelled)
         {
@@ -257,9 +251,6 @@ namespace Artisan.CraftingLists
         /// ／<c>InventoryManager.Instance()-&gt;GetInventoryContainer</c>;
         /// <c>CharacterInfo.FCCraftsmanshipbuff.Param</c> → <c>Status.Struct-&gt;Param</c>;
         /// <c>BuildCraftStateForRecipe</c> → <c>PlayerState.Instance()-&gt;ClassJobLevels</c>。
-        /// 📌 <c>EstimateCraftTime</c> 與所有求解器都是純計算(2026-09-12 逐檔查過:
-        /// 求解器裡看起來像解參考的 <c>-&gt;</c> 全部落在字串字面值裡),
-        /// 所以「把原生讀取換成快照」就足以讓整支在背景執行緒上安全。
         /// </remarks>
         public static TimeSpan GetCraftDuration(uint recipeId, bool qs, CrafterStatsSnapshot? statsSnapshot = null)
         {
@@ -385,24 +376,10 @@ namespace Artisan.CraftingLists
         /// </param>
         /// <remarks>
         /// 🔴 <c>invManager-&gt;GetInventoryItemCount</c> 是原生解參考,只能在遊戲主執行緒上讀。
-        /// 改動前 <c>RetainerInfo.LoadCache</c> 的
-        /// <c>await Task.Run(() =&gt; Safe(() =&gt; CheckForIngredients(...)))</c> 讓它在
-        /// <b>執行緒池</b>上跑 —— 而且不是一兩次:台服 7.20 的 Recipe 表有 14,409 列、
-        /// 其中 12,802 列有材料、合計 63,397 個(配方,材料)對 ⇒ 每次重建快取都是
-        /// 數萬次錯執行緒的原生讀取。<c>AccessViolationException</c> 在 .NET Core 是
-        /// corrupted-state exception,底下那個 <c>catch</c>(以及任何 <c>try</c>/<c>catch</c>)
-        /// 完全攔不到,使用者看到的是整個遊戲崩掉。
-        /// <para/>
         /// ⚠️ 這裡的 <c>GetInventoryItemCount(id)</c> 走的是<b>預設參數</b>
         /// (<c>checkEquipped: true, checkArmory: true</c>),與 <see cref="NumberOfIngredient"/>
         /// 的 <c>(id, false, false, false)</c> <b>不是同一個數</b> ——
         /// 所以兩者各有自己的快照函式,不可以互相代用。
-        /// <para/>
-        /// 📌 <c>invNumberNQ</c>／<c>invNumberHQ</c> 兩個 <c>int?</c> 區域變數併成一個
-        /// <c>owned</c>:原本的比較式是 <c>value.Amount &gt; (invNumberNQ + invNumberHQ)</c>,
-        /// 兩者在該點必定非 null ⇒ 與先相加再比較逐字等價。
-        /// 原本 <c>return</c> 前那幾行「把區域變數設回 null」隨著變數一起消失(它們是
-        /// 離開作用域前的空操作,沒有任何可觀察效果)。
         /// </remarks>
         public static bool CheckForIngredients(Recipe recipe, bool fetchFromCache = true, bool checkRetainer = false,
             IReadOnlyDictionary<uint, int>? inventorySnapshot = null, RetainerInfo.RetainerRoster? retainerRoster = null)
@@ -472,10 +449,6 @@ namespace Artisan.CraftingLists
         /// <remarks>
         /// 🔑 為什麼要批次而不是逐個走閘門:<c>RunOnFrameworkThread</c> 從背景執行緒呼叫時
         /// 要等到下一次 <c>Framework.Update</c> ⇒ 一次往返大約一幀。
-        /// <c>LoadCache</c> 要看的相異材料 id 是<b>三千多個</b>(台服 7.20 離線查表:
-        /// Recipe 表 14,409 列裡有 3,241 個相異材料),逐個往返就是三千多幀、
-        /// 一分鐘級的延遲;分批之後是「每批一幀」。
-        /// <para/>
         /// ⚠️ 取不到(卸載期／等逾時)時回<b>已經讀到的部分</b>,缺的鍵查出來是 0 ——
         /// 與本來的 <c>catch { }</c> 同方向:少報只會讓配方被判成「材料不足」而不顯示,
         /// 不會讓流程拿著不存在的材料去開工。
@@ -494,18 +467,12 @@ namespace Artisan.CraftingLists
         /// 上面兩支共用的批次讀取。<paramref name="readOne"/> 只會在遊戲主執行緒上被呼叫。
         /// </summary>
         /// <remarks>
-        /// 🔴 閘門<b>包住整批</b>而不是每個道具包一次 —— 那正是這支存在的理由。
-        /// <para/>
         /// 🔴🔴 閘門裡的委派<b>絕不可以就地寫外面那個 <c>result</c> 字典</b>。
-        /// <c>IpcFrameworkGate</c> 逾時時只會把「還沒開始跑」的工作標成放棄 ——
-        /// <b>已經開始跑的會照常跑完</b>(它自己的 <c>ReportTimeout</c> 訊息就是這樣寫的)。
         /// 那種寫法下呼叫端會在主執行緒還在寫同一個 <c>Dictionary</c> 時繼續往前跑,
         /// 而裸 <c>Dictionary</c> 並行改動的失敗形式<b>不是「拿到舊值」而是字典本身壞掉</b>。
         /// 🔑 所以每一批在閘門內只寫<b>自己的區域陣列</b>再整份回傳,由呼叫端在
         /// <c>Task.WaitAny</c> 回來之後才合併;逾時時回 <c>null</c>,那一批被丟掉,
         /// 被遺棄的委派只會寫它自己那個沒人看的陣列。
-        /// <para/>
-        /// ⚠️ 逾時／卸載期時該批完全不採用,已經讀到的批次保留;缺的鍵查出來是 0(安全方向)。
         /// </remarks>
         private static Dictionary<uint, int> SnapshotCounts(IEnumerable<uint> itemIds, string endpoint, Func<uint, int> readOne, int batchSize)
         {
@@ -550,30 +517,9 @@ namespace Artisan.CraftingLists
         /// </summary>
         /// <remarks>
         /// 🔴 <c>invManager</c> 是遊戲的原生指標,<c>GetInventoryItemCount</c>／
-        /// <c>GetInventoryContainer</c>／<c>GetInventorySlot</c> 只能在遊戲主執行緒上讀 ——
-        /// 讀到一半被主執行緒換掉就是 <c>AccessViolationException</c>,而 AVE 在 .NET Core
-        /// 是 corrupted-state exception,底下那個 <c>catch</c>(以及任何 <c>try</c>/<c>catch</c>、
-        /// <c>HookSafety.ExecuteSafe</c>)完全攔不到,使用者看到的是整個遊戲崩掉。
-        /// <para/>
-        /// 📌 2026-09-12 實測有三條背景呼叫路徑(全部從 <c>Task.Run</c> 起頭):
-        /// <list type="number">
-        /// <item><c>ListEditor.RefreshTable</c> → <c>Task.Run(GenerateTableAsync)</c> →
-        /// <c>IngredientHelpers.GenerateList</c> → <c>NewCraftingList.ListMaterials</c> →
-        /// <c>CraftingListHelpers.GetEffectiveCraftQuantity</c>(只在
-        /// <c>SubtractOwnedFinishedProductFromIngredientTable</c> 開著時);</item>
-        /// <item><c>Task.Run(RetainerInfo.RestockFromRetainers(清單))</c> ——
-        /// <c>CraftingListUI</c> 與 <c>ListEditor</c> 的「從僱員取回」兩顆按鈕;</item>
-        /// <item>同上那條 <c>RestockFromRetainers</c> 裡自己的兩個 <c>ListMaterials</c>／
-        /// 材料迴圈。</item>
-        /// </list>
-        /// 🔑 閘門放在這一層(而不是逐一改呼叫端)的理由:新的背景呼叫端不必再記得這件事。
+        /// <c>GetInventoryContainer</c>／<c>GetInventorySlot</c> 只能在遊戲主執行緒上讀。
         /// 熱迴圈要避免「每個道具一次主執行緒往返」時改用
         /// <see cref="SnapshotNumberOfIngredient"/>。
-        /// <para/>
-        /// 📌 已經在主執行緒上(Draw、<c>Framework.Update</c>、TaskManager 的任務)時
-        /// <b>行為逐字不變</b>:<c>IpcFrameworkGate</c> 直接就地執行,不配置 Task、不多花一幀、
-        /// 不改變例外型別。
-        /// <para/>
         /// ⚠️ 取不到時回 <c>0</c> —— 與本來的 <c>catch { return 0; }</c> 同值,而呼叫端一律是
         /// 「持有量 &gt;= 需求量?」的閘門 ⇒ 少報只會讓流程判定素材不足而不開工。
         /// </remarks>

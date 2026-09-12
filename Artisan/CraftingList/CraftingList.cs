@@ -542,25 +542,6 @@ namespace Artisan.CraftingLists
         private static bool _cosmicNodesDumped = false;
 
         // WKSRecipeNotebook 的 NQ／HQ 全選按鈕 —— 用**節點 ID**指定，不是節點清單索引。
-        //
-        // 2026-08-03 由台服 7.20 的 ui/uld/WKSRecipeNotebook.uld 離線解出（Lumina UldFile），
-        // 不是猜的。根 widget 共 54 個節點，與實機 NodeListCount=54 完全對得起來：
-        //   Node 38  Res            (0,152) 192x20   ← 素材列標題那一排
-        //   Node 39  Component 1004 (100,-8) 44x28   ← NQ 全選按鈕
-        //   Node 40  Component 1004 (148,-8) 44x28   ← HQ 全選按鈕
-        //   Node 41  Text           (0,2)   86x13    ← 「素材」
-        //   Node 42  Res            (0,164) 368x154  ← 素材列容器
-        //   Node 43/44/45 Component 1028 368x62 ×3   ← 三個素材列
-        //   Node 50  Component 1005 (228,315) 140x32 ← 製作按鈕
-        // ULD 元件表裡 1004 的 Type 是 **Button**（1028 是 Custom、1029 是 TreeList）。
-        //
-        // ⚠️ 實機節點傾印印出來的 type=1004／1028／1029 **不是** 1000 + ComponentType，
-        //    而是**該 ULD 檔自己的元件編號**（遊戲載入 ULD 時把這個值原樣搬進 AtkResNode.Type）。
-        //    兩者長得很像所以很容易誤讀 —— 決定性的反例是 1028/1029：我們的 CS
-        //    ComponentType 只到 Portrait=25，而 ULD 說 1028 的 Type 是 Custom(0)、
-        //    1029 是 TreeList(12)。若真是 1000+ComponentType，它們會是 1000 和 1012。
-        //    （曾據此推論「17/18 是 RadioButton＝普通/優質分頁鈕」，那是錯的。）
-        //
         // 上游寫死的 NodeList[17]/[18] 在台服其實**指對了**（就是節點 39/40），
         // 但索引會隨版本漂移而 ID 不會，而且查 ID 失敗是回 null（可偵測），
         // 索引錯掉則是安靜地點到別的東西。ECommons 的 AddonMaster.WKSRecipeNotebook

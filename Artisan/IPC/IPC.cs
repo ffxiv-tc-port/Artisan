@@ -173,14 +173,9 @@ namespace Artisan.IPC
             if (LuminaSheets.RecipeSheet!.FindFirst(x => x.Value.RowId == recipeId, out var recipe))
             {
                 // 🔴 選取階段失敗時「照樣啟動製作」是這條路徑原本的行為,而且完全無聲。
-                //
                 // PreCrafting.Update() 對 TaskResult.Abort 的處理是 Tasks.Clear()(見
                 // PreCrafting.cs 的 switch),所以「宇宙筆記裡找不到這個配方、等到逾時中止」
                 // 與「選取成功」在下面這個 Tasks.Count == 0 的判斷裡**完全分不出來**。
-                // 兩者都讓下一段的 ToggleEndurance(true) 跑起來,於是外掛就去做**宇宙筆記
-                // 當下剛好選著的那個配方**——正是 TaskSelectRecipe 開頭那段註解記錄的
-                // 「任務目標 2/1、另一個 0/1」的表徵,只是換了一條進入點。
-                //
                 // 所以這裡直接記錄 TaskSelectRecipe 自己的回傳值當作成功與否的真值,
                 // 而**不是**照上游用 Operations.GetSelectedRecipeEntry() 回頭驗證:
                 // 那個讀的是一般製作手帳的 RecipeList,宇宙配方從來不會填它(同一段註解),
@@ -244,14 +239,10 @@ namespace Artisan.IPC
         /// 每一次輪詢都會把呼叫端整整卡住五秒。
         /// <para/>
         /// 🔑 輪詢型端點的正解是「框架執行緒推快照、端點只讀快照」：非阻塞、最多差一幀（約 16ms）。
-        /// 原本的寫法是從呼叫端的執行緒直接讀 <c>P.TM.NumQueuedTasks</c>，而那是
-        /// <c>LegacyTaskManager</c> 裸 <c>List</c> 的 <c>Count</c> ——「差一幀」與原本讀到的
-        /// 「某一瞬間的值」同級，不改變任何呼叫端的判斷。
         /// <para/>
         /// 📌 還沒發佈過任何一幀時是 <see langword="false"/>＝「不忙」，而那一刻 Artisan 確實
         /// 什麼都還沒做（快照的發佈點在 <c>Artisan.OnFrameworkUpdate</c> 最前面，
         /// 登出那一幀也會發佈，所以不會停在登出前的「忙」）。
-        /// 📌 呼叫端已經在框架執行緒上時仍然現算，行為與改動前逐字相同。
         /// </remarks>
         private static volatile bool busySnapshot;
 
@@ -303,14 +294,10 @@ namespace Artisan.IPC
         /// <remarks>
         /// 🔴 與 <c>Artisan.SetTemporarySolver</c> 的差別在於比對的東西:那一支比的是
         /// <c>Desc.Name</c>,而 <c>Name</c> 是<b>在地化後</b>的顯示字串,繁中介面下傳英文名恆為 false。
-        /// <br/>
         /// ⚠️ 一個定義可以提供多個 flavour(巨集解算器是每個巨集一個),型別全名只認得到定義,
         /// 所以這一支取的是<b>該定義目前第一個可用的 flavour</b>。要指定到特定巨集請用舊端點。
-        /// <br/>
         /// 📌 設定的是 <c>TempSolverType</c>／<c>TempSolverFlavour</c>,兩者都掛著
-        /// <c>[NonSerialized, JsonIgnore]</c> ⇒ <b>絕不會被寫進設定檔</b>;
-        /// <c>Artisan.ClearTemporaryRecipeSettings</c>／<c>Artisan.ClearAllTemporarySettings</c>
-        /// 與 Artisan 卸載都會把它清掉(走的是同一組欄位、同一支 ClearTemporaryOverrides)。
+        /// <c>[NonSerialized, JsonIgnore]</c> ⇒ <b>絕不會被寫進設定檔</b>。
         /// </remarks>
         private static bool SetTemporarySolverByType(uint recipeId, string solverTypeFullName)
             => IpcFrameworkGate.Get<bool>("Artisan.SetTemporarySolverByType", () => SetTemporarySolverByTypeCore(recipeId, solverTypeFullName), false);

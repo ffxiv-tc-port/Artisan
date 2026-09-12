@@ -133,18 +133,9 @@ namespace Artisan.IPC
 
             if (P.Config.ShowOnlyCraftable || onLoad)
             {
-                // 🔴 改動前這個迴圈是「每個配方一個 Task.Run」,而 CheckForIngredients 裡是
-                //    invManager->GetInventoryItemCount ——原生記憶體只能在遊戲主執行緒上讀。
-                //    台服 7.20 離線查表:Recipe 表 14,409 列、其中 12,802 列有材料、
-                //    合計 63,397 個(配方,材料)對 ⇒ 每次重建快取都是數萬次錯執行緒的原生讀取,
-                //    而 AccessViolationException 在 .NET Core 是 corrupted-state exception,
-                //    CheckForIngredients 裡那個 catch(以及任何 try/catch)完全攔不到 ——
-                //    失敗形式是整個遊戲崩掉,不是回錯的數字。
-                // 🔑 修法是把「讀數字」與「比大小」切開:相異材料只有 3,241 個,
+                // 🔑 修法是把「讀數字」與「比大小」切開:
                 //    在主執行緒上分批讀成純量快照(每批一次往返),之後整個比較迴圈留在背景、
-                //    一次原生記憶體都不碰。順帶把原生讀取次數從六萬多降到六千多。
-                // 📌 時序沒變:同樣是每個配方一個 Task.Run、同樣寫進 CraftableItems、
-                //    同樣在迴圈結束後才 CacheBuilt = true。
+                //    一次原生記憶體都不碰。
                 var prefetchRetainers = ATools && P.Config.ShowOnlyCraftableRetainers || onLoad;
 
                 // 先確保跳到背景執行緒:下面列材料 id 是 14,409 列的純資料表走訪,
@@ -206,15 +197,11 @@ namespace Artisan.IPC
         // 🔴 AllaganTools 的 ItemAdded／ItemRemoved 回呼跑在「對方外掛的執行緒」上
         //    （InventoryTools 的 InventoryMonitor／CharacterMonitor），而 Dalamud 的
         //    CallGateChannel.SendMessage 對訂閱者是裸 DynamicInvoke、完全不攔例外
-        //    （Dalamud/Plugin/Ipc/Internal/CallGateChannel.cs:98-107）⇒ 從這裡擲出去的例外
+        //    ⇒ 從這裡擲出去的例外
         //    會傳回 InventoryTools 自己的事件迴圈，把它後面的訂閱者一起打斷。
-        //
         //    🔑 所以回呼只做兩件事：Interlocked 計數 + try/catch 兜底。原本在這裡做的
         //    Svc.Condition 原生讀取、RetainerData 走訪（HasCachedRetainerData）與 ClearCache
         //    全部移到 DrainInventoryEvents()，由 Artisan.OnFrameworkUpdate 在框架執行緒排乾。
-        //    RetainerData 是裸 Dictionary：從對方的執行緒清它，正在走訪它的框架／繪製執行緒
-        //    會擲 InvalidOperationException，而那個例外會被 GetRetainerItemCount 的 catch
-        //    吞成「回 0」——失敗形式是數量靜默變成 0，不是報錯。
         private static int _pendingItemAdded;
         private static int _pendingItemRemoved;
 
@@ -319,9 +306,7 @@ namespace Artisan.IPC
         /// ①框架／繪製執行緒（材料表、<c>Framework.Update</c> 上的排乾與 TaskManager）；
         /// ②執行緒池：<c>CraftingListUI.cs</c> 與 <c>ListEditor.cs</c> 兩個「從僱員取回」按鈕都是
         /// <c>Task.Run(() =&gt; RestockFromRetainers(...))</c>，而它會呼叫 <c>GetRetainerItemCount</c>（寫）
-        /// 並走訪整份快取（讀）；
-        /// ③同樣是執行緒池：<c>LoadCache</c> 迴圈裡的 <c>await Task.Run(...)</c> 走 <c>CheckForIngredients</c>
-        /// → <c>GetRetainerItemCount</c>（寫）。
+        /// 並走訪整份快取（讀）。
         /// <para/>
         /// 裸 <c>Dictionary</c> 在這種形狀下的失敗形式<b>不是「拿到舊值」而是字典本身壞掉</b>，
         /// 而走訪中的並行改動會擲 <c>InvalidOperationException</c> —— 那個例外會被
@@ -572,12 +557,6 @@ namespace Artisan.IPC
         /// (→ <c>PlayerState.Instance()-&gt;ContentId</c>)與
         /// <c>RetainerManager.Instance()-&gt;GetRetainerBySortedIndex</c>／<c>retainer-&gt;Available</c>
         /// 全部是原生解參考,只能在遊戲主執行緒上讀。
-        /// 2026-09-12 實測有三條背景路徑會打到這裡:<c>LoadCache</c> 的
-        /// <c>Task.Run(CheckForIngredients)</c>、兩顆「從僱員取回」按鈕的
-        /// <c>Task.Run(RestockFromRetainers)</c>、以及 <c>ListEditor</c> 表格重建的
-        /// <c>Task.Run(GenerateTableAsync)</c> → <c>GetEffectiveCraftQuantity</c>。
-        /// <c>AccessViolationException</c> 在 .NET Core 是 corrupted-state exception,
-        /// 底下那個 <c>catch</c> 攔不到,使用者看到的是整個遊戲崩掉。
         /// <para/>
         /// 🔴 <b>慢速的 AllaganTools IPC 迴圈刻意留在呼叫端的執行緒上</b> ——
         /// 每個僱員 8~15 次 IPC、整份清單好幾秒,搬到主執行緒上會把遊戲卡住。
@@ -660,10 +639,6 @@ namespace Artisan.IPC
         /// "only ever do that from Framework.Update event"），而框架執行緒每一幀都在走訪它們。
         /// 並行插入的失敗形式<b>不是「拿到舊值」而是集合本身壞掉</b>，走訪中的並行改動則擲
         /// <c>InvalidOperationException</c>。
-        /// <para/>
-        /// 📌 目前兩個呼叫點（<c>IngredientTable</c> 的右鍵項、<c>CraftingListContextMenu</c> 的
-        /// 「從僱員取出」）本來就在遊戲主執行緒上 ⇒ 閘門就地執行，行為逐字不變、不多花一幀。
-        /// 這一層擋的是「哪天有人跟著清單版那兩個按鈕也包一層 <c>Task.Run</c>」。
         /// </remarks>
         public static void RestockFromRetainers(uint ItemId, int howManyToGet)
             => IpcFrameworkGate.Run("RetainerInfo.RestockFromRetainers(單品)", () => RestockSingleCore(ItemId, howManyToGet));
@@ -818,13 +793,6 @@ namespace Artisan.IPC
 
             Svc.Log.Debug($"Creating Fetch List");
 
-            // 🔴 這支的兩個呼叫點都是 Task.Run(CraftingListUI.cs 與 ListEditor.cs 的
-            //    「從僱員取回」按鈕)⇒ 整段跑在執行緒池上,而 NumberOfIngredient 與
-            //    GetRetainerItemCount 底下都是原生解參考(invManager->GetInventoryItemCount／
-            //    GetInventoryContainer／GetInventorySlot、RetainerManager.Instance()->
-            //    GetRetainerBySortedIndex、PlayerState->ContentId、Svc.Condition)。
-            //    原生記憶體只能在遊戲主執行緒上讀,而 AccessViolationException 在 .NET Core
-            //    是 corrupted-state exception,try/catch 攔不到 —— 失敗形式是整個遊戲崩掉。
             // 🔑 這裡的修法是「一次讀完」而不是「每個材料往返一次」:
             //    往返一次大約要等一幀,長清單的材料數以百計,逐個往返就是好幾秒的額外延遲。
             //    僱員名冊同理,解析一次之後傳給每一次 GetRetainerItemCount。

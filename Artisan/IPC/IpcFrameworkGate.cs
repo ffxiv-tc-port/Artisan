@@ -14,34 +14,7 @@ namespace Artisan.IPC
     /// <remarks>
     /// 🔴🔴 為什麼需要這一層：Dalamud 的 CallGate 是<b>直接方法呼叫</b>，
     /// 提供端的碼跑在<b>呼叫端的執行緒</b>上。別的外掛從自己的 <c>Task.Run</c>、
-    /// 背景工作或任何非 framework 執行緒打過來時，Artisan 這一側就會在那條執行緒上：
-    /// <list type="bullet">
-    /// <item>解遊戲的原生指標（<c>InventoryManager.Instance()-&gt;GetInventoryItemCount</c>、
-    /// <c>RaptureGearsetModule.Instance()-&gt;Entries</c>、<c>Operations.CloseQuickSynthWindow</c> 的 addon 指標）
-    /// —— 讀到一半被主執行緒換掉就是 AccessViolationException，而 AVE 在 .NET Core 是
-    /// corrupted-state exception，<c>try</c>/<c>catch</c> 攔不到，整個遊戲直接崩掉；</item>
-    /// <item>改 framework 獨佔的裸集合 —— <c>PreCrafting.Tasks</c> 是 <c>List&lt;...&gt;</c>
-    /// （<c>PreCrafting.cs:48</c>），<c>ECommons</c> 的 <c>TaskManager.Tasks</c>／<c>ImmediateTasks</c>
-    /// 也是裸 <c>List</c>（官方註解明寫 "only ever do that from Framework.Update event"），
-    /// <c>P.Config.RecipeConfigs</c> 是裸 <c>Dictionary</c>。並行插入時失敗形式<b>不是「拿到舊值」
-    /// 而是集合本身壞掉</b>，而 <c>foreach</c> 走訪時的並行改動會擲
-    /// <c>InvalidOperationException</c>；</item>
-    /// <item>呼叫 <c>DuoLog.*</c> —— 它每一級都無條件 <c>Svc.Chat.Print</c>，而本 pin 的
-    /// <c>ChatGui</c> 內部是<b>沒有任何同步</b>的 <c>Queue&lt;XivChatEntry&gt;</c>
-    /// （<c>Dalamud/Game/Gui/ChatGui.cs:43</c>）。</item>
-    /// </list>
-    /// 🔑 所以凡是「會碰到上面任何一項」的端點，一律把<b>整個方法體</b>交回主執行緒執行，
-    /// 不是只有第一行檢查 —— 這樣連下游 helper 也一起被覆蓋，不必逐一追。
-    /// <br/><br/>
-    /// 📌 <b>已經在主執行緒上呼叫時行為逐字不變</b>：直接就地執行，不配置 Task、
-    /// 不改變例外型別、不多花任何一幀。Artisan 自己的 UI（例如 <c>DebugTab</c> 呼叫
-    /// <c>IPC.CraftX</c>）與絕大多數消費端走的就是這條路。
-    /// <br/><br/>
-    /// ⚠️ 逾時的處置：等主執行緒最多 <see cref="TimeoutMs"/> 毫秒。逾時就回該端點的
-    /// 「不可用」值（false／null／空陣列），語意與「現在做不到」相同 —— 呼叫端本來就要
-    /// 處理這個狀態。同時用 <see cref="Interlocked"/> 把還沒開始跑的工作標成放棄，
-    /// 避免「呼叫端已經拿到 false 走人了，五秒後製作才真的開始」這種無人值守的形狀。
-    /// <br/><br/>
+    /// 背景工作或任何非 framework 執行緒打過來時，Artisan 這一側就會在那條執行緒上。
     /// 🔴 用 <c>RunOnFrameworkThread</c> 不是 <c>Framework.Run</c>：前者在已經是主執行緒時
     /// 就地執行，同步等它不會死結；後者一律 <c>StartNew</c>，同步等會死結。
     /// </remarks>
@@ -111,12 +84,9 @@ namespace Artisan.IPC
         /// <summary>
         /// 🔴 Dalamud 卸載期的閘門旁路：<c>Framework.RunOnFrameworkThread</c> 在
         /// <c>IsFrameworkUnloading</c> 為真時會<b>就地在呼叫端執行緒</b>執行 body
-        /// （<c>Dalamud/Game/Framework.cs</c> 的 <c>IsInFrameworkUpdateThread || IsFrameworkUnloading</c>），
         /// 等於這一層完全失效、原生記憶體存取退回未保護狀態。
         /// 🔑 所以卸載期一律直接回該端點原本的「不可用」值：那一瞬間功能失效可以接受
         /// （遊戲要關了），卸載期的 AccessViolationException 不行 —— 使用者看到的是崩潰。
-        /// 📌 已經在 framework 執行緒上時不受影響（那本來就是安全的執行緒），
-        /// 所以外掛自己在 <c>Dispose</c> 裡的同步呼叫行為逐字不變。
         /// </summary>
         private static bool IsUnloading(string endpoint)
         {

@@ -108,9 +108,6 @@ namespace Artisan
         /// <remarks>
         /// 📌 預設 <c>true</c>：TataruPraise 沒安裝時整條路是靜默 no-op（IPC 擲 <c>IpcNotReadyError</c>
         /// 被吃掉），而 TataruPraise 自己的總開關（預設關）與冷卻也還在，所以預設開不會讓任何人多聽到聲音。
-        /// ⚠️ 這是新加的欄位，既有使用者的設定檔裡沒有這個鍵 ⇒ 反序列化時保留欄位初始值，
-        /// 也就是既有使用者<b>拿得到</b>這個預設（與 ECommons EzConfig 的行為相反；Artisan 走的是
-        /// Dalamud 自己的 <c>SavePluginConfig</c>）。
         /// </remarks>
         public bool TataruPraiseFinishList = true;
 
@@ -118,8 +115,6 @@ namespace Artisan
         /// 耐力模式<b>自己跑到結束</b>時（份數做完、或素材用完），請 TataruPraise 說一句。
         /// </summary>
         /// <remarks>
-        /// 📌 走的是跟 <see cref="TataruPraiseFinishList"/> <b>同一個</b>「製作」情境，
-        /// 所以既有使用者本來就有語音，開了馬上就會響。
         /// 🔴 一輪最多說一句（去重在 <c>Artisan.IPC.TataruPraiseIPC</c> 的 <c>stopNoticeArmed</c>）。
         /// ⚠️ 使用者自己把耐力模式關掉、或取消一次製作，都<b>不算</b>「跑完了」，不會說。
         /// </remarks>
@@ -131,7 +126,6 @@ namespace Artisan
         /// <remarks>
         /// 📌 只在「不是你要的停止」時響：十秒內連續五次錯誤、遊戲回報這個製作不可能成功、
         /// 缺少要求的食物或藥水、連續五次開不了製作，以及你自己設定的「失敗就停／非 HQ 就停」真的觸發。
-        /// 正常做完走 <see cref="TataruPraiseFinishEndurance"/>——兩件事說同一句話等於沒講。
         /// 🔴 一輪最多說一句，而且清單模式與耐力模式共用同一個閘門。
         /// </remarks>
         public bool TataruPraiseCraftNeedHelp = true;
@@ -170,11 +164,8 @@ namespace Artisan
         /// a whole stack instead of only the amount still needed. Defaults to 2, which is the value the path
         /// shipped with as a constant: a full stack landing on top of an existing partial stack of the same
         /// item can split across two slots, so one spare slot is not always enough.
-        /// <para/>
-        /// Lower is more eager - fewer return trips to the retainer, but a nearly full bag can leave the
-        /// withdrawal short. Higher is more conservative. An unknown free-slot count (-1, e.g. while zoning)
-        /// always falls back to the exact amount no matter what this is set to, which is why the effective
-        /// value is clamped to at least 1 at the point of use.
+        /// An unknown free-slot count (-1, e.g. while zoning) always falls back to the exact amount no matter what
+        /// this is set to, which is why the effective value is clamped to at least 1 at the point of use.
         /// </summary>
         public int RestockFullStackFreeSlots = 2;
 
@@ -201,20 +192,8 @@ namespace Artisan
         /// 向 Universalis 查價時，每件道具最多取回幾筆掛售（0＝不限）。
         /// </summary>
         /// <remarks>
-        /// 📌 這個上限<b>不是</b>為了修 HTTP 504（那是 <c>entries=0</c> 修好的，見
-        /// <c>UniversalisClient</c> 檔頭的實測），而是為了讓回應大小有上界：一個 18 件的區域批次
-        /// 不限筆數時是 801 KB，取 100 筆是 482 KB。
-        /// 🔴 為什麼預設是 300 而不是更小：Universalis 回的 <c>listingsCount</c> 與
-        /// <c>unitsForSale</c> 算的是<b>這次回傳的那幾筆</b>，而「買 N 件最便宜的世界」也是從掛售
-        /// 明細算的 ⇒ 上限太低會讓畫面上的數字變小且變錯。2026-09-13 拿使用者實機 log 裡
-        /// 出現過的全部 90 件道具實測掛售深度：中位數 90 筆、p90 是 207 筆、最深 656 筆；
-        /// 上限 50 會截斷 73% 的道具、100 會截斷 44%、200 是 11%、<b>300 是 3.3%</b>。
-        /// 另外用同一份真實資料逐件重跑「最便宜世界」的計算：上限 100 有 11/90 個情境算出
-        /// 不同答案、上限 50 有 42/90 ⇒ 那兩個值都會改到使用者看得見的數字。
         /// ⚠️ 真的被截斷時 <c>MarketboardData.ListingsTruncated</c> 會標起來，畫面改顯示
         /// 下界而不是假裝那是總數。
-        /// ⚠️ 這是新加的欄位，既有使用者的設定檔裡沒有這個鍵 ⇒ 反序列化時保留欄位初始值，
-        /// 也就是既有使用者也拿得到這個預設（Artisan 走 Dalamud 自己的 <c>SavePluginConfig</c>）。
         /// </remarks>
         public int UniversalisListingsPerItem = 300;
 
@@ -222,9 +201,6 @@ namespace Artisan
         /// 同一個範圍＋同一件道具的查價結果快取多久（分鐘，0＝不快取）。
         /// </summary>
         /// <remarks>
-        /// 🔴 為什麼需要：重建一次製作清單就把整份材料重問一遍。實機上使用者一個遊戲期間
-        /// 重建了 32 次清單，那是 419 次區域請求的主要來源，而材料價格十分鐘內不會有
-        /// 有意義的變化。
         /// ⚠️ 只快取「問到了」的結果；失敗與「沒有市場資料」不入快取，
         /// 否則使用者再按一次「取得價格」會什麼都不做。
         /// </remarks>

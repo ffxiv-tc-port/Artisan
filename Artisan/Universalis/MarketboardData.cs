@@ -66,9 +66,7 @@ namespace Artisan.Universalis
         /// </summary>
         /// <remarks>
         /// 🔴 為什麼要記這一位：Universalis 的 <c>listingsCount</c> 與 <c>unitsForSale</c>
-        /// 算的是<b>這次回傳的那幾筆</b>，不是市場上的真實總數（2026-09-13 實測：道具 5532
-        /// 不帶參數是 219 筆／20096 件，帶 <c>listings=6</c> 就變成 6 筆／594 件）。
-        /// ⇒ 截斷時把那兩個數字原樣顯示等於<b>給使用者一個小很多的假數字</b>；
+        /// 算的是<b>這次回傳的那幾筆</b>，不是市場上的真實總數。
         /// 這一位讓畫面改成「≥N」，把「只知道下界」講出來。
         /// </remarks>
         public bool ListingsTruncated { get; set; }
@@ -79,9 +77,7 @@ namespace Artisan.Universalis
         /// <remarks>
         /// 🔴 必須複製，不可以把同一個實例交給兩個呼叫端：
         /// <c>IngredientTable.CheapestServerColumn.ToName</c> 會<b>就地改寫</b>
-        /// <see cref="LowestWorld"/>（寫入「這一列所需數量下最便宜的世界」），
-        /// 而那個值依「所需數量」而定。共用實例會讓一個消費端看到另一個消費端算出來的世界，
-        /// 失敗形式是畫面上的世界名悄悄變成別人的。
+        /// <see cref="LowestWorld"/>（寫入「這一列所需數量下最便宜的世界」）。
         /// </remarks>
         public MarketboardData Clone() => new()
         {

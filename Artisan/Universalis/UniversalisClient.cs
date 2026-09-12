@@ -24,26 +24,11 @@ namespace Artisan.Universalis
         // on top of that). A crafting list routinely holds 40+ ingredients, so requests are
         // coalesced into a few multi-item requests, issued one at a time with a minimum gap, and
         // retried with a backoff when the service says it is busy.
-        //
-        // 🔴 2026-09-13：區域範圍的批次請求在實機上長期吐 HTTP 504。真因**不是**批次太大，
-        //    而是 `entries` 參數 —— 不帶它時 Universalis 預設要算「最近 5 筆成交紀錄」，
-        //    而那是把整個區域所有世界的成交歷史合併起來算，區域範圍下穩定超過它自己閘道的
-        //    10 秒預算。實測同一個 18 件的區域批次：
-        //      不帶參數                 → 504（10.7 秒，連測三次都一樣）
-        //      ?listings=8（只縮掛售）   → 504（10.7 秒，**縮掛售完全沒用**）
-        //      ?entries=0（只關成交歷史）→ 200（1.25 秒，801 KB）
-        //      ?listings=8&entries=0    → 200（0.78 秒，72 KB）
-        //    ⇒ `entries=0` 是修好 504 的那一個參數；`listings` 只管回應大小。
-        //    這也解釋了為什麼舊的「原批重送三次」從來沒成功過：同一個大請求的歷史計算
-        //    每次都一樣慢。
         private const int MaxItemsPerRequestWorld = 20;
 
         // 區域／資料中心範圍一批放 10 件（世界範圍仍放 20）。
         // 理由：`entries=0` 之後區域請求已經回到 1 秒級，但區域查詢在 Universalis 那端仍然要
-        // 跨世界合併掛售，成本本質上高於單一世界；而實機證據顯示小批次即使真的碰到 504 也能
-        // 靠重試救回來（n=6、n=12 各在第一次重試後成功），大批次三次重試全滅
-        // （n=13／14／19／20 共 9 個批次直接放棄）。10 是「單批仍然省請求數」與
-        // 「碰到問題時還救得回來」之間的折衷。
+        // 跨世界合併掛售，成本本質上高於單一世界。
         private const int MaxItemsPerRequestRegion = 10;
 
         // 切批時的下限：批次大於這個數才對半切，否則走一般的重試退避。
@@ -56,9 +41,7 @@ namespace Artisan.Universalis
         private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10)];
 
         // 逾時形狀的失敗只重試**一次**,其餘(429／其他 5xx)照舊退避三次。
-        // 🔴 這個差別是實機證據直接給的:504 的重試紀錄裡,n=6 與 n=12 都在**第一次**重試後成功,
-        //    而 n=13／14／19／20 三次重試全滅 —— 第二、三次重試對閘道逾時沒有救回任何一批,
-        //    只是每次白等 10 秒(單一批次因此浪費 30 秒)。切批＋退到 aggregated 比多等兩次有用。
+        // 切批＋退到 aggregated 比多等兩次有用。
         private static readonly TimeSpan[] TimeoutRetryDelays = [TimeSpan.FromSeconds(2)];
 
         private static readonly TimeSpan MaxServerRetryAfter = TimeSpan.FromSeconds(60);
@@ -92,9 +75,6 @@ namespace Artisan.Universalis
         /// 已經問到答案的道具，在 TTL 內不再向 Universalis 重問。
         /// </summary>
         /// <remarks>
-        /// 🔴 為什麼需要：重建一次製作清單就把整份材料重問一遍，而實機上使用者一個 session
-        /// 重建了 32 次清單 —— 那是 419 次區域請求的主要來源。價格十分鐘內不會有意義的變化，
-        /// 所以同一個範圍＋同一件道具在 TTL 內直接回快取。
         /// ⚠️ 只快取「問到了」的結果；失敗與「沒有市場資料」不入快取，
         /// 否則使用者再按一次「取得價格」會什麼都不做。
         /// </remarks>
@@ -242,10 +222,9 @@ namespace Artisan.Universalis
         /// 這次查詢要附的查詢字串。
         /// </summary>
         /// <remarks>
-        /// 🔴 <c>entries=0</c> 是無條件帶的 —— 它就是 504 的解法（見檔頭的實測）。
+        /// 🔴 <c>entries=0</c> 是無條件帶的 —— 它就是 504 的解法。
         /// 它唯一的代價是 <c>averagePriceNQ/HQ</c>（那兩個是從回傳的成交紀錄算出來的）會變成 0，
         /// 所以解析端會把它們寫成 <c>null</c> 而不是 0；把「不知道」寫成 0 會被讀成「賣過 0 gil」。
-        /// <c>listings=N</c> 只管回應大小，N 來自設定（0＝不限）。
         /// </remarks>
         private static string BuildQuery(out bool historySuppressed, out int listingsCap)
         {
@@ -411,10 +390,8 @@ namespace Artisan.Universalis
         /// 送一批，必要時對半切、最後退到 aggregated 端點。
         /// </summary>
         /// <remarks>
-        /// 🔑 三層退路，每一層解決不同的症狀：
         /// ①<c>entries=0</c>（在 <see cref="BuildQuery"/>）－ 讓 504 一開始就不要發生；
-        /// ②對半切 － 萬一還是逾時，小請求比「同一個大請求重送三次」有機會（實機證據：
-        ///   n=6／n=12 第一次重試就成功，n=13/14/19/20 三次重試全滅）；
+        /// ②對半切 － 萬一還是逾時，小請求比「同一個大請求重送三次」有機會；
         /// ③aggregated 端點 － 連小批次都不行時，用一個極小的回應至少拿到最低價與世界。
         /// </remarks>
         private async Task<Dictionary<ulong, MarketboardData?>?> RequestBatchAsync(string scope, List<ulong> itemIds)
@@ -750,12 +727,6 @@ namespace Artisan.Universalis
         /// 最後的退路：<c>/api/v2/aggregated/{scope}/{ids}</c>。
         /// </summary>
         /// <remarks>
-        /// 📌 這個端點的回應極小（2026-09-13 實測：區域範圍 4 件共 1505 bytes，0.77 秒），
-        /// 因為它不回掛售明細，只回每件的 <c>minListing</c>／<c>recentPurchase</c>／
-        /// <c>averageSalePrice</c>／<c>dailySaleVelocity</c>，各自再分 <c>world</c>／<c>dc</c>／
-        /// <c>region</c> 三種範圍。
-        /// ⚠️ 它只認得自己那份「可上市清單」裡的道具，其餘放進 <c>failedItems</c>
-        /// （實測道具 5730 就是）。這裡當退路用，<c>failedItems</c> 直接算「沒有資料」。
         /// 🔴 回來的東西<b>不包含掛售明細</b>，所以「買 N 件要多少錢」算不出來 ——
         /// 合成的那一筆掛售刻意只放 1 件，讓畫面上的 Qty 顯示 1，使用者看得出覆蓋不足；
         /// 另外用 <see cref="MarketboardSource.Aggregated"/> 讓 UI 標「約略」。

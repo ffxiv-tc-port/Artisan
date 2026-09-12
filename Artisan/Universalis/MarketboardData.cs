@@ -61,6 +61,13 @@ namespace Artisan.Universalis
         /// <summary>這份資料是完整查詢還是降級查詢來的。</summary>
         public MarketboardSource Source { get; set; } = MarketboardSource.Unknown;
 
+        /// <summary>這份資料可不可以拿去和「自己做」「NPC 商店」比價。</summary>
+        /// <remarks>
+        /// 🔴 降級路徑只知道「一件的最低價」（合成的掛售數量恆為 1）⇒ 拿它算「買 N 件」
+        /// 會得到一件的價，市場選項幾乎必然虛假勝出。比價一律問這裡，不要各自判 Source。
+        /// </remarks>
+        public bool IsUsableForComparison => Source == MarketboardSource.Listings && AllListings.Count > 0;
+
         /// <summary>
         /// 掛售清單被 <c>listings=N</c> 參數截斷了。
         /// </summary>

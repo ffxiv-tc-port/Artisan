@@ -451,7 +451,11 @@ namespace Artisan.UI.Tables
                 {
                     var listing = CheapestListings[item.Data.RowId];
 
-                    if (MarketboardPricing.TryGetNpcPrice(item.Data, out var npcUnitPrice) && (double)npcUnitPrice * item.Remaining < listing.Cost)
+                    // 契約:市價不可比時勝負不落在這一格 —— 不比 NPC、只畫約略價。
+                    //    NPC 那個精確價改由 DrawColumn 的 tooltip 講。
+                    if ((item.MarketboardData?.IsUsableForComparison ?? false)
+                        && MarketboardPricing.TryGetNpcPrice(item.Data, out var npcUnitPrice)
+                        && (double)npcUnitPrice * item.Remaining < listing.Cost)
                         return "NPC Shop - Cost ??, Qty unlimited".Loc(npcUnitPrice.ToString("N0"));
 
                     var text = "?? - Cost ??, Qty ??".Loc(listing.World, listing.Cost.ToString("N0"), listing.Qty);
@@ -485,6 +489,8 @@ namespace Artisan.UI.Tables
                         ImGui.BeginTooltip();
                         if (degraded)
                             ImGui.Text("Universalis timed out on the full listings, so this is the lowest unit price from its summary endpoint - the quantity shown is 1 unit, not the amount you need.".Loc());
+                        if (degraded && MarketboardPricing.TryGetNpcPrice(item.Data, out var npcUnitPrice))
+                            ImGui.Text("An NPC sells it for ?? gil each, and that price is exact.".Loc(npcUnitPrice.ToString("N0")));
                         if (canTravel)
                             ImGui.Text("Click to travel to ??.".Loc(CheapestListings[item.Data.RowId].World));
                         ImGui.EndTooltip();

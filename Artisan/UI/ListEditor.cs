@@ -558,17 +558,29 @@ internal class ListEditor : Window, IDisposable
                         if (degraded)
                             label = "?? (approx.)".Loc(label);
 
-                        if (hasMaterialCost && materialCost < bestCost)
+                        // 契約:市價不可比時它不參加勝負比較,只並列「沒有市場價時本來就會顯示的
+                        //    那個選項」——與下面 lookup.FetchFailed 那條分支同一套優先序。
+                        if (!lookup.Data.IsUsableForComparison)
                         {
-                            bestCost = materialCost;
-                            label = "Craft Yourself".Loc();
-                            isSelfCraft = true;
+                            if (hasNpc)
+                                label = "?? (or NPC shop: ?? each)".Loc(label, $"{npcUnitPrice:N0}");
+                            else if (hasMaterialCost)
+                                label = "?? (or craft yourself)".Loc(label);
                         }
-
-                        if (hasNpc && (double)npcUnitPrice * required < bestCost)
+                        else
                         {
-                            label = "NPC Shop - Cost ??, Qty unlimited".Loc($"{npcUnitPrice:N0}");
-                            isSelfCraft = false;
+                            if (hasMaterialCost && materialCost < bestCost)
+                            {
+                                bestCost = materialCost;
+                                label = "Craft Yourself".Loc();
+                                isSelfCraft = true;
+                            }
+
+                            if (hasNpc && (double)npcUnitPrice * required < bestCost)
+                            {
+                                label = "NPC Shop - Cost ??, Qty unlimited".Loc($"{npcUnitPrice:N0}");
+                                isSelfCraft = false;
+                            }
                         }
 
                         ImGui.Text(label);
@@ -623,7 +635,9 @@ internal class ListEditor : Window, IDisposable
             var neededQty = ing.Amount * craftQuantity - (matchingIngredient?.Inventory ?? 0);
             if (neededQty <= 0) continue;
 
-            var hasMarketPrice = matchingIngredient?.MarketboardData != null && matchingIngredient.MarketboardData.AllListings.Count > 0;
+            // 降級資料視同沒有市場價（走下面那條 return false）：它只知道一件的價，
+            // 加進總和會讓「自己做」的成本被低估而虛假勝出。
+            var hasMarketPrice = matchingIngredient?.MarketboardData?.IsUsableForComparison ?? false;
             var marketCost = hasMarketPrice ? MarketboardPricing.GetCheapestWorldCost(matchingIngredient!.MarketboardData!, neededQty).Cost : (double?)null;
 
             if (MarketboardPricing.TryGetNpcPrice(ing.Item, out var npcUnit))

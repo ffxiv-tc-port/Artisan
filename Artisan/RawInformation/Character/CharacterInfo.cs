@@ -57,8 +57,21 @@ namespace Artisan.RawInformation.Character
         /// <br/><br/>
         /// 📌 <c>GetRow</c> 改成 <c>GetRowOrDefault</c>:前者對表上沒有的 id 會擲
         /// <see cref="ArgumentOutOfRangeException"/>,那同樣會炸掉呼叫端。
+        /// <br/><br/>
+        /// 🔴 <b>2026-09-12</b>:<c>PlayerState.Instance()-&gt;ClassJobLevels</c> 是原生解參考,
+        /// 只能在遊戲主執行緒上讀 —— 不是主執行緒時讀到一半被換掉就是
+        /// <c>AccessViolationException</c>,而 AVE 在 .NET Core 是 corrupted-state exception,
+        /// <c>try</c>/<c>catch</c> 攔不到。所以整個方法體交回主執行緒
+        /// (<see cref="global::Artisan.IPC.IpcFrameworkGate"/>:已經在主執行緒上時<b>就地執行</b>,
+        /// 不配置 Task、不多花一幀 ⇒ <c>Crafting</c> 狀態機與 <c>RepairManager</c>
+        /// 這兩個既有呼叫點行為逐字不變)。
+        /// 取不到時回 <c>0</c> —— 與本方法本來的「未知 ⇒ 0」契約同值。
         /// </remarks>
-        public static unsafe int JobLevel(Job job)
+        public static int JobLevel(Job job)
+            => global::Artisan.IPC.IpcFrameworkGate.Get("CharacterInfo.JobLevel", () => JobLevelCore(job), 0);
+
+        /// <summary><b>只能在遊戲主執行緒上呼叫</b>,由 <see cref="JobLevel"/> 那一層的閘門保證。</summary>
+        private static unsafe int JobLevelCore(Job job)
         {
             int expArrayIndex = Svc.Data.GetExcelSheet<ClassJob>()?.GetRowOrDefault((uint)job)?.ExpArrayIndex ?? -1;
 

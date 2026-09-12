@@ -133,12 +133,51 @@ namespace Artisan.IPC
 
             if (P.Config.ShowOnlyCraftable || onLoad)
             {
+                // 🔴 改動前這個迴圈是「每個配方一個 Task.Run」,而 CheckForIngredients 裡是
+                //    invManager->GetInventoryItemCount ——原生記憶體只能在遊戲主執行緒上讀。
+                //    台服 7.20 離線查表:Recipe 表 14,409 列、其中 12,802 列有材料、
+                //    合計 63,397 個(配方,材料)對 ⇒ 每次重建快取都是數萬次錯執行緒的原生讀取,
+                //    而 AccessViolationException 在 .NET Core 是 corrupted-state exception,
+                //    CheckForIngredients 裡那個 catch(以及任何 try/catch)完全攔不到 ——
+                //    失敗形式是整個遊戲崩掉,不是回錯的數字。
+                // 🔑 修法是把「讀數字」與「比大小」切開:相異材料只有 3,241 個,
+                //    在主執行緒上分批讀成純量快照(每批一次往返),之後整個比較迴圈留在背景、
+                //    一次原生記憶體都不碰。順帶把原生讀取次數從六萬多降到六千多。
+                // 📌 時序沒變:同樣是每個配方一個 Task.Run、同樣寫進 CraftableItems、
+                //    同樣在迴圈結束後才 CacheBuilt = true。
+                var prefetchRetainers = ATools && P.Config.ShowOnlyCraftableRetainers || onLoad;
+
+                // 先確保跳到背景執行緒:下面列材料 id 是 14,409 列的純資料表走訪,
+                // 而快照本身要在「不是主執行緒」時才會分批往返 —— 在主執行緒上呼叫的話
+                // 閘門會就地執行,六千多次原生讀取就全擠進同一格畫面。
+                var ingredientIds = await Task.Run(() =>
+                {
+                    var ids = new List<uint>();
+                    foreach (var r in LuminaSheets.RecipeSheet.Values)
+                    {
+                        foreach (var ing in r.Ingredients())
+                        {
+                            if (ing.Item.RowId != 0 && ing.Amount > 0)
+                                ids.Add(ing.Item.RowId);
+                        }
+                    }
+                    return ids;
+                });
+
+                var inventorySnapshot = await Task.Run(() => CraftingListUI.SnapshotCraftableCheckCounts(ingredientIds));
+                var roster = prefetchRetainers ? await Task.Run(ReadRetainerRoster) : null;
+
+                Svc.Log.Information($"[Artisan][僱員快取] 材料持有量快照完成:{inventorySnapshot.Count} 個相異材料" +
+                                    $"(來自 {ingredientIds.Count} 個配方材料項);僱員名冊 " +
+                                    $"{(prefetchRetainers ? roster is null ? "不可用" : $"{roster.RetainerIds.Length} 位" : "本輪不需要")}。" +
+                                    $"原生讀取全部在遊戲主執行緒上完成,比對迴圈在背景。");
+
                 foreach (var recipe in LuminaSheets.RecipeSheet.Values)
                 {
                     if (ATools && P.Config.ShowOnlyCraftableRetainers || onLoad)
-                        await Task.Run(() => Safe(() => CraftingListUI.CheckForIngredients(recipe, false, true)));
+                        await Task.Run(() => Safe(() => CraftingListUI.CheckForIngredients(recipe, false, true, inventorySnapshot, roster)));
                     else
-                        await Task.Run(() => Safe(() => CraftingListUI.CheckForIngredients(recipe, false, false)));
+                        await Task.Run(() => Safe(() => CraftingListUI.CheckForIngredients(recipe, false, false, inventorySnapshot)));
                 }
             }
 
@@ -379,112 +418,227 @@ namespace Artisan.IPC
             }
         }
 
-        public static unsafe int GetRetainerItemCount(uint ItemId, bool tryCache = true, bool hqOnly = false)
+        /// <summary>
+        /// 十個僱員欄位解析完之後,「這一輪要去問哪些僱員」的純量快照。
+        /// </summary>
+        /// <remarks>
+        /// 🔑 這是把原生讀取與慢速 IPC 切開的那條線:解析名冊要碰
+        /// <c>RetainerManager.Instance()-&gt;GetRetainerBySortedIndex</c>、<c>retainer-&gt;Available</c>、
+        /// <c>Svc.PlayerState.ContentId</c>、<c>Svc.Condition</c> —— 全部只能在遊戲主執行緒上;
+        /// 而拿到 id 之後的 <c>AllaganTools</c> IPC 是<b>慢速的受管理呼叫</b>
+        /// (每個僱員 8~15 次、整份清單會跑上好幾秒),**不能**搬到主執行緒上做,
+        /// 那會把遊戲整個卡住。
+        /// </remarks>
+        public sealed class RetainerRoster
+        {
+            /// <summary>要查詢的僱員 id,順序與遊戲顯示順序一致;已扣掉「不可用」的那些。</summary>
+            public ulong[] RetainerIds { get; }
+
+            internal RetainerRoster(ulong[] retainerIds) => RetainerIds = retainerIds;
+        }
+
+        private const string RosterEndpoint = "RetainerInfo.GetRetainerItemCount(僱員名冊)";
+
+        /// <summary>
+        /// 在遊戲主執行緒上解析一次僱員名冊。<b>取不到時回 <c>null</c></b>
+        /// (沒登入／免費體驗／Dalamud 卸載期／等主執行緒逾時)。
+        /// </summary>
+        /// <remarks>
+        /// 📌 給「同一輪要問成千上萬個道具」的呼叫端用(<see cref="LoadCache"/>、
+        /// <see cref="RestockFromRetainers(NewCraftingList)"/>):解析一次之後把結果傳進
+        /// <see cref="GetRetainerItemCount"/>,整輪就只付一次主執行緒往返。
+        /// 🔴 不傳的話 <see cref="GetRetainerItemCount"/> 會自己解一次 —— 那是正確的,
+        /// 但從背景執行緒呼叫時<b>每個道具要等一幀</b>,三千多個道具就是一分鐘級的延遲。
+        /// </remarks>
+        public static RetainerRoster? ReadRetainerRoster()
+            => IpcFrameworkGate.Get<RetainerRoster?>(RosterEndpoint, ReadRetainerRosterCore, null);
+
+        /// <summary><b>只能在遊戲主執行緒上呼叫</b>,由 <see cref="ReadRetainerRoster"/> 那一層的閘門保證。</summary>
+        private static unsafe RetainerRoster? ReadRetainerRosterCore()
+        {
+            if (!Svc.ClientState.IsLoggedIn || Svc.Condition[ConditionFlag.OnFreeTrial]) return null;
+
+            // Resolved once instead of rebuilding the same filtered array inside all ten iterations
+            // below - this method is called once per material when a list is restocked, so the old
+            // Where().Select().ToArray()[i] allocated ten arrays per material for no reason.
+            var configuredRetainerIds = P.Config.RetainerIDs
+                .Where(x => x.Value == Svc.PlayerState.ContentId)
+                .Select(x => x.Key)
+                .ToArray();
+
+            // GetRetainerBySortedIndex walks the display-order table at +0x2D0 and returns null
+            // whenever that table holds a value >= 10 - which it does before the retainer list has
+            // finished loading, and after a character switch leaves stale entries behind. The
+            // surrounding catch cannot save us here: dereferencing null is an AccessViolation, a
+            // corrupted-state exception that try/catch does not intercept in .NET Core.
+            var retainerManager = RetainerManager.Instance();
+            var wanted = new List<ulong>(10);
+
+            for (int i = 0; i < 10; i++)
+            {
+                ulong retainerId = 0;
+                var retainer = retainerManager is null ? null : retainerManager->GetRetainerBySortedIndex((uint)i);
+
+                if (configuredRetainerIds.Length > i)
+                {
+                    retainerId = configuredRetainerIds[i];
+                }
+                else if (retainer is not null && retainer->Available)
+                {
+                    retainerId = retainer->RetainerId;
+                }
+
+                if (retainer is not null)
+                {
+                    if (retainer->RetainerId > 0 && !P.Config.RetainerIDs.Any(x => x.Key == retainer->RetainerId && x.Value == Svc.PlayerState.ContentId))
+                    {
+                        if (retainer->Available)
+                        {
+                            P.Config.RetainerIDs.Add(retainer->RetainerId, Svc.PlayerState.ContentId);
+                            P.Config.Save();
+                        }
+                    }
+
+                    if (!retainer->Available)
+                    {
+                        if (retainer->RetainerId > 0 && !P.Config.UnavailableRetainerIDs.Contains(retainer->RetainerId))
+                        {
+                            P.Config.UnavailableRetainerIDs.Add(retainer->RetainerId);
+                            P.Config.Save();
+                        }
+                    }
+                    else
+                    {
+                        if (P.Config.UnavailableRetainerIDs.Contains(retainer->RetainerId))
+                        {
+                            P.Config.UnavailableRetainerIDs.RemoveWhere(x => x == retainer->RetainerId);
+                            P.Config.Save();
+                        }
+                    }
+                }
+
+                if (retainerId > 0 && !P.Config.UnavailableRetainerIDs.Any(x => x == retainerId))
+                    wanted.Add(retainerId);
+            }
+
+            return new RetainerRoster(wanted.ToArray());
+        }
+
+        /// <summary>
+        /// 主執行緒上要一次做完的前置:可用性判斷 → 快取快捷路徑 → 名冊解析。
+        /// 三件事的<b>順序與改動前逐字相同</b>,所以「沒登入就回 0」仍然發生在快取快捷路徑之前。
+        /// </summary>
+        private readonly struct CountPrologue
+        {
+            public readonly bool Unavailable;
+            public readonly int? Cached;
+            public readonly RetainerRoster? Roster;
+
+            private CountPrologue(bool unavailable, int? cached, RetainerRoster? roster)
+            {
+                Unavailable = unavailable;
+                Cached = cached;
+                Roster = roster;
+            }
+
+            public static CountPrologue NotAvailable => new(true, null, null);
+            public static CountPrologue FromCache(int value) => new(false, value, null);
+            public static CountPrologue FromRoster(RetainerRoster roster) => new(false, null, roster);
+        }
+
+        private const string PrologueEndpoint = "RetainerInfo.GetRetainerItemCount(前置)";
+
+        private static int SumCachedRetainerItem(uint ItemId, bool hqOnly)
+        {
+            if (hqOnly)
+            {
+                return (int)RetainerData.Values.SelectMany(x => x.Values).Where(x => x.ItemId == ItemId).Sum(x => x.HQQuantity);
+            }
+
+            return (int)RetainerData.SelectMany(x => x.Value).Where(x => x.Key == ItemId).Sum(x => x.Value.Quantity);
+        }
+
+        /// <summary>
+        /// 這個道具在所有僱員身上的數量。
+        /// </summary>
+        /// <param name="roster">
+        /// 呼叫端已經在主執行緒上解析好的僱員名冊(<see cref="ReadRetainerRoster"/>)。
+        /// 不給的話這支自己解一次 —— 正確,但從背景執行緒呼叫時<b>每次要等一幀</b>。
+        /// </param>
+        /// <remarks>
+        /// 🔴 為什麼要拆:改動前整支都在呼叫端的執行緒上跑,而
+        /// <c>Svc.ClientState.IsLoggedIn</c>(→ <c>AgentLobby.Instance()-&gt;IsLoggedIn</c>)、
+        /// <c>Svc.Condition[...]</c>、<c>Svc.PlayerState.ContentId</c>
+        /// (→ <c>PlayerState.Instance()-&gt;ContentId</c>)與
+        /// <c>RetainerManager.Instance()-&gt;GetRetainerBySortedIndex</c>／<c>retainer-&gt;Available</c>
+        /// 全部是原生解參考,只能在遊戲主執行緒上讀。
+        /// 2026-09-12 實測有三條背景路徑會打到這裡:<c>LoadCache</c> 的
+        /// <c>Task.Run(CheckForIngredients)</c>、兩顆「從僱員取回」按鈕的
+        /// <c>Task.Run(RestockFromRetainers)</c>、以及 <c>ListEditor</c> 表格重建的
+        /// <c>Task.Run(GenerateTableAsync)</c> → <c>GetEffectiveCraftQuantity</c>。
+        /// <c>AccessViolationException</c> 在 .NET Core 是 corrupted-state exception,
+        /// 底下那個 <c>catch</c> 攔不到,使用者看到的是整個遊戲崩掉。
+        /// <para/>
+        /// 🔴 <b>慢速的 AllaganTools IPC 迴圈刻意留在呼叫端的執行緒上</b> ——
+        /// 每個僱員 8~15 次 IPC、整份清單好幾秒,搬到主執行緒上會把遊戲卡住。
+        /// 它碰的 <c>RetainerData</c> 是 <c>ConcurrentDictionary</c>,本來就設計成跨執行緒共用。
+        /// <para/>
+        /// ⚠️ <b>唯一的語意差</b>:呼叫端傳 <paramref name="roster"/> 時,可用性
+        /// (登入中／非免費體驗)是「該輪解析名冊的那一刻」判斷的,不再逐個道具重判。
+        /// 那是把三千多次原生讀取收斂成一次的必然代價;若掃描途中登出,
+        /// <c>Svc.ClientState.Logout</c> 會清掉 <c>RetainerData</c>,而 AllaganTools
+        /// 對過期的僱員 id 本來就回 0 ⇒ 結果方向仍然是「少報」。
+        /// </remarks>
+        public static int GetRetainerItemCount(uint ItemId, bool tryCache = true, bool hqOnly = false, RetainerRoster? roster = null)
         {
 
             if (ATools)
             {
-                if (!Svc.ClientState.IsLoggedIn || Svc.Condition[ConditionFlag.OnFreeTrial]) return 0;
-
                 try
                 {
-                    if (tryCache)
+                    if (roster is null)
                     {
-                        if (RetainerData.SelectMany(x => x.Value).Any(x => x.Key == ItemId))
+                        var prologue = IpcFrameworkGate.Get(PrologueEndpoint, () =>
                         {
-                            if (hqOnly)
-                            {
-                                return (int)RetainerData.Values.SelectMany(x => x.Values).Where(x => x.ItemId == ItemId).Sum(x => x.HQQuantity);
-                            }
+                            if (!Svc.ClientState.IsLoggedIn || Svc.Condition[ConditionFlag.OnFreeTrial])
+                                return CountPrologue.NotAvailable;
 
-                            return (int)RetainerData.Values.SelectMany(x => x.Values).Where(x => x.ItemId == ItemId).Sum(x => x.Quantity);
+                            if (tryCache && RetainerData.SelectMany(x => x.Value).Any(x => x.Key == ItemId))
+                                return CountPrologue.FromCache(SumCachedRetainerItem(ItemId, hqOnly));
+
+                            var resolved = ReadRetainerRosterCore();
+                            return resolved is null ? CountPrologue.NotAvailable : CountPrologue.FromRoster(resolved);
+                        }, CountPrologue.NotAvailable);
+
+                        if (prologue.Unavailable) return 0;
+                        if (prologue.Cached is int cached) return cached;
+                        roster = prologue.Roster!;
+                    }
+                    else if (tryCache && RetainerData.SelectMany(x => x.Value).Any(x => x.Key == ItemId))
+                    {
+                        return SumCachedRetainerItem(ItemId, hqOnly);
+                    }
+
+                    foreach (var retainerId in roster.RetainerIds)
+                    {
+                        // 改動前這裡是「有這個僱員」與「沒有這個僱員」兩段一模一樣的複製貼上，
+                        // 而 else 那段先 TryAdd 再用索引子取回 —— 中間若有人 Clear() 就是
+                        // KeyNotFoundException。GetOrAdd 一次搞定，兩段合一，結果逐字相同。
+                        var ret = RetainerData.GetOrAdd(retainerId, static _ => new ConcurrentDictionary<uint, ItemInfo>());
+                        if (ret.TryGetValue(ItemId, out var item))
+                        {
+                            // ⚠️ 只更新 Quantity、沿用舊的 HQQuantity 是改動前就有的行為
+                            //（原本是 item.Quantity = ... 而完全沒碰 item.HQQuantity），逐字保留：
+                            // 改成一併更新會多送一輪 AllaganTools IPC，也不是這次要改的東西。
+                            ret[ItemId] = new ItemInfo(ItemId, GetRetainerInventoryItem(ItemId, retainerId), item.HQQuantity);
+                        }
+                        else
+                        {
+                            ret.TryAdd(ItemId, new ItemInfo(ItemId, GetRetainerInventoryItem(ItemId, retainerId), GetRetainerInventoryItem(ItemId, retainerId, true)));
                         }
                     }
 
-                    // Resolved once instead of rebuilding the same filtered array inside all ten iterations
-                    // below - this method is called once per material when a list is restocked, so the old
-                    // Where().Select().ToArray()[i] allocated ten arrays per material for no reason.
-                    var configuredRetainerIds = P.Config.RetainerIDs
-                        .Where(x => x.Value == Svc.PlayerState.ContentId)
-                        .Select(x => x.Key)
-                        .ToArray();
-
-                    // GetRetainerBySortedIndex walks the display-order table at +0x2D0 and returns null
-                    // whenever that table holds a value >= 10 - which it does before the retainer list has
-                    // finished loading, and after a character switch leaves stale entries behind. The
-                    // surrounding catch cannot save us here: dereferencing null is an AccessViolation, a
-                    // corrupted-state exception that try/catch does not intercept in .NET Core.
-                    var retainerManager = RetainerManager.Instance();
-
-                    for (int i = 0; i < 10; i++)
-                    {
-                        ulong retainerId = 0;
-                        var retainer = retainerManager is null ? null : retainerManager->GetRetainerBySortedIndex((uint)i);
-
-                        if (configuredRetainerIds.Length > i)
-                        {
-                            retainerId = configuredRetainerIds[i];
-                        }
-                        else if (retainer is not null && retainer->Available)
-                        {
-                            retainerId = retainer->RetainerId;
-                        }
-
-                        if (retainer is not null)
-                        {
-                            if (retainer->RetainerId > 0 && !P.Config.RetainerIDs.Any(x => x.Key == retainer->RetainerId && x.Value == Svc.PlayerState.ContentId))
-                            {
-                                if (retainer->Available)
-                                {
-                                    P.Config.RetainerIDs.Add(retainer->RetainerId, Svc.PlayerState.ContentId);
-                                    P.Config.Save();
-                                }
-                            }
-
-                            if (!retainer->Available)
-                            {
-                                if (retainer->RetainerId > 0 && !P.Config.UnavailableRetainerIDs.Contains(retainer->RetainerId))
-                                {
-                                    P.Config.UnavailableRetainerIDs.Add(retainer->RetainerId);
-                                    P.Config.Save();
-                                }
-                            }
-                            else
-                            {
-                                if (P.Config.UnavailableRetainerIDs.Contains(retainer->RetainerId))
-                                {
-                                    P.Config.UnavailableRetainerIDs.RemoveWhere(x => x == retainer->RetainerId);
-                                    P.Config.Save();
-                                }
-                            }
-                        }
-
-                        if (retainerId > 0 && !P.Config.UnavailableRetainerIDs.Any(x => x == retainerId))
-                        {
-                            // 改動前這裡是「有這個僱員」與「沒有這個僱員」兩段一模一樣的複製貼上，
-                            // 而 else 那段先 TryAdd 再用索引子取回 —— 中間若有人 Clear() 就是
-                            // KeyNotFoundException。GetOrAdd 一次搞定，兩段合一，結果逐字相同。
-                            var ret = RetainerData.GetOrAdd(retainerId, static _ => new ConcurrentDictionary<uint, ItemInfo>());
-                            if (ret.TryGetValue(ItemId, out var item))
-                            {
-                                // ⚠️ 只更新 Quantity、沿用舊的 HQQuantity 是改動前就有的行為
-                                //（原本是 item.Quantity = ... 而完全沒碰 item.HQQuantity），逐字保留：
-                                // 改成一併更新會多送一輪 AllaganTools IPC，也不是這次要改的東西。
-                                ret[ItemId] = new ItemInfo(ItemId, GetRetainerInventoryItem(ItemId, retainerId), item.HQQuantity);
-                            }
-                            else
-                            {
-                                ret.TryAdd(ItemId, new ItemInfo(ItemId, GetRetainerInventoryItem(ItemId, retainerId), GetRetainerInventoryItem(ItemId, retainerId, true)));
-                            }
-                        }
-                    }
-
-                    if (hqOnly)
-                    {
-                        return (int)RetainerData.Values.SelectMany(x => x.Values).Where(x => x.ItemId == ItemId).Sum(x => x.HQQuantity);
-                    }
-
-                    return (int)RetainerData.SelectMany(x => x.Value).Where(x => x.Key == ItemId).Sum(x => x.Value.Quantity);
+                    return SumCachedRetainerItem(ItemId, hqOnly);
                 }
                 catch (Exception ex)
                 {
@@ -664,10 +818,34 @@ namespace Artisan.IPC
 
             Svc.Log.Debug($"Creating Fetch List");
 
+            // 🔴 這支的兩個呼叫點都是 Task.Run(CraftingListUI.cs 與 ListEditor.cs 的
+            //    「從僱員取回」按鈕)⇒ 整段跑在執行緒池上,而 NumberOfIngredient 與
+            //    GetRetainerItemCount 底下都是原生解參考(invManager->GetInventoryItemCount／
+            //    GetInventoryContainer／GetInventorySlot、RetainerManager.Instance()->
+            //    GetRetainerBySortedIndex、PlayerState->ContentId、Svc.Condition)。
+            //    原生記憶體只能在遊戲主執行緒上讀,而 AccessViolationException 在 .NET Core
+            //    是 corrupted-state exception,try/catch 攔不到 —— 失敗形式是整個遊戲崩掉。
+            // 🔑 這裡的修法是「一次讀完」而不是「每個材料往返一次」:
+            //    往返一次大約要等一幀,長清單的材料數以百計,逐個往返就是好幾秒的額外延遲。
+            //    僱員名冊同理,解析一次之後傳給每一次 GetRetainerItemCount。
+            //    ⚠️ 慢速的 AllaganTools IPC 迴圈刻意留在背景(見 GetRetainerItemCount 的 remarks)。
+            var snapshotIds = new List<uint>(materialList.Keys);
+            if (P.Config.RestockFinishedProductsFromRetainers)
+            {
+                foreach (var entry in list.Recipes)
+                    snapshotIds.Add(LuminaSheets.RecipeSheet[entry.ID].ItemResult.RowId);
+            }
+
+            var invCounts = CraftingListUI.SnapshotNumberOfIngredient(snapshotIds);
+            var roster = ReadRetainerRoster();
+            Svc.Log.Information($"[Artisan][Restock] 背包持有量快照完成:{invCounts.Count} 個道具" +
+                                $"(原生讀取在遊戲主執行緒上);僱員名冊 " +
+                                $"{(roster is null ? "不可用" : $"{roster.RetainerIds.Length} 位")}。");
+
             foreach (var material in materialList.OrderByDescending(x => x.Key))
             {
                 Svc.Log.Debug($"{material}");
-                var invCount = CraftingListUI.NumberOfIngredient(material.Key);
+                var invCount = invCounts.GetValueOrDefault(material.Key);
                 if (invCount < material.Value)
                 {
                     var diffcheck = material.Value - invCount;
@@ -676,7 +854,7 @@ namespace Artisan.IPC
                 }
 
                 //Refresh retainer cache if empty
-                GetRetainerItemCount(material.Key);
+                GetRetainerItemCount(material.Key, roster: roster);
             }
 
             if (P.Config.RestockFinishedProductsFromRetainers)
@@ -685,7 +863,7 @@ namespace Artisan.IPC
                 {
                     var recipe = LuminaSheets.RecipeSheet[entry.ID];
                     var target = entry.Quantity * recipe.AmountResult;
-                    var invCount = CraftingListUI.NumberOfIngredient(recipe.ItemResult.RowId);
+                    var invCount = invCounts.GetValueOrDefault(recipe.ItemResult.RowId);
                     if (invCount < target)
                     {
                         var diffcheck = target - invCount;
@@ -697,7 +875,7 @@ namespace Artisan.IPC
                     }
 
                     //Refresh retainer cache if empty
-                    GetRetainerItemCount(recipe.ItemResult.RowId);
+                    GetRetainerItemCount(recipe.ItemResult.RowId, roster: roster);
                 }
             }
 

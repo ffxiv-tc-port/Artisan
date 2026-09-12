@@ -954,9 +954,22 @@ internal class ListEditor : Window, IDisposable
                 LuminaSheets.RecipeSheet[5299].ItemResult.Value.Name.ToDalamudString()));
         }
 
+        // 🔴 這裡是 Draw 回呼(本 pin 的 Draw 就在遊戲主執行緒上),而底下的
+        //    GetListTimer → GetCraftDuration 會解 RaptureGearsetModule.Instance()->Entries、
+        //    InventoryManager、PlayerState->ClassJobLevels 與 Status->Param ——
+        //    原生記憶體只能在主執行緒上讀。改動前那些讀取全發生在 Task.Run 的執行緒池上,
+        //    而這一行是「每一幀都開一個新的」⇒ 只要清單編輯器的配方頁開著就持續發生。
+        //    AccessViolationException 在 .NET Core 是 corrupted-state exception,攔不到,
+        //    失敗形式是整個遊戲崩掉。
+        // 🔑 所以能力值在這裡(主執行緒上)就地讀成純量快照,再交給背景做純計算。
+        //    刻意不用會阻塞的閘門:這是每幀路徑,而且我們本來就已經在對的執行緒上 ——
+        //    快照零往返、零阻塞,時序與改動前逐字相同(同一個 Task.Run、同一個賦值點)。
+        //    用 Current() 而不是 Read():前者在主執行緒上最多每 500 毫秒重讀一次,
+        //    否則等於把「走訪 100 格裝備組 × 8 個職業」搬進每一幀的幀時間裡。
+        var listTimerStats = CrafterStatsSnapshot.Current();
         Task.Run(() =>
         {
-            listTime = CraftingListUI.GetListTimer(SelectedList);
+            listTime = CraftingListUI.GetListTimer(SelectedList, listTimerStats);
         });
         string duration = listTime == TimeSpan.Zero ? "Unknown".Loc() : string.Format("{0:D2}d {1:D2}h {2:D2}m {3:D2}s", listTime.Days, listTime.Hours, listTime.Minutes, listTime.Seconds);
         ImGui.SameLine();

@@ -667,7 +667,10 @@ namespace Artisan
                 return;
             }
 
-            var itemName = itemNameNode->NodeText.ExtractText();
+            // 🔴 下面兩行拿它去比 Lumina 的 ResultItem.Value.Name.ExtractText() ⇒ 這一端也要走
+            // Lumina 解析器。Utf8String 上的 ExtractText() 綁到 ECommons 已標 [Obsolete] 的那支,
+            // 會丟掉連字符 payload ⇒ 名字含破折號的潛水艇零件永遠找不到,靜默 return。
+            var itemName = LuminaText.Extract(&itemNameNode->NodeText);
 
             if (!LuminaSheets.WorkshopSequenceSheet.Values.Any(x => x.ResultItem.Value.Name.ExtractText() == itemName))
                 return;
@@ -692,7 +695,8 @@ namespace Artisan
                     return;
                 }
 
-                string partStep = currentPartNode->NodeText.ExtractText().Split(":").Last();
+                // 🔴 理由同上:下面比的是 Lumina 的 CompanyCraftType.Value.Name.ExtractText()。
+                string partStep = LuminaText.Extract(&currentPartNode->NodeText).Split(":").Last();
 
                 if (project.CompanyCraftPart.Any(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep))
                 {

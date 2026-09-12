@@ -427,7 +427,10 @@ internal unsafe static class RetainerHandlers
                             and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
                             continue;
 
-                        var label = MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String)).ExtractText().Trim();
+                        // 🔴 下面拿它去比 LuminaSheets.AddonSheet[98]/[773] 的 Text.ExtractText() ⇒ 這一端
+                        // 也要走 Lumina 解析器。原本綁到 ECommons 已標 [Obsolete] 的那支,會丟掉連字符
+                        // payload ⇒ 選單項目名含破折號時比不中,表現是「右鍵選單開了但什麼都沒取回」。
+                        var label = LuminaText.Extract(MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String))).Trim();
                         // 讀窗文字做判定:讀到 U+FFFD 代表選單記憶體正在變動,這一幀不碰(回 false = 下一輪重來)。
                         if (AddonPressGuard.IsTextCorrupt("ContextMenu", label)) return false;
                         labels[entry] = label;

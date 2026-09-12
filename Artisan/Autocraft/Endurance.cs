@@ -287,7 +287,11 @@ namespace Artisan.Autocraft
             if (!Enable && !CraftingListUI.Processing)
                 return;
 
-            var text = message.ExtractText();
+            // 🔴 另一端是 Lumina 的 row.Text.ExtractText() ⇒ 這一端也必須走 Lumina 解析器。
+            // 原本的 message.ExtractText() 綁到 ECommons 已標 [Obsolete] 的那支,它會把
+            // 連字符 payload(02 1F 01 03)整個丟掉 ⇒ 含破折號的訊息永遠比不中,
+            // 表現是「遊戲說這個製作不可能成功,但斷路器沒動」。
+            var text = LuminaText.Extract(message);
             var sheet = Svc.Data?.GetExcelSheet<LogMessage>();
             if (sheet is null || string.IsNullOrEmpty(text))
                 return;
@@ -337,11 +341,13 @@ namespace Artisan.Autocraft
         private static bool enable = false;
         private static void CheckNonMaxQuantityModeFinished(ref SeString message, ref bool isHandled)
         {
+            // 🔴 理由同 CheckCraftBlockingError:右邊是 Lumina,左邊也必須是 Lumina。
+            // (保留原本的短路求值 —— 這是聊天鉤子,每一則訊息都會進來,不要在條件外先攤平。)
             if (!P.Config.MaxQuantityMode && Enable &&
-                (message.ExtractText() == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == 1147).Text.ExtractText() ||
-                 message.ExtractText() == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == 1146).Text.ExtractText() ||
-                 message.ExtractText() == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == 1145).Text.ExtractText() ||
-                 message.ExtractText() == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == 1144).Text.ExtractText()))
+                (LuminaText.Extract(message) == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == 1147).Text.ExtractText() ||
+                 LuminaText.Extract(message) == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == 1146).Text.ExtractText() ||
+                 LuminaText.Extract(message) == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == 1145).Text.ExtractText() ||
+                 LuminaText.Extract(message) == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == 1144).Text.ExtractText()))
             {
                 if (P.Config.PlaySoundFinishEndurance)
                     SoundPlayer.PlaySound();

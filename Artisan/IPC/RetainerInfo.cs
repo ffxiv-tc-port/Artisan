@@ -138,9 +138,9 @@ namespace Artisan.IPC
                 //    一次原生記憶體都不碰。
                 var prefetchRetainers = ATools && P.Config.ShowOnlyCraftableRetainers || onLoad;
 
-                // 先確保跳到背景執行緒:下面列材料 id 是 14,409 列的純資料表走訪,
+                // 先確保跳到背景執行緒:下面列材料 id 是純資料表走訪,
                 // 而快照本身要在「不是主執行緒」時才會分批往返 —— 在主執行緒上呼叫的話
-                // 閘門會就地執行,六千多次原生讀取就全擠進同一格畫面。
+                // 閘門會就地執行,原生讀取就全擠進同一格畫面。
                 var ingredientIds = await Task.Run(() =>
                 {
                     var ids = new List<uint>();

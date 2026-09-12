@@ -76,7 +76,7 @@ internal static unsafe class AddonPressGuard
     /// (下一頁／下一次製作就是這樣送出去的),所以放行 log 寫 Debug 不洗版。
     /// 關閉中的危險窗口 &lt; 10 幀,15 幀不落在裡面;每頁多等 0.25 秒幾乎無感。
     /// ⚠️ 刻意<b>不</b>用「文字變了」當翻頁證據:關閉中的窗文字會讀壞(U+FFFD)。
-    /// (2026-09-02 艦隊政策:Talk 類一律 15 幀。)
+    /// (艦隊政策:Talk 類一律 15 幀。)
     /// </remarks>
     internal const int RoutineRePressEscapeFrames = 15;
 

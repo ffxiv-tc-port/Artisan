@@ -19,9 +19,8 @@ public class MaterialMiracleSolver : Solver, ICraftValidator
 
     /// <summary>
     /// 奇蹟之材生效期間可能出現的狀態。
-    /// 🔑 **2026-08-15 起這份不再自己釘** —— 已經下沉到 <see cref="Simulator.MaterialMiracleConditionPool"/>,
+    /// 🔑 已經下沉到 <see cref="Simulator.MaterialMiracleConditionPool"/>,
     /// 由模擬器、提示取樣、ExpertSolver 自適應、StandardSolver 逐場閘門與這裡共用同一份。
-    /// (當初會自己釘,是因為模擬器對這個狀態池全盲;那個盲區已經補掉了。)
     /// </summary>
     public static Condition[] ConditionPool => Simulator.MaterialMiracleConditionPool;
 

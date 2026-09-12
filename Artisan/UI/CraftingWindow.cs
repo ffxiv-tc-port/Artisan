@@ -66,7 +66,7 @@ namespace Artisan.UI
             // 視窗靜默關掉了一半(ApplyConditionals 讀得到 internalAlpha 所以背景會變，
             // 但內容不會)。
             // 🔴 base 必須放在 P.Style.Push() **之後**:StyleModel.Push() 自己會推一個
-            // 絕對值的 ImGuiStyleVar.Alpha(Dalamud/Interface/Style/StyleModelV1.cs:263)，
+            // 絕對值的 ImGuiStyleVar.Alpha(Dalamud/Interface/Style/StyleModelV1.cs)，
             // 先呼叫 base 再 Push 的話 base 推的不透明度會被主題的 Alpha 直接蓋掉。
             base.PreDraw();
         }

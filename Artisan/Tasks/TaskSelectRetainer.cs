@@ -373,7 +373,7 @@ internal unsafe static class RetainerHandlers
                     //       「agentModule == null ? null : GetAgentByInternalId(...)」,兩層都能合法回 null;
                     //    ② AgentModule.Instance() 是 UIModule 的轉手,同樣會回 null;
                     //    ③ GetAgentByInternalId 查的是 FixedSizeArray484<Pointer<AgentInterface>>,
-                    //       雇員 agent 那一格還沒建立時就是 null。
+                    //       僱員那一格還沒建立時就是 null。
                     // fail-closed:取不到就回 false —— 與這個迴圈既有的「這一頁裡沒有這個道具」同義,
                     //    呼叫端本來就會重試。
                     var ag = AgentInventoryContext.Instance();

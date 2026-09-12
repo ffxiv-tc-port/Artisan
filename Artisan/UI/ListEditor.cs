@@ -1867,7 +1867,7 @@ internal class RecipeSelector : ItemSelector<ListItem>
         var itemCount = ItemId.Quantity;
         var yield = LuminaSheets.RecipeSheet[ItemId.ID].AmountResult * itemCount;
 
-        // 顯示成品目前持有數(含雇員,走 AllaganTools 快取),避免重複製作。
+        // 顯示成品目前持有數(含僱員,走 AllaganTools 快取),避免重複製作。
         var resultItemId = LuminaSheets.RecipeSheet[ItemId.ID].ItemResult.RowId;
         var owned = CraftingListUI.NumberOfIngredient(resultItemId);
         if (RetainerInfo.ATools)

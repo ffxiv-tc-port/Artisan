@@ -789,7 +789,7 @@ namespace Artisan.Universalis
         private static MarketboardData? ParseAggregatedItem(JObject entry, Dictionary<uint, string> worldNames)
         {
             // world → dc → region：範圍越窄越貼近使用者實際買得到的地方。世界範圍的查詢只有
-            // world，區域範圍的查詢只有 region（2026-09-13 實測），所以取第一個有值的。
+            // world，區域範圍的查詢只有 region，所以取第一個有值的。
             static (double Price, uint? WorldId)? Pick(JToken? aggregate, string field)
             {
                 if (aggregate?[field] is not JObject scoped)

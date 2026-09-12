@@ -784,7 +784,7 @@ namespace Artisan
             // 視窗靜默關掉了一半(ApplyConditionals 讀得到 internalAlpha 所以背景會變，
             // 但內容不會)。
             // 🔴 base 必須放在 P.Style.Push() **之後**:StyleModel.Push() 自己會推一個
-            // 絕對值的 ImGuiStyleVar.Alpha(Dalamud/Interface/Style/StyleModelV1.cs:263)，
+            // 絕對值的 ImGuiStyleVar.Alpha(Dalamud/Interface/Style/StyleModelV1.cs)，
             // 先呼叫 base 再 Push 的話 base 推的不透明度會被主題的 Alpha 直接蓋掉。
             base.PreDraw();
         }
@@ -989,7 +989,7 @@ namespace Artisan
             // 守衛數字必須 >= 本區塊用到的最大索引 + 1(這裡用到 [8] 與 [35],所以是 36)。
             // 原本寫 >= 5,同上一處的 bug class:count 落在 5..35 時 NodeList[35] 會讀到
             // 陣列尾端之外約 240 bytes 的堆積垃圾,當成 AtkResNode* 解參考 → 攔不到的 AVE。
-            // 對照:本檔 :574 的 `NodeListCount < 38` 配 NodeList[37] 才是正確寫法。
+            // 對照:本檔的 `NodeListCount < 38` 配 NodeList[37] 才是正確寫法。
             if (GenericHelpers.IsAddonReady(addonPtr) && addonPtr->UldManager.NodeListCount >= 36)
             {
                 //var node = addonPtr->UldManager.NodeList[1]->GetAsAtkComponentNode()->Component->UldManager.NodeList[4];

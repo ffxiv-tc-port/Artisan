@@ -250,14 +250,10 @@ namespace Artisan.CraftingLogic.Solvers
                             Options = new()
                             {
                                 SkipQualityIfMet = false,
-                                // 🔴 這兩個維持 false 是刻意的,2026-08-06 用離線量測台實測過(每格 3000 次製作,
-                                //    台服 rlvl740 一般配方 #36073 / #36062,三種能力值檔位):
-                                //      打開 Upgrade → 做出來率 100% 掉到 58~85%,期望品質 96.6 掉到 56.1
+                                // 🔴 這兩個維持 false 是刻意的,
                                 //    原因是 Raphael 的解把 CP 與耐久算得剛剛好,把某一步換成
                                 //    集中加工/集中製作會改變消耗,整份計畫的預算就崩了。
-                                //    要在好/高品質狀態撿便宜,正確做法是 OpportunisticSolver ——
-                                //    它會先模擬「偏離之後剩下整段還跑不跑得完」再決定,實測 +0.5~2.8 期望品質、
-                                //    做出來率完全不變(100% → 100%)。
+                                //    要在好/高品質狀態撿便宜,正確做法是 OpportunisticSolver。
                                 UpgradeProgressActions = false,
                                 UpgradeQualityActions = false,
                                 MinCP = craft.StatCP,

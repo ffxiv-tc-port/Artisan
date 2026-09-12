@@ -97,18 +97,13 @@ public unsafe struct RecipeNoteRecipeEntry
 public unsafe struct RecipeNoteRecipeData
 {
     // ⚠️ DO NOT probe this struct by scanning for "plausible" pointers.
-    //
-    // A scan was added 2026-07-29 to work around Ptr() returning null on TC, and it
+    // A scan was added to work around Ptr() returning null on TC, and it
     // CRASHED THE GAME: AccessViolationException in LooksLikeRecipeData, reached from
     // Endurance.DrawRecipeData on the framework thread. The validator only checked
     // that a candidate address was >= 0x10000 before dereferencing it - but it then
     // read SelectedIndex at +0x438, so any value that merely looked like a pointer
     // sent a read into unmapped memory. There is no safe way to validate an arbitrary
     // address from managed code; a null return is always better than a crash.
-    //
-    // The underlying report (crafting list stalls, recipe window re-opens) is still
-    // unexplained - see the throttle in PreCrafting.TaskSelectRecipe and the
-    // BlockedBy() diagnostics in Operations.RepeatActualCraft for what is known.
     public static RecipeNoteRecipeData* Ptr() => (RecipeNoteRecipeData*)RecipeNote.Instance()->RecipeList; // note: can be null
 
     [FieldOffset(0x000)] public RecipeNoteRecipeEntry* Recipes; // note: can be null

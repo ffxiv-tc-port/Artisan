@@ -493,13 +493,9 @@ public unsafe static class PreCrafting
             // 取兩者較小值,索引的上下界都要驗。
             int entryCount = Math.Min(contextMenu->AtkValuesCount, ctx->EventIds.Length);
 
-            // 第 n 個選單項對應的事件編號是 7+n,所以 i<7 沒有對應的選單列;
-            // 那種情況下 i-7 會是負數,而 p2=-1 對選單的語意是「關閉」——
-            // 送出去等於在還沒找到裝備選項時就把選單關掉。
             // 🔴 「送過就再也不碰它」:下面那發裝備 callback 的第二個參數 true 就是原生
             // AtkUnitBase::FireCallback 的 close。close 為真且處理常式回非空值時,原生端會在
-            // 回到這裡之前就對這扇窗呼叫 vf6 Hide 或 vf4 Close(台服 7.20 反組譯:0x1406423C4 起),
-            // 而 AddonContextMenu 自己就是靠這條關窗的(它有三處 close = true 的 FireCallback、從不自己呼叫 Close)。
+            // 回到這裡之前就對這扇窗呼叫 vf6 Hide 或 vf4 Close。
             // ⇒ 送過一發之後,contextMenu 很可能已經是關閉中的窗,再送第二發就是對它解參考。
             // 🔴 「重新 GetAddonByName 取址」擋不住:它掃的是 AllLoadedUnitsList(AtkUnitManager + 0x6900),
             //    而 Close 只把窗從 UnitList16(+0x7920)移除 ⇒ 剛被關掉的窗照樣查得到、位址還一樣;
@@ -620,9 +616,6 @@ public unsafe static class PreCrafting
         return TaskResult.Done;
     }
 
-    // Guards against the runaway re-open loop reported on TC 2026-07-29 (crafting
-    // menu flickers and sticks when a list starts).
-    //
     // The task ALWAYS ends in `return TaskResult.Retry` after calling
     // OpenRecipeByRecipeId, and PreCrafting.Update() re-runs a Retry task every
     // 500 ms. The only exit is the `Done` check below, which depends on
@@ -630,19 +623,13 @@ public unsafe static class PreCrafting
     // struct read does not resolve on this client, the check never passes and the
     // recipe window is re-opened twice a second forever. Deduplicating the queue
     // (the previous attempt) does not help, because a SINGLE task is enough.
-    //
-    // So: never issue the open more than once per second for the same recipe. If
-    // detection works this changes nothing (the task completes on the next tick);
-    // if it is broken the window stays put instead of strobing.
     private static uint _lastOpenedRecipe;
     private static DateTime _lastOpenAttempt = DateTime.MinValue;
     private static int _openAttempts;
 
     private static void ReportRecipeOpenAttempt(uint recipeId)
     {
-        // Reporting only - it must NOT gate the open call. Throttling the open
-        // was one of today's speculative changes and is reverted; upstream issues
-        // it on every retry and that is the baseline to diagnose from.
+        // Reporting only - it must NOT gate the open call.
         var now = DateTime.Now;
         if (_lastOpenedRecipe != recipeId)
         {
@@ -656,12 +643,7 @@ public unsafe static class PreCrafting
         // Svc.Log.Debug is captured but drowned in the 100k+ Debug lines a single log
         // file holds - that is why the first round produced "no log at all". Fires a
         // few times, only when something is actually wrong.
-        //
-        // Ptr()==0 alone is ambiguous: it is equally consistent with "the addon is
-        // closed so RecipeList was freed" and with "the addon is open but we cannot
-        // read it". The user reports the window visibly opening AND CLOSING in a
-        // loop with the ingredients correctly assigned, so these three facts are
-        // what separate the cases. Every value below is either a pointer CS already
+        // Every value below is either a pointer CS already
         // handed us or a Dalamud-managed addon lookup - nothing is probed.
         if (_openAttempts is 5 or 10 or 20)
         {
@@ -720,23 +702,9 @@ public unsafe static class PreCrafting
         agent->SearchRecipeByItemId(itemId);
     }
 
-    // 🔴 宇宙筆記關掉之後怎麼開回來（2026-07-31 實機 log 定案）
-    //
-    // 觸發條件是「宇宙製作連做、下一輪要補消耗品」：前一次製作結束後角色停在
-    // IdleBetween（人還在宇宙筆記裡），StartCrafting 於是排入 TaskExitCraft，
-    // 那個 task 會把 WKSRecipeNotebook 關掉，角色才吃得下食物
-    //（log 裡 PreparingToCraft=False 之後才 Using food，所以關窗是必要的）。
-    //
+    // 🔴 宇宙筆記關掉之後怎麼開回來
     // 壞掉的是重開。原本這裡呼叫 OpenRecipeByRecipeId / SearchRecipeByItemId ——
-    // 那是「一般製作手帳」的入口，宇宙配方根本不在裡面：
-    //   19:50:27~35  addon RecipeNote=NOT OPEN, agent active=False（開不起來）
-    //   19:55:57     偶爾真的把一般手帳開起來 → 遊戲回「尚未習得所選配方，無法查看」
-    //                連五次 → 觸發 Artisan 自己的錯誤上限，整個製作模式被關掉
-    // 使用者的回報就是這個：關窗吃完東西後看不到視窗、只聽得到開窗音效。
-    //
-    // 對照組（19:20，同一版、同一個食物）沒有 "Closing recipe menu" 這行 ——
-    // 因為那次是剛接新任務、不在 IdleBetween，沒關窗就沒事。
-    //
+    // 那是「一般製作手帳」的入口，宇宙配方根本不在裡面。
     // 正解是走玩家自己會走的路：任務資訊面板上的「宇宙製作筆記」按鈕
     //（WKSMissionInfomation 的 button 27）。點的是真的 UI 按鈕。
     // ⚠️ 不要改成自己拼一個原生入口 —— CS 目前沒有 AgentWKSRecipeNotebook
@@ -785,25 +753,10 @@ public unsafe static class PreCrafting
     private static bool _cosmicStateDumped = false;
 
     // ── WKSRecipeNotebook 的 AtkValues 佈局 ─────────────────────────────────────
-    // 2026-08-03 由台服 ffxiv_dx11.exe 反組譯確立（不是取樣猜的；取樣結果只用來對答案）。
-    //
-    // 重新整理常式 RVA 0xF879F0：
-    //   0xF87A22-0xF87A40  入口把 96（0x60）個 AtkValue 的型別與資料欄位「全部歸零」
-    //   0xF87A85           項目數 = GetCount()（0x9EE400：*(g+0xB8) 的 [8]）
-    //   0xF87B10-0xF87C38  for (i = 0; i < 項目數; i++) 只填「存在的」那幾項
-    //   0xF8865C-0xF8866D  把整組 96 個交給 addon（r8d = r13d = 0x60、r9 = 值陣列）
     // 兩個直接可用的結論：
     //   * addon->AtkValuesCount == 96
     //   * 🔑 索引 >= 實際項目數的欄位型別必定是 Undefined(0)。整組每次重填，
     //     不會殘留上一次的值 —— 所以「型別不是 Undefined」就是「這一項真的存在」的證明。
-    //
-    // 逐項欄位（迴圈本體，i < 項目數）：
-    //   [9  + 5*i] UInt   成品 item id（收藏品為 id + 500000，見 0xF87B55 lea ecx,[rdi+0x7A120]）
-    //   [35 + 2*i] String 成品名稱
-    // 選取狀態（0xF87C84 起，跟逐項用的是同一組來源欄位）：
-    //   [45] UInt   目前選取的 item id（收藏品同樣 +500000）
-    //   [46] String 目前選取的品項名稱
-    //
     // ⚠️ 上限 5 不是估的：整數區 8..32（每項 5 格）與字串區 35..44（每項 2 格）之間
     //    就只塞得下 5 項，第 6 項會直接覆寫到 [45]/[46]。這是遊戲二進位裡寫死的容量。
     private const int CosmicEntryItemIdBase = 9;
@@ -831,12 +784,7 @@ public unsafe static class PreCrafting
     /// 在宇宙筆記的清單裡找出目標配方所在的項目索引；找不到回 -1。
     ///
     /// 🔴 呼叫端收到 -1 時必須「什麼都不送」。
-    /// 送出清單長度以外的索引不是無害的：遊戲的 case 0 處理常式（RVA 0xF875EF）會把
-    /// 收到的整數原封不動存進 agent+4（完全不做邊界檢查），接著重新整理常式用
-    /// 0x9EE3C0 算 entryBase + index * 0x400 取出「項目」——那同樣沒有邊界檢查——
-    /// 於是拿到界外指標，再從 +0x338 讀出的 char* 是 0，最後 Utf8String::SetString
-    /// （0x6053C0）對 nullptr 跑內聯 strlen，在位址 0 觸發 C0000005。
-    /// 這就是 2026-08-03 19:26 那次崩潰的完整成因。
+    /// 送出清單長度以外的索引不是無害的。
     /// ⚠️ 那是原生層的存取違規，受管理端的 try/catch 與 HookSafety 一律攔不到。
     /// </summary>
     private static unsafe int FindCosmicRecipeEntry(AtkUnitBase* addon, uint targetItemId, string targetItemName)
@@ -944,18 +892,10 @@ public unsafe static class PreCrafting
         // 🔴 宇宙配方(Number == 0)絕對不能用 GetSelectedRecipeEntry() 當「已經選好了」的
         // 判據。它讀的是 RecipeNote.Instance()->RecipeList —— 一般製作手帳的清單,只有
         // OpenRecipeByRecipeId 會填;宇宙筆記的選取是 Callback.Fire 做的,完全不會更新
-        // 那份資料(底下宇宙分支那段「走過的兩條死路」註解講的就是同一件事)。所以這裡
+        // 那份資料。所以這裡
         // 拿到的是**上一次一般製作留下的陳舊值**,一旦它剛好等於這次要的 recipe,整個
         // 宇宙選取流程就被跳過,接著 TaskStartCraft 直接對 WKSRecipeNotebook 送 callback 6 ——
         // 那會製作**宇宙筆記當下選著的**配方,不是我們要的那個。
-        //
-        // 實機證據(2026-08-01 dalamud.log,ICE 跑宇宙任務):
-        //   16:06:40 ICE 要 36323 → 有「宇宙配方 36323 已選中」→ 實際做 36323 ✅
-        //   16:07:35 ICE 要 36322 → **沒有**「已選中」那行 → 實際做 36323 ❌
-        //   16:14:10 ICE 要 36322 → **沒有**「已選中」那行 → 實際做 36323 ❌
-        // 兩次做錯的都落在「早退沒跑選取流程」那一組,而跑過選取流程的沒有一次做錯。
-        // 對使用者的表徵就是任務目標「宇宙球粒隕石錠 2/1、宇宙月精金塊 0/1」。
-        //
         // 一般配方維持原行為(那條路徑的 RecipeList 是有效的)。
         var isCosmic = recipe.Number == 0;
         var re = Operations.GetSelectedRecipeEntry();
@@ -978,24 +918,10 @@ public unsafe static class PreCrafting
             _cosmicWaitSince = DateTime.MinValue;
 
             // 宇宙筆記的選取判定：用 addon 自己的 AtkValues，不要用 GetSelectedRecipeEntry()。
-            //
-            // 走過的兩條死路（都是實機證實的，不要再試）：
-            //  1. Callback.Fire 逐項選 + GetSelectedRecipeEntry() 比對 → 畫面會依序切換，
-            //     但比對永遠不成立、無限在配方之間跳。原因是 GetSelectedRecipeEntry() 讀的是
-            //     RecipeNote.Instance()->RecipeList，那份資料只有 OpenRecipeByRecipeId 會填，
-            //     Callback.Fire 只動畫面上的選取。
-            //  2. 視窗已開時改用 OpenRecipeByRecipeId → 台服會把視窗「關閉重建」，於是每
-            //     500ms 閃一次、使用者根本看不到視窗，只聽得到開關音效。
-            //
-            // 正解：用 Callback.Fire 選（那個是有效的），改成讀 AtkValues 驗證。
-            //
-            // 🔴 第三條死路（2026-08-03 實機崩潰，C0000005）：
+            // 🔴 實機崩潰，C0000005：
             //    「從 0 一路遞增送索引直到選中」。清單只有 2～3 項，索引 3 以後全部越界，
             //    而遊戲對這個索引完全不做邊界檢查（見 FindCosmicRecipeEntry 的註解）。
             //    現在改成：先從 AtkValues 認出目標在第幾項，只送那一個；認不出來就不送。
-            //
-            // 佈局常數見上面 CosmicEntry* 那一段（反組譯確立，且與 2026-07-31 的兩次
-            // 實機傾印一致 —— [45]/[46] 與 +500000 三者都對上了）。
             if (addon->AtkValuesCount <= CosmicSelectedItemNameValue)
             {
                 // 佈局與取樣時不同，不要瞎猜；留下紀錄讓下次能重新取樣。

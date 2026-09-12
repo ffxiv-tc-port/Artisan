@@ -610,7 +610,6 @@ public static unsafe class Crafting
         // (預測那邊已經是真時鐘算出來的),只在沒有預測可沿用時才自己換算一次。
         // 🔑 這樣寫的重點是 StepState 是 record,`step != _predictedNextStep` 會逐欄比對 ——
         //    若這裡自己算一份跟預測不同的數字,反而會製造出新的「狀態不合」誤報。
-        //    時鐘是連續的,而這裡與 detour 的呼叫時間差了幾百毫秒,兩邊各算一次必定偶爾差一格。
         // ⚠️ 這裡**刻意不去清 _materialMiracleExpiryTick** —— 剛用掉奇蹟之材的那幾幀狀態列
         //    還沒更新(狀態要等下一個 StatusEffectList),此時 Active 是暫時的 false,
         //    清掉就等於把剛設好的 45 秒丟了,之後整段 buff 都只會被估成「還剩 1 步」。

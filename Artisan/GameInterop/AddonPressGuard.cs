@@ -21,46 +21,27 @@ namespace Artisan.GameInterop;
 /// 🔴🔴 <b>存在的唯一理由是原生 AccessViolation</b>:<c>SelectYesno</c> 這類「按下即關」的窗被按下之後
 /// 有<b>「正在關閉中」的幾幀</b>,這段期間 <c>GetAddonByName</c> 仍然回得到實例、<c>IsVisible</c> 與
 /// <c>UldManager.LoadedState == Loaded</c> 也都還成立(＝ <c>IsAddonReady</c> 三關全過、擋不住這個窗口)。
-/// 此時再對它送 callback／輸入事件就是原生 AccessViolation(C0000005)。AVE 在 .NET Core 是
-/// corrupted-state exception,<c>try</c>/<c>catch</c> 完全攔不到,遊戲當場關閉 ——
+/// 此時再對它送 callback／輸入事件就是原生 AccessViolation(C0000005)。
 /// <b>唯一的防護是「不要送第二次」,不是「送了再接住」</b>。
 /// </para>
 /// <para>
 /// 🔴 節流<b>不是</b>防護:<c>Autocraft.Throttler</c>／<c>RepairManager._nextRetry</c>／<c>Spiritbond._nextRetry</c>
-/// 這些記的是「上一次動作在哪個時刻」,不是「這扇窗已經按過」。一次 ≥ 節流長度的幀停頓就會讓下一輪
-/// 正好落在關閉中的第 1 幀;<c>RetainerInfo.GenericThrottle</c>(EzThrottler 100ms)首次必放行、
-/// key 全外掛共用;<c>RetainerInfo.Tick</c> 對 Talk 的 <c>Click()</c> 更是連節流都沒有(每幀)。
-/// </para>
-/// <para>
-/// 🔴 「按過的按鈕會被遊戲停用所以不會重按」<b>不成立</b>:ECommons <c>AddonMaster.SelectYesno.Yes()</c>
-/// 遇到停用的「是」鈕會翻 <c>NodeFlags</c> 強制啟用再點,遊戲那層天然的防護被這條碼路徑破壞掉了。
+/// 這些記的是「上一次動作在哪個時刻」,不是「這扇窗已經按過」。
 /// </para>
 /// <para>
 /// 🔑 <b>粒度＝(窗,位址,參數組)</b>:
 /// <list type="bullet">
-/// <item>「回答一次即終結」的窗(<see cref="SingleAnswerAddons"/>)不分按法,整扇窗一把 key ——
-/// 按過任何一個之後窗就在關閉中,別的都不准再送。</item>
-/// <item>按下不會關的窗(RecipeNote 的指派素材／開始製作、WKSRecipeNotebook 的選取、Materialize 開對話框、
-/// Talk 翻頁…)帶 <paramref name="pressKey"/>,同一扇窗對不同參數組各准按一次,保住
-/// 「同幀對同窗連送不同參數」的正常流程(<c>SetIngredients</c> 同幀按 NQ 再按 HQ 全選鈕、
-/// <c>TaskEquipItem</c> 同一趟對 ContextMenu 先送裝備再送關閉)。</item>
 /// <item><see cref="ClosePressKey"/> 是萬用鍵:對某扇窗送過關閉(<c>Fire(-1)</c>)之後、還沒觀察到它收掉之前,
 /// 對同一位址的<b>任何</b>按法都會被擋;反過來同一位址任何按法還熱著時也不准再送關閉
 /// (同一幀內先按後關的正常流程除外,見 <see cref="FindBlocking"/>)。</item>
 /// </list>
 /// </para>
 /// <para>
-/// <b>解除封鎖有兩條互補的觀察點</b>(兩條都只會讓封鎖<b>提早</b>解除,不會延後):
-/// <list type="number">
-/// <item><b>輪詢</b>(<see cref="Tick"/>,每幀從 <c>Artisan.OnFrameworkUpdate</c> 最前面呼叫):
+/// <b>輪詢</b>(<see cref="Tick"/>,每幀從 <c>Artisan.OnFrameworkUpdate</c> 最前面呼叫):
 /// 被記下的位址已經不在該名稱的 addon 清單裡(掃全索引,掃到第一個空的停)⇒ 那扇窗真的收乾淨了。
-/// Artisan 的按下點全部由 Framework.Update／LegacyTaskManager(同樣跑在 Framework.Update 上)／
-/// ImGui Draw／ReceiveEvent detour 同步呼叫驅動,沒有 AddonLifecycle PostDraw 驅動的按下點,所以輪詢有效。</item>
-/// <item><b>AddonLifecycle 事件</b>:<see cref="AddonEvent.PreFinalize"/>(這一扇正在被銷毀)與
+/// <b>AddonLifecycle 事件</b>:<see cref="AddonEvent.PreFinalize"/>(這一扇正在被銷毀)與
 /// <see cref="AddonEvent.PostSetup"/>(有新的一扇被建立起來),只清<b>該事件那個位址</b>的紀錄。
-/// 同名 addon 關掉再開常常重用同一塊位址,只靠第 1 條的話重開的那扇會被誤認成「按過的那扇還沒收掉」
-/// 而白白被擋到逃生口。⚠️ 刻意<b>不</b>把 <c>PostRefresh</c> 當解除點:它可能在關閉中那幾幀觸發。</item>
-/// </list>
+/// ⚠️ 刻意<b>不</b>把 <c>PostRefresh</c> 當解除點:它可能在關閉中那幾幀觸發。
 /// </para>
 /// <para>
 /// 🔴 <b>逃生口是刻意的</b>:單答終結窗 <see cref="DefaultEscapeFrames"/>(90 幀,遠大於關閉所需,走到＝異常,
@@ -69,9 +50,7 @@ namespace Artisan.GameInterop;
 /// 用<b>幀數</b>而不是毫秒:危險窗口的長度本來就是以幀計的,遊戲卡頓時兩者一起拉長。
 /// </para>
 /// <para>
-/// 📌 <b>正常路徑行為零變化</b>:第一次看到某扇窗的某個按法一律當場按下去;被擋下時回 <see langword="false"/>,
-/// 呼叫端一律走它原本「addon 還沒出現／還沒 ready」那條既有路徑(輪詢型任務下個 tick 再來、
-/// <c>PreCrafting</c> 任務回 <c>Retry</c>)。🔴 絕不回 <see langword="null"/>:LegacyTaskManager 的
+/// 🔴 絕不回 <see langword="null"/>:LegacyTaskManager 的
 /// <c>bool?</c> 三態裡 <see langword="null"/> 是 Abort,會清掉整條佇列。
 /// </para>
 /// <para>🔴 全程只做<b>位址等值比較,永遠不解參</b> —— 被記下的那個位址隨時可能已經失效。</para>
@@ -121,17 +100,11 @@ internal static unsafe class AddonPressGuard
     /// 🔴 <b>為什麼需要這條路徑</b>:<see cref="Tick"/> 與 AddonLifecycle 兩條既有解除點對常駐窗
     /// <b>都是死路</b>(它從頭到尾都在清單裡、位址不變,PreFinalize/PostSetup 都不會發生)⇒ 記號一旦記下就
     /// <b>永不解除</b>,整扇窗退化成「每 <see cref="RoutineRePressEscapeFrames"/> 幀才准動作一次」。
-    /// AutoRetainer 2026-09-04 的實機記錄:<c>ContextMenu</c> 送出 295 次,其中 290 次是走逃生口走出來的,
-    /// 另有 144 次使用者的右鍵被整個吞掉。
     /// </para>
     /// <para>
     /// 🔴 <b>為什麼是「連續 N 幀」而不是「這一幀不可見就解除」</b>:窗在拆除途中會有幾幀「已經被設成不可見、
     /// 但還沒拆完」,那正是這個守衛在防的危險窗口(實測 &lt;10 幀)。要求連續觀察到隱藏才解除,等於「等到穩定
     /// 隱藏＝拆除已經結束」才放行;看到可見(或這一幀不在清單裡)就歸零重數,短暫閃一下不會累積。
-    /// </para>
-    /// <para>
-    /// 📌 <b>20 幀換算成多久</b>:使用者實測的幀率是 <b>10.07 ms/幀</b>(僱員鈴前,n=290)⇒ 20 幀 ≈ <b>201 毫秒</b>。
-    /// (不要用 60fps 去換算成 333 毫秒 —— 那個幀率在這台機器上不成立。)
     /// </para>
     /// <para>
     /// 🔴 <b>這個數字不承重。</b>真正把崩潰面拆掉的是 <see cref="TryBeginPress(string, nint, string, int)"/>
@@ -168,8 +141,7 @@ internal static unsafe class AddonPressGuard
     /// <remarks>
     /// <para>
     /// 🔑 <b>加名字進來的門檻＝實機 log 裡「真的送出的次數」≈「走逃生口的次數」</b>
-    /// (兩者幾乎相等＝記號從來沒有被「消失/銷毀」那條路徑解除過)。<c>ContextMenu</c> 在 AutoRetainer
-    /// 的同一場實機記錄裡是 295 次送出 : 290 次逃生口 : 144 次被吞掉,因此收錄。
+    /// (兩者幾乎相等＝記號從來沒有被「消失/銷毀」那條路徑解除過)。
     /// </para>
     /// <para>
     /// ⚠️ <b>沒有這種證據的名字一律不要加。</b>猜錯的方向是危險的:把一扇「會被銷毀」的窗誤標成常駐,
@@ -230,7 +202,7 @@ internal static unsafe class AddonPressGuard
     /// 守衛自己的時鐘,單位是 <b>framework tick</b>(遊戲主迴圈每更新一次 +1),在 <see cref="Tick"/> 的最前面遞增。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>刻意不用 <c>UiBuilder.FrameCount</c></b>(2026-09-02 換掉):那個計數器是在 Dalamud
+    /// 🔴 <b>刻意不用 <c>UiBuilder.FrameCount</c></b>:那個計數器是在 Dalamud
     /// <c>UiBuilder.OnDraw</c> 的<b>結尾</b>才 <c>++</c>,而 <c>OnDraw</c> 在「使用者隱藏 UI」、
     /// 「<b>過場動畫</b>」(<c>ToggleUiHideDuringCutscenes</c>,<b>預設開</b>)、「GPose」三種情況下
     /// 會在遞增之前就 <c>return</c> ⇒ <b>外掛 UI 被隱藏的整段期間繪製幀號完全停住</b>。
@@ -286,17 +258,11 @@ internal static unsafe class AddonPressGuard
         // 🔴🔴 常駐窗專用的「送出前必須可見」閘門。
         //    ⚠️ 這一道**不是**「擋得住正在關閉中的窗」的檢查 —— IsAddonReady 的三關(非 null / IsVisible /
         //    LoadedState == Loaded)在拆除途中是**全過**的(本檔開頭那段講的就是這件事),單獨看它一個東西都擋不到。
-        //    **這個結論不可以當成通用結論搬去別的地方用。**
-        //
         //    它在這裡有效的唯一理由是:**與 Tick 對常駐窗的解除條件互為邏輯反面**。
         //    那邊的解除條件是「連續 HiddenReleaseFrames 幀**不可見**」,這裡的放行條件是「**可見**」
         //    ⇒ 記號被解除之後還要能再送出一發,中間**必須**有一次遊戲自己把這扇窗重新 Show 起來,
         //    而正在拆除的窗不會被重新 Show。兩者一組才是防護;只做其中一半的話,記號可以在拆除中途被解除,
         //    下一發直接打在正在拆的窗上 ＝ 攔不到的存取違規。
-        //
-        // 🔴 只對 PersistentAddons 生效。名單外的窗完全不走這一行,行為與改動前逐字相同 ——
-        //    這是刻意的:本 repo 有刻意在窗不可見時仍要送出的按下點(MarkClosing 之後的關閉補送),
-        //    無差別加上這道檢查會把它們靜默改成不送。
         if (PersistentAddons.Contains(addonName) && !PersistentAddonVisible(addonName, address))
         {
             if (EzThrottler.Throttle($"AddonPressGuard-PersistentHidden-{addonName}", 1000))
@@ -446,8 +412,6 @@ internal static unsafe class AddonPressGuard
     /// 會在最危險的那幾幀把封鎖解除掉,等於沒有這道防線。
     /// 🔴 <b>呼叫點必須無條件、每個 framework tick 一次</b>:除了解除封鎖,這裡還是守衛時鐘唯一的來源
     /// (見 <see cref="frameCount"/>);挪到任何條件底下都會讓逃生口停止倒數。
-    /// 放在 Tick 最前面且不受任何開關限制:解除點若只長在各自的分支裡,開關剛好在按下之後轉為關閉時
-    /// 記號會一直留著,下一扇重用同一塊位址的窗會被白白擋到逃生口。
     /// </remarks>
     internal static void Tick()
     {
@@ -549,13 +513,11 @@ internal static unsafe class AddonPressGuard
     /// 這扇窗(位址)上有沒有一筆還熱著的紀錄會擋住 <paramref name="pressKey"/> 這個按法。
     /// </summary>
     /// <remarks>
-    /// 判準(逐條):
     /// <list type="bullet">
     /// <item>同一個按法、同一位址、還在逃生口內 ⇒ 擋(<b>同一幀也擋</b>:那是字面上的重按)。</item>
     /// <item>單答終結窗:同一位址<b>任何</b>熱紀錄 ⇒ 擋(同一幀也擋 —— 先送關閉再按「是」這種接力就是崩潰形狀)。</item>
     /// <item>其他窗:對方或自己是 <see cref="ClosePressKey"/> ⇒ 擋,<b>但同一幀登記的除外</b> ——
     /// 「同一趟先送裝備再送關閉」(<c>TaskEquipItem</c>)是刻意的正常流程,擋的是<b>下一幀起</b>的任何按法。</item>
-    /// <item>其他窗、不同參數組、都不是關閉 ⇒ 不擋(同幀對同窗連送不同參數是正常流程)。</item>
     /// </list>
     /// </remarks>
     private static bool FindBlocking(Dictionary<string, PressRecord> presses, nint address, string pressKey, bool singleAnswer, long frame, out string blockingKey)

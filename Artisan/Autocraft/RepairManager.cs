@@ -358,8 +358,7 @@ namespace Artisan.Autocraft
             // 關掉持久模式／暫停製作清單，兩者都要使用者手動回去重開。
             // 但那些判斷全都建立在背包讀數上 —— HasDarkMatterOrBetter 走
             // GetInventoryItemCount，NPC 修理那條走金幣讀數 —— 而換區與剛登入的短暫視窗內
-            // 這些讀數會一起假性歸零（ICE 實機事故同形狀：使用者身上有 999 個餌，
-            // BetweenAreas 那一毫秒讀到 0 就中止流程，觸發源還是完全不相干的機甲行動傳送）。
+            // 這些讀數會一起假性歸零。
             // 「這個功能不會切區域」是錯的假設，所以讀不到就不下這個結論：
             // 回 false 讓呼叫端照既有的延後路徑重試（Endurance/CraftingList 對 false 的處理
             // 就是離開製作並下一輪再來），下一輪讀得到時該關還是會關。

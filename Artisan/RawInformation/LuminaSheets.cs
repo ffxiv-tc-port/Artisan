@@ -241,14 +241,7 @@ namespace Artisan.RawInformation
         /// 這個配方所屬的宇宙探索任務有沒有奇蹟之材,以及**給幾次**。
         /// </summary>
         /// <remarks>
-        /// 🔑 <c>Charges</c> 讀的是 <c>WKSMissionToDo.Unknown14</c>。2026-08-07 用使用者實機 log 做過
-        /// **四點雙向校準**(對照的是 Artisan 自己印在 log 裡的 <c>MaterialMiracleCharges</c>,
-        /// 那個數字來自 <c>DutyActionManager</c>,是遊戲的真值):
-        /// <list type="bullet">
-        /// <item>任務 31【高難+】補充優質製作工具(配方 36205/36206):Unknown14=1 ↔ 實機 1</item>
-        /// <item>任務 38【高難】製作休息設施所需的材料(配方 36214):Unknown14=3 ↔ 實機 3</item>
-        /// <item>任務 32/40(沒有奇蹟之材):Unknown14=0 ↔ 實機 0</item>
-        /// </list>
+        /// 🔑 <c>Charges</c> 讀的是 <c>WKSMissionToDo.Unknown14</c>。
         /// ⚠️ <c>Unknown15</c> 曾是候選,但它在**完全沒有奇蹟之材**的任務上也恆為 3,已排除。
         /// 🔴 回傳值取 <c>Max(1, …)</c> 是刻意的 fail-safe:欄位對應萬一是錯的,最壞也只是退回
         /// 改動前寫死的 1,不會變成 0(那等於奇蹟之材在模擬器裡整個消失,而且是靜默的)。

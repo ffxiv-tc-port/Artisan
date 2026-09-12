@@ -27,7 +27,6 @@ namespace Artisan.RawInformation
         {
             // GetUIModule() / GetRaptureHotbarModule() 都是原生呼叫,對 null 呼叫即攔不到的 AVE。
             // 取不到時保留上一次的快取內容(不清空),行為與「這次沒更新」相同。
-            //
             // 🔴 原本這裡是半套判空:下游兩層都判了,唯獨最外面那層沒判。
             //    Framework.Instance() 是 [StaticAddress("48 8B 1D ?? ?? ?? ?? 8B 7C 24 64", 3, isPointer: true)],
             //    產生器對 isPointer:true 產出的是「if (ppInstance is null) Throw...; return *ppInstance;」

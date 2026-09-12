@@ -14,16 +14,8 @@ namespace Artisan.Sounds
         // A single shared WaveOutEvent used to be created once and Init()ed again for
         // every sound. NAudio refuses that while the device is still playing:
         //     Can't re-initialize during playback
-        //       at NAudio.Wave.WaveOutEvent.Init(IWaveProvider)
         // which is exactly what a second notification arriving during the first one
-        // produced (reported on TC 2026-07-29).
-        //
-        // Two more leaks lived in the same method and go away with it:
-        //   - the Mp3FileReader was never disposed - one file handle per sound; and
-        //   - a PlaybackStopped handler was added on EVERY call and never removed, so
-        //     the handler list grew for the whole session, and the "restore the
-        //     previous volume" logic it carried ended up fighting itself (every
-        //     handler restored whatever the volume happened to be when IT was added).
+        // produced .
         // A fresh device per sound, torn down explicitly, has none of those problems.
         private static WaveOutEvent? _device;
         private static Mp3FileReader? _reader;

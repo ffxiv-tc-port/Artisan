@@ -1,15 +1,12 @@
 ﻿namespace Artisan;
 
 // 跨檔逐字重複的使用者可見字串收斂處。
-//
 // 🔴 為什麼要收斂:.Loc() 是**用英文原文當 key** 去查 LanguageChineseTraditional.ini,
 //    而 ini 是字典、同一句只存一條。所以同一句被複製到兩個檔時,改動其中一份的英文
 //    會讓**那一份**查不到翻譯而靜默退回英文,另一份照樣是中文 —— 看起來像「漏翻一句」
 //    而不是「兩個複製品走散了」。集中成常數之後,改一次兩邊一起改,key 也永遠只有一個。
 //    ECommons 的 Loc() 查不到就 return s,不擲例外也不寫 log。
-//
-// ⚠️ 這裡只放**真的出現在兩個以上位置、且每一處都被 .Loc() 包住**的字串;
-//    只用一次的字串留在使用處比較好讀。
+// ⚠️ 這裡只放**真的出現在兩個以上位置、且每一處都被 .Loc() 包住**的字串。
 // ⚠️ 字串裡的 ?? 是 ECommons Loc(params object[]) 的位置參數佔位符,不是缺字。
 public static class SharedText {
     public const string AutoRepairHelp = "If enabled, Artisan will automatically repair your gear when any piece reaches the configured repair threshold.\n\nCurrent min gear condition is ??% and cost to repair at a vendor is ?? gil.\n\nIf unable to repair with Dark Matter, will try for a nearby repair NPC.";

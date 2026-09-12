@@ -17,9 +17,6 @@ namespace Artisan.RawInformation
         /// (b) 容器已存在但 <c>Items</c> 尚未配置 —— 此時 <c>Size</c> 可能已非 0，
         ///     而 <c>Items[slot]</c> 會從「null + slot * 0x48」這個小偏移假位址讀出垃圾精魂值；
         /// (c) 容器只載入一半、<c>Size</c> 還沒到 13 —— 原本的寫法對 slot 完全不設防。
-        /// ⚠️ 回 0 是刻意的收斂方向：唯一的決策型消費者是 <see cref="IsSpiritbondReadyAny"/> 的
-        ///    <c>== 10000</c> 比較，0 會讓它回 false，也就是「沒有東西可以抽魔晶石」而少做事。
-        ///    回一個垃圾值則可能剛好命中 10000，把流程推去開精製介面對空氣操作。
         ///    0 與「該欄位真的沒裝備」同值，語意上沒有損失（空欄位本來就讀 0）。</summary>
         private static ushort GetEquippedSpiritbond(int slot)
         {

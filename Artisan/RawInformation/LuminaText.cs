@@ -8,16 +8,7 @@ namespace Artisan.RawInformation
     /// 把「從遊戲視窗／聊天記憶體讀來的字」攤成<b>可以和 Lumina 資料表逐字比對</b>的純文字。
     /// </summary>
     /// <remarks>
-    /// 🔴 <b>為什麼需要這支。</b>同一段位元組有四套互不相容的攤平法:
-    /// <list type="bullet">
-    /// <item><b>Lumina</b>(<c>ReadOnlySeString.ExtractText()</c>／<c>ToString()</c>、
-    /// Dalamud 的 <c>CStringPointer.ExtractText()</c>):連字符 payload(<c>02 1F 01 03</c>)
-    /// 渲染成 <b>U+002D HYPHEN-MINUS</b>。</item>
-    /// <item><b>Dalamud <c>SeString.TextValue</c></b>:同一個 payload 是 <b>U+2013 EN DASH</b>。</item>
-    /// <item><b>ECommons <c>GetText()</c></b>(以及已標 <c>[Obsolete]</c> 的
-    /// <c>SeString.ExtractText()</c>／<c>Utf8String.ExtractText()</c>):<b>整個丟掉</b>。</item>
-    /// <item><c>Utf8String.ToString()</c>:完全不剝,控制位元組原樣留在字串裡。</item>
-    /// </list>
+    /// 🔴 <b>為什麼需要這支。</b>同一段位元組有四套互不相容的攤平法。
     /// ⇒ 一端是遊戲視窗、另一端是 Lumina 資料表時,只要名字含連字符或巨集 payload,
     /// 相等比對就<b>恆假</b>,而且失敗形式是「找不到、什麼都不做」不是報錯。
     /// <para>

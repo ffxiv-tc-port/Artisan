@@ -45,26 +45,10 @@ namespace Artisan.RawInformation.Character
         /// </summary>
         /// <remarks>
         /// 🔴 <c>ExpArrayIndex</c> 是 <c>sbyte</c>,而<b>第 0 列(冒險者/ADV)是 -1</b>
-        /// —— 那是台服 7.20 ClassJob 表 46 列裡唯一的負值(其餘 0..31,2026-09-07 離線查表確認)。
         /// <c>ClassJobLevels</c> 是 <c>FixedSizeArray35</c>,索引 -1 會擲
         /// <see cref="IndexOutOfRangeException"/>。
-        /// <br/><br/>
-        /// 🔴 舊寫法的 <c>?? 0</c> 綁在<b>整張表為 null</b> 上,不是綁在 <c>ExpArrayIndex</c> 上
-        /// —— 表存在而該列的 <c>ExpArrayIndex</c> 是 -1 會原樣穿過去。
-        /// <br/><br/>
         /// 🔴 退路回 0 而不是索引 0:第 0 格是格鬥士/武僧(PGL/MNK)的等級,
         /// 拿它當未知職業的等級是<b>安靜的錯答案</b>。
-        /// <br/><br/>
-        /// 📌 <c>GetRow</c> 改成 <c>GetRowOrDefault</c>:前者對表上沒有的 id 會擲
-        /// <see cref="ArgumentOutOfRangeException"/>,那同樣會炸掉呼叫端。
-        /// <br/><br/>
-        /// 🔴 <b>2026-09-12</b>:<c>PlayerState.Instance()-&gt;ClassJobLevels</c> 是原生解參考,
-        /// 只能在遊戲主執行緒上讀 —— 不是主執行緒時讀到一半被換掉就是
-        /// <c>AccessViolationException</c>,而 AVE 在 .NET Core 是 corrupted-state exception,
-        /// <c>try</c>/<c>catch</c> 攔不到。所以整個方法體交回主執行緒
-        /// (<see cref="global::Artisan.IPC.IpcFrameworkGate"/>:已經在主執行緒上時<b>就地執行</b>,
-        /// 不配置 Task、不多花一幀 ⇒ <c>Crafting</c> 狀態機與 <c>RepairManager</c>
-        /// 這兩個既有呼叫點行為逐字不變)。
         /// 取不到時回 <c>0</c> —— 與本方法本來的「未知 ⇒ 0」契約同值。
         /// </remarks>
         public static int JobLevel(Job job)

@@ -755,7 +755,7 @@ public static unsafe class Crafting
                 // because of that, we wait until statuses match prediction (or too much time passes) before transitioning to InProgress
                 // 🔴 原本寫成 `is not State.WaitAction or State.InProgress`,C# 會解析成
                 //    `(not WaitAction) or InProgress` —— 而 InProgress 本來就屬於 not WaitAction,
-                //    整條等價於 `!= WaitAction`,上游 2024-01-11「Fix errors」想加進白名單的
+                //    整條等價於 `!= WaitAction`,上游「Fix errors」想加進白名單的
                 //    InProgress **從來沒生效過**,反而每次都落進下面的錯誤路徑並跳過預測邏輯。
                 if (CurState is not State.WaitAction and not State.InProgress)
                 {

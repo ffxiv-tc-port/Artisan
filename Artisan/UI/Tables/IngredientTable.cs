@@ -454,7 +454,15 @@ namespace Artisan.UI.Tables
                     if (MarketboardPricing.TryGetNpcPrice(item.Data, out var npcUnitPrice) && (double)npcUnitPrice * item.Remaining < listing.Cost)
                         return "NPC Shop - Cost ??, Qty unlimited".Loc(npcUnitPrice.ToString("N0"));
 
-                    return "?? - Cost ??, Qty ??".Loc(listing.World, listing.Cost.ToString("N0"), listing.Qty);
+                    var text = "?? - Cost ??, Qty ??".Loc(listing.World, listing.Cost.ToString("N0"), listing.Qty);
+
+                    // 🔴 降級來源（aggregated 端點）只知道「最低單價」與「在哪個世界」，
+                    //    算不出「買 N 件要多少錢」⇒ 必須在列上就看得出這是約略值。
+                    //    把它畫成一個普通的價格會被當成精確報價。
+                    if (item.MarketboardData?.Source == MarketboardSource.Aggregated)
+                        text = "?? (approx.)".Loc(text);
+
+                    return text;
 
                 }
 
@@ -466,20 +474,25 @@ namespace Artisan.UI.Tables
                 if (item.MarketboardData != null)
                 {
                     ImGui.Text($"{ToName(item)}");
-                    if (Lifestream && CheapestListings.ContainsKey(item.Data.RowId) && item.Remaining > 0)
-                    {
-                        var server = CheapestListings[item.Data.RowId].World;
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.BeginTooltip();
-                            ImGui.Text("Click to travel to ??.".Loc(server));
-                            ImGui.EndTooltip();
-                        }
 
-                        if (ImGui.IsItemClicked())
-                        {
-                            Chat.Instance.SendMessage($"/li {server} mb");
-                        }
+                    var degraded = item.MarketboardData.Source == MarketboardSource.Aggregated;
+                    var canTravel = Lifestream && CheapestListings.ContainsKey(item.Data.RowId) && item.Remaining > 0;
+
+                    // 「為什麼是約略」是起疑才查的資訊，所以放 tooltip；
+                    // 「這是約略值」本身已經在列上（見 ToName）。
+                    if ((degraded || canTravel) && ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        if (degraded)
+                            ImGui.Text("Universalis timed out on the full listings, so this is the lowest unit price from its summary endpoint - the quantity shown is 1 unit, not the amount you need.".Loc());
+                        if (canTravel)
+                            ImGui.Text("Click to travel to ??.".Loc(CheapestListings[item.Data.RowId].World));
+                        ImGui.EndTooltip();
+                    }
+
+                    if (canTravel && ImGui.IsItemClicked())
+                    {
+                        Chat.Instance.SendMessage($"/li {CheapestListings[item.Data.RowId].World} mb");
                     }
                 }
                 else if (P.Config.UniversalisOnDemand && P.Config.UseUniversalis)
@@ -526,6 +539,17 @@ namespace Artisan.UI.Tables
                 {
                     var qty = item.MarketboardData.TotalQuantityOfUnits;
                     var listings = item.MarketboardData.TotalNumberOfListings;
+
+                    // 🔴 「不知道」不可以畫成 0 —— 降級來源（aggregated 端點）根本沒有這兩個數字，
+                    //    而 $"{null:N0}" 會產生空字串，看起來像「查到了，結果是空的」。
+                    if (qty == null || listings == null)
+                        return "?? listings - ?? total items".Loc("?", "?");
+
+                    // 🔴 被 listings=N 截斷時，Universalis 回的那兩個數字算的是「回傳的那幾筆」，
+                    //    不是市場真實總數（實測：道具 5532 不帶參數 219 筆／20096 件，
+                    //    帶 listings=6 變成 6 筆／594 件）⇒ 只能當下界講。
+                    if (item.MarketboardData.ListingsTruncated)
+                        return "?? listings - ?? total items".Loc($"{listings:N0}+", $"{qty:N0}+");
 
                     return "?? listings - ?? total items".Loc($"{listings:N0}", $"{qty:N0}");
                 }

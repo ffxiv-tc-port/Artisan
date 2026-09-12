@@ -197,6 +197,39 @@ namespace Artisan
         public bool LimitUnversalisToDC = false;
         public bool UniversalisOnDemand = false;
 
+        /// <summary>
+        /// 向 Universalis 查價時，每件道具最多取回幾筆掛售（0＝不限）。
+        /// </summary>
+        /// <remarks>
+        /// 📌 這個上限<b>不是</b>為了修 HTTP 504（那是 <c>entries=0</c> 修好的，見
+        /// <c>UniversalisClient</c> 檔頭的實測），而是為了讓回應大小有上界：一個 18 件的區域批次
+        /// 不限筆數時是 801 KB，取 100 筆是 482 KB。
+        /// 🔴 為什麼預設是 300 而不是更小：Universalis 回的 <c>listingsCount</c> 與
+        /// <c>unitsForSale</c> 算的是<b>這次回傳的那幾筆</b>，而「買 N 件最便宜的世界」也是從掛售
+        /// 明細算的 ⇒ 上限太低會讓畫面上的數字變小且變錯。2026-09-13 拿使用者實機 log 裡
+        /// 出現過的全部 90 件道具實測掛售深度：中位數 90 筆、p90 是 207 筆、最深 656 筆；
+        /// 上限 50 會截斷 73% 的道具、100 會截斷 44%、200 是 11%、<b>300 是 3.3%</b>。
+        /// 另外用同一份真實資料逐件重跑「最便宜世界」的計算：上限 100 有 11/90 個情境算出
+        /// 不同答案、上限 50 有 42/90 ⇒ 那兩個值都會改到使用者看得見的數字。
+        /// ⚠️ 真的被截斷時 <c>MarketboardData.ListingsTruncated</c> 會標起來，畫面改顯示
+        /// 下界而不是假裝那是總數。
+        /// ⚠️ 這是新加的欄位，既有使用者的設定檔裡沒有這個鍵 ⇒ 反序列化時保留欄位初始值，
+        /// 也就是既有使用者也拿得到這個預設（Artisan 走 Dalamud 自己的 <c>SavePluginConfig</c>）。
+        /// </remarks>
+        public int UniversalisListingsPerItem = 300;
+
+        /// <summary>
+        /// 同一個範圍＋同一件道具的查價結果快取多久（分鐘，0＝不快取）。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 為什麼需要：重建一次製作清單就把整份材料重問一遍。實機上使用者一個遊戲期間
+        /// 重建了 32 次清單，那是 419 次區域請求的主要來源，而材料價格十分鐘內不會有
+        /// 有意義的變化。
+        /// ⚠️ 只快取「問到了」的結果；失敗與「沒有市場資料」不入快取，
+        /// 否則使用者再按一次「取得價格」會什麼都不做。
+        /// </remarks>
+        public int UniversalisCacheMinutes = 10;
+
         public int SolverCollectibleMode = 3;
         public ItemFilter ShowItemsV1 { get; set; } = ItemFilter.All;
 

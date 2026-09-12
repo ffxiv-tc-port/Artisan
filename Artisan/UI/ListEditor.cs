@@ -553,6 +553,11 @@ internal class ListEditor : Window, IDisposable
                         var label = "?? - Cost ??, Qty ??".Loc(cheapest.World, $"{cheapest.Cost:N0}", cheapest.Qty);
                         var isSelfCraft = false;
 
+                        // 降級來源（aggregated 端點）只知道最低單價，不知道買 N 件的總價 ⇒ 標在列上。
+                        var degraded = lookup.Data.Source == MarketboardSource.Aggregated;
+                        if (degraded)
+                            label = "?? (approx.)".Loc(label);
+
                         if (hasMaterialCost && materialCost < bestCost)
                         {
                             bestCost = materialCost;
@@ -569,6 +574,17 @@ internal class ListEditor : Window, IDisposable
                         ImGui.Text(label);
                         if (isSelfCraft && ImGui.IsItemHovered())
                             ImGui.SetTooltip("Market price approx. ??, self-craft material cost approx. ??".Loc($"{cheapest.Cost:N0}", $"{materialCost:N0}"));
+                        else if (degraded && ImGui.IsItemHovered())
+                        {
+                            // 🔴 降級資料只有「一件的最低價」,所以它與「自己做」「NPC 商店」的比較
+                            //    是拿 1 件的市價去比 N 件的成本 —— 那個比較的勝負不可信,必須講出來。
+                            //    刻意**不**把單價乘上所需數量去湊一個總價:那等於假設最低價的掛售
+                            //    庫存無限,是把「不知道」畫成一個看起來很精確的數字。
+                            ImGui.SetTooltip(
+                                "Universalis timed out on the full listings, so this is the lowest unit price from its summary endpoint - the quantity shown is 1 unit, not the amount you need.".Loc()
+                                + "\n"
+                                + "Because of that, the comparison against \"craft yourself\" and the NPC shop is not reliable on this row.".Loc());
+                        }
                     }
                     else if (lookup.FetchFailed)
                     {

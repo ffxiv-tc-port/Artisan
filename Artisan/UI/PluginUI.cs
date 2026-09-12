@@ -1019,6 +1019,24 @@ namespace Artisan.UI
                             P.Config.Save();
 
                         ImGuiComponents.HelpMarker("You will have to click a button to fetch the price per item.".Loc());
+
+                        ImGui.SetNextItemWidth(120f.Scale());
+                        if (ImGui.InputInt("Reuse fetched prices for (minutes)".Loc(), ref P.Config.UniversalisCacheMinutes))
+                        {
+                            P.Config.UniversalisCacheMinutes = Math.Clamp(P.Config.UniversalisCacheMinutes, 0, 1440);
+                            P.Config.Save();
+                        }
+
+                        ImGuiComponents.HelpMarker("Rebuilding a list re-asks Universalis for every material. Within this window the previous answer is reused instead, which is the single biggest reduction in requests. 0 disables the cache.".Loc());
+
+                        ImGui.SetNextItemWidth(120f.Scale());
+                        if (ImGui.InputInt("Max listings per item".Loc(), ref P.Config.UniversalisListingsPerItem))
+                        {
+                            P.Config.UniversalisListingsPerItem = Math.Clamp(P.Config.UniversalisListingsPerItem, 0, 10000);
+                            P.Config.Save();
+                        }
+
+                        ImGuiComponents.HelpMarker("Caps how much of the market board Universalis sends back per item. Lowering it makes responses smaller, but the \"listings\" / \"total items\" counts and the cheapest-world calculation are computed from whatever was sent, so a low cap makes those numbers smaller than reality (truncated rows are marked). 0 means no limit.".Loc());
                     }
                 }
 

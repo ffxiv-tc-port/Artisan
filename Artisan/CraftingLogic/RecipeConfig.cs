@@ -52,10 +52,6 @@ public class RecipeConfig
     //    只要使用者動到任何別的設定觸發一次 Save(),臨時值就會透過這些屬性寫進設定檔。
     //    ⚠️ 失敗形式是靜默的:唯讀屬性**寫得出去、讀不回來**(反序列化找不到 setter 就跳過),
     //    所以檔案裡多了幾個永遠不會被讀回的鍵,而那些鍵記錄的是別的外掛的暫時意圖。
-    //    2026-09-08 用 tools/dotnet/jsoncontract 對建置好的 Artisan.dll 實測確認(不是推論)。
-    //    📌 拿掉這些鍵不會改變任何載入行為:它們本來就沒有 setter,一直都是寫出去就丟掉。
-    //    📌 RequiredManual／RequiredSquadronManual 那一組沒有臨時覆寫,不在這條的範圍內,
-    //       刻意不動。
     [JsonIgnore]
     public string CurrentSolverType => TempSolverType.Length > 0 ? TempSolverType : SolverType;
     [JsonIgnore]

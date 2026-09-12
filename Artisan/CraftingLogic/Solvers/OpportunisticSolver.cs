@@ -7,19 +7,11 @@ using Skills = Artisan.RawInformation.Character.Skills;
 namespace Artisan.CraftingLogic.Solvers;
 
 // Wraps a fixed plan (a Raphael-generated macro) with opportunistic condition awareness.
-//
-// A macro plays back a fixed action list, so on its own it cannot react to Good/Excellent/Poor showing up.
-// Raphael's plan is optimal against a deterministic model where CP, durability and progress are all budgeted
-// exactly, so deviating from it is dangerous: an inserted step burns one turn off *every* turn-based buff
-// (innovation, veneration, manipulation, waste not, great strides, muscle memory...) and can easily cost more
-// than the condition multiplier gains.
-//
-// The rule here is therefore "simulate before deviating": every candidate is played out against the simulator,
+// The rule here is "simulate before deviating": every candidate is played out against the simulator,
 // with the *remainder of the original plan* replayed on top of it, and it is only adopted when the craft still
 // completes and the final quality is strictly higher than sticking to the plan. If the plan itself does not
 // simulate to a completed craft we never deviate at all - deviating on a model we already know is off is worse
 // than useless.
-//
 // Note: actions that consume 能工巧匠圖紙 (careful observation / heart and soul / quick innovation) are
 // deliberately never proposed - they cost the player a real consumable, which is not ours to spend.
 public class OpportunisticSolver : Solver, ICraftValidator

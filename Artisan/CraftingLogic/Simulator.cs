@@ -19,13 +19,6 @@ public static class Simulator
 {
     /// <summary>
     /// 奇蹟之材(Action #41269)的持續時間,單位秒。
-    ///
-    /// ✅ **有台服官方資料背書,不是抄來的猜測**(2026-08-07 更正):
-    /// `D:/ffxiv-tc-port/exd-tc/7.20/ActionTransient.csv` 第 41269 列的 `Description` 欄逐字寫著
-    ///   「每次作業會發生變化的製作狀態固定變為『高品質』『結實』『安定』『高效』『長持續』『大進展』
-    ///     狀態的其中一個 / **持續時間:**45秒 / **該技能僅限在探索任務的製作中使用**」
-    /// (舊註解說「Action 表裡查不到時長欄位所以無法離線驗證」——**前半對、結論錯**。)
-    ///
     /// 🔑 可複用的教訓:**技能時長不在 `Action` 表的欄位裡,在 `ActionTransient.Description` 的文字裡。**
     /// 全外掛只有這一處硬編,底下兩個值都由它推導。
     /// </summary>
@@ -43,10 +36,7 @@ public static class Simulator
 
     /// <summary>
     /// 奇蹟之材換算成「幾個動作」——**只給前瞻模擬用**,實機走真時鐘。
-    ///
     /// = ceil(45 秒 / 2.19 秒) = 21 步。
-    /// 舊值是 15(當時假設一步 2~3 秒、取中間值)。實機 log 量出來的形狀是
-    /// 「走完 15 步遊戲 buff 還在、再約 6 步才真的失效」,也就是估得太短。
     /// 估太長 = buff 到期那一步會對不上狀態;估太短 = 提早以為 buff 沒了。
     /// 兩種都只造成「一次」狀態不合(之後 BuildStepState 會重新對齊),不會累積。
     /// 🔴 這個常數只在使用者主動開啟奇蹟之材時才有作用(兩個相關設定預設都是關的)。
@@ -56,25 +46,10 @@ public static class Simulator
 
     /// <summary>
     /// 奇蹟之材(Action #41269)生效期間的製作狀態池 —— **全外掛唯一的一份**。
-    ///
-    /// ✅ **池的成員是查證過的,不是推測**,兩個互相獨立的來源:
-    ///  ① 台服官方文字:`exd-tc/7.20/ActionTransient.csv` 第 41269 列 `Description` 逐字寫著
-    ///     「每次作業會發生變化的製作狀態**固定變為**『高品質』『結實』『安定』『高效』『長持續』『大進展』
-    ///       狀態的其中一個」。這裡的順序就照那句話的順序排,方便逐字核對。
-    ///  ② 使用者實機 log(2026-08-15 重新收割全部 `dalamud*.log`,不是舊註解那 55 步):
-    ///     `MaterialMiracleActive:True` 的步驟共 **812 筆(去重後 801 筆)**,
-    ///     **落在池外的 0 筆** —— 沒有通常、沒有最高品質/低品質、沒有予兆。
-    ///     同一批 log 裡 buff 沒生效的 14087 步則是 通常 73.3%、予兆 1.3%、最高品質 1.1%、低品質 1.1%。
-    ///     ⇒ 奇蹟之材是把狀態池**整個換掉**,不是在配方原本的池子上做過濾
-    ///       (連配方 `ConditionsFlag` 根本沒有「安定」的非專家配方也照樣擲得出來)。
-    ///
-    /// ⚠️ **池內的機率是假設,不是查證** —— 台服 EXD **沒有任何一張表**存製作狀態的機率
-    ///    (`RecipeLevelTable.ConditionsFlag` 只說「哪些狀態會出現」;連一般製作的權重
-    ///     `CraftState.NormalCraftConditionProbabilities` 也是社群逆向出來的硬編值)。
-    ///    這裡採**池內均勻分布(各 1/6)**。實機 801 筆的分布是
-    ///    結實 19.7% / 安定 19.6% / 大進展 15.5% / 高效 15.4% / 長持續 15.0% / 高品質 14.9%,
-    ///    對「完全均勻」的卡方 13.1(df=5,5% 臨界 11.07)—— **略微偏離但沒有權威真值可用**,
-    ///    而且樣本高度集中在少數幾場製作(570/812 來自同一個 log 檔),不足以拿來擬合權重。
+    /// ⇒ 奇蹟之材是把狀態池**整個換掉**,不是在配方原本的池子上做過濾
+    ///   (連配方 `ConditionsFlag` 根本沒有「安定」的非專家配方也照樣擲得出來)。
+    /// ⚠️ **池內的機率是假設,不是查證**。
+    ///    這裡採**池內均勻分布(各 1/6)**。
     ///    🔑 要推翻這個假設,需要的是**更多不同場次的實機樣本**,不是再讀一次資料表。
     /// </summary>
     public static readonly Condition[] MaterialMiracleConditionPool =
@@ -90,15 +65,7 @@ public static class Simulator
     /// <summary>
     /// 「不擲骰」的前瞻模擬(慣例是 <c>Execute(craft, step, action, 0, 1)</c>:動作必成功、
     /// 狀態擲骰餵 1)在奇蹟之材生效期間要落在哪個狀態。
-    ///
-    /// 🔑 為什麼是「安定」而不是別的:那條慣例的 roll=1 原本會讓
-    /// <see cref="GetTransitionByRoll"/> 全部扣完仍不小於 0,退回「通常」——
-    /// 也就是「**沒有任何狀態加成**」的中性世界。但奇蹟之材期間**沒有通常可選**,
-    /// 六個成員裡只有「安定」的效果是**成功率**,而成功率在這條慣例下已經被 roll=0 釘成必成功,
-    /// 所以「安定」是唯一一個**對進度/品質/耐久/CP/buff 時長全都是恆等變換**的成員。
-    /// ⇒ 拿它當代表,既不再宣稱一個實機不可能出現的狀態,又讓所有既有的決定性前瞻
-    ///   (<c>SolverUtils.SimulateSolverExecution</c>、<c>OpportunisticSolver</c> 的 rollout、
-    ///    <c>StandardSolver.CanSpamBasicToComplete</c>)在數值上維持原樣。
+    /// 「安定」是唯一一個**對進度/品質/耐久/CP/buff 時長全都是恆等變換**的成員。
     /// ⚠️ 唯一還是會變的是「**依狀態名稱分支**」的解算器邏輯(例如 ExpertSolver 把
     ///    通常/高品質/予兆/長持續 視為「可以觀察」的那一組;安定不在裡面)。這是刻意的:
     ///    那些分支本來就該看到實機真的會出現的狀態。
@@ -424,13 +391,7 @@ public static class Simulator
 
         // free actions do not advance the turn, so the condition does not re-roll either
         // (careful observation is the exception - re-rolling the condition is its entire purpose)
-        //
-        // 🔑 狀態池要看**轉移後**的 next.MaterialMiracleActive,不是轉移前的 step:
-        //  ① 按下奇蹟之材的那一步 step 還是 false、next 才是 true,而實機 log 直接觀測到
-        //     「#6 Good … MaterialMiracleActive:True(21) … Prev=MaterialMiracle」——
-        //     **按下去當下狀態就已經換成池內的了**(50 次 Prev=MaterialMiracle 的觀測全在池內)。
-        //     用 step 的話這一次轉移會漏掉,而那正好是最關鍵的一次。
-        //  ② buff 到期的那一步反過來:step 還是 true、next 已經 false,該回配方自己的狀態表。
+        // 🔑 狀態池要看**轉移後**的 next.MaterialMiracleActive,不是轉移前的 step。
         //  ⇒ 兩個方向都是「該步顯示的狀態,對應該步的 buff 狀態」,這是自洽的那一個選擇。
         next.Condition = action is Skills.FinalAppraisal or Skills.HeartAndSoul or Skills.QuickInnovation ? step.Condition : GetNextCondition(craft, step, nextStateRoll, next.MaterialMiracleActive);
 
@@ -703,19 +664,10 @@ public static class Simulator
 
     /// <summary>
     /// 下一步的製作狀態。
-    ///
     /// 🔴 <paramref name="materialMiracleActive"/> 為真時,配方自己的狀態表**整個不算數** ——
     /// 奇蹟之材期間只會出現 <see cref="MaterialMiracleConditionPool"/> 那六種
-    /// (實機 801 步、池外 0 筆;見該欄位註解)。
-    ///
     /// ⚠️ 這個分支**壓過**下面那組強制轉移,包括「最高品質 → 低品質」與
-    ///    「非專家配方的 高品質 → 通常」。理由:
-    ///     ① 官方文字寫的是「固定變為…其中一個」,沒有例外條款;
-    ///     ② 實機 801 步裡低品質/通常都是 0 筆;
-    ///     ③ 88 個玩家搆得到的宇宙奇蹟配方**全部是非專家**,不壓過的話
-    ///        「高品質 → 通常」會把池子從六種打回通常,等於補了跟沒補一樣。
-    ///    ⚠️ **沒有實機樣本能證明「按下奇蹟之材的那一步剛好是最高品質」時遊戲怎麼處理**
-    ///    (那要求 buff 生效與最高品質同時發生);這裡選擇一致地走池子。
+    ///    「非專家配方的 高品質 → 通常」。理由。
     /// </summary>
     public static Condition GetNextCondition(CraftState craft, StepState step, float roll, bool materialMiracleActive)
     {

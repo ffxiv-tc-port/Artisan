@@ -1,7 +1,5 @@
 ﻿using Artisan.RawInformation;
 using ECommons.DalamudServices;
-using FFXIVClientStructs.FFXIV.Client.System.Framework;
-using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -21,11 +19,9 @@ namespace Artisan.Autocraft
         internal static (uint Id, string Name)[] Manuals;
         internal static (uint Id, string Name)[] SquadronManuals;
         static Dictionary<uint, string> Usables;
-        static AgentInterface* itemContextMenuAgent;
 
         internal static void Init()
         {
-            itemContextMenuAgent = Framework.Instance()->UIModule->GetAgentModule()->GetAgentByInternalId(AgentId.InventoryContext);
             Usables = Svc.Data.GetExcelSheet<Item>().Where(i => i.ItemAction.RowId > 0).ToDictionary(i => i.RowId, i => i.Name.ToString().ToLower())
             .Concat(Svc.Data.GetExcelSheet<EventItem>().Where(i => i.Action.RowId > 0).ToDictionary(i => i.RowId, i => i.Name.ToString().ToLower()))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
@@ -111,7 +107,7 @@ namespace Artisan.Autocraft
         {
             if (config == null || !config.FoodEnabled)
                 return true; // don't need a food
-            var foodBuff = Svc.ClientState.LocalPlayer.StatusList.FirstOrDefault(x => x.StatusId == 48 & x.RemainingTime > 10f);
+            var foodBuff = Svc.Objects.LocalPlayer.StatusList.FirstOrDefault(x => x.StatusId == 48 & x.RemainingTime > 10f);
             if (foodBuff == null)
                 return false; // don't have any well-fed buff
             var desiredFood = LuminaSheets.ItemSheet[config.RequiredFood].ItemAction.Value;
@@ -126,7 +122,7 @@ namespace Artisan.Autocraft
         {
             if (config == null || !config.PotionEnabled)
                 return true; // don't need a pot
-            var potBuff = Svc.ClientState.LocalPlayer.StatusList.FirstOrDefault(x => x.StatusId == 49 & x.RemainingTime > 10f);
+            var potBuff = Svc.Objects.LocalPlayer.StatusList.FirstOrDefault(x => x.StatusId == 49 & x.RemainingTime > 10f);
             if (potBuff == null)
                 return false; // don't have any well-fed buff
             var desiredPot = LuminaSheets.ItemSheet[config.RequiredPotion].ItemAction.Value;
@@ -141,7 +137,7 @@ namespace Artisan.Autocraft
         {
             if (config == null || !config.ManualEnabled)
                 return true; // don't need a manual
-            return Svc.ClientState.LocalPlayer?.StatusList.Any(x => x.StatusId == 45) == true;
+            return Svc.Objects.LocalPlayer?.StatusList.Any(x => x.StatusId == 45) == true;
         }
 
         internal static bool IsSquadronManualled(RecipeConfig? config)
@@ -150,7 +146,7 @@ namespace Artisan.Autocraft
                 return true; // don't need a squadron manual
             // Squadron engineering/spiritbonding/rationing/gear manual.
             uint[] SquadronManualBuffss = { 1082, 1083, 1084, 1085 };
-            return Svc.ClientState.LocalPlayer?.StatusList.Any(x => SquadronManualBuffss.Contains(x.StatusId)) == true;
+            return Svc.Objects.LocalPlayer?.StatusList.Any(x => SquadronManualBuffss.Contains(x.StatusId)) == true;
         }
 
         internal static bool UseItem(uint id, bool hq = false)

@@ -5,6 +5,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Threading.Tasks;
 
 namespace Artisan.RawInformation
 {
@@ -12,6 +13,11 @@ namespace Artisan.RawInformation
     {
         public static bool StagingChecked = false;
         public static bool IsStaging = false;
+        private static bool checkStarted = false;
+
+        // IsOnStaging() is polled every Draw() frame; the actual check does blocking network/file I/O,
+        // so it must never run on the calling (UI) thread. Kick it off once in the background and
+        // report "not staging" until the background check lands.
         public static bool IsOnStaging()
         {
             if (StagingChecked)
@@ -19,6 +25,17 @@ namespace Artisan.RawInformation
                 return IsStaging;
             }
 
+            if (!checkStarted)
+            {
+                checkStarted = true;
+                Task.Run(CheckStaging);
+            }
+
+            return false;
+        }
+
+        private static void CheckStaging()
+        {
             if (DalamudReflector.TryGetDalamudStartInfo(out var startinfo, Svc.PluginInterface))
             {
                 try
@@ -37,7 +54,7 @@ namespace Artisan.RawInformation
                             {
                                 StagingChecked = true;
                                 IsStaging = false;
-                                return false;
+                                return;
                             }
                         }
                     }
@@ -47,7 +64,7 @@ namespace Artisan.RawInformation
                     // Something has gone wrong with checking the Dalamud github file, just allow plugin load anyway
                     StagingChecked = true;
                     IsStaging = false;
-                    return false;
+                    return;
                 }
 
                 if (File.Exists(startinfo.ConfigurationPath))
@@ -61,13 +78,13 @@ namespace Artisan.RawInformation
                         {
                             StagingChecked = true;
                             IsStaging = true;
-                            return true;
+                            return;
                         }
                         else
                         {
                             StagingChecked = true;
                             IsStaging = false;
-                            return false;
+                            return;
                         }
                     }
                     catch (Exception ex)
@@ -75,17 +92,16 @@ namespace Artisan.RawInformation
                         Svc.Chat.PrintError($"Unable to detrermine Dalamud staging due to file being config being unreadable.");
                         StagingChecked = true;
                         IsStaging = false;
-                        return false;
+                        return;
                     }
                 }
                 else
                 {
                     StagingChecked = true;
                     IsStaging = false;
-                    return false;
+                    return;
                 }
             }
-            return false;
         }
     }
 }

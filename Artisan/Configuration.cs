@@ -21,14 +21,17 @@ namespace Artisan
         public bool AutoMode
         {
             get => autoMode;
-            set
-            {
-                if (value)
-                {
-                    ActionManagerEx.UseSkill(CraftingProcessor.NextRec.Action);
-                }
-                autoMode = value;
-            }
+            set => autoMode = value;
+        }
+
+        /// <summary>使用者在 UI／指令切換自動模式的唯一入口：勾上時立刻送出目前這一則建議。</summary>
+        /// <remarks><see cref="AutoMode"/> 本身只做賦值——設定屬性不得帶遊戲動作副作用，
+        /// 否則反序列化使用者設定檔就會呼叫一次 UseSkill。</remarks>
+        public void SetAutoMode(bool enabled)
+        {
+            autoMode = enabled;
+            if (enabled)
+                ActionManagerEx.UseSkill(CraftingProcessor.NextRec.Action);
         }
         public bool DisableFailurePrediction = false;
         public int MaxPercentage = 100;
@@ -54,10 +57,15 @@ namespace Artisan
         public List<NewCraftingList> NewCraftingLists { get; set; } = new();
 
         public bool ReplicateMacroDelay = false;
+        public bool ReplicateMacroDelayWhenPlayersNearby = false;
         public int AutoDelay = 0;
         public bool DelayRecommendation = false;
         public int RecommendationDelay = 0;
         public bool AbortIfNoFoodPot = false;
+
+        /// <summary>設了食物／藥水／筆記但背包沒有時提示一次，<b>不中止</b>製作。</summary>
+        /// <remarks>🔴 只提示、不購買 —— 自動上市場採買是紅線。中止是 <see cref="AbortIfNoFoodPot"/> 的事。</remarks>
+        public bool WarnIfNoFoodPot = true;
         public bool Repair = false;
         public bool PrioritizeRepairNPC = false;
         public bool DisableEnduranceNoRepair = false;
@@ -102,6 +110,37 @@ namespace Artisan
         public bool PlaySoundFinishEndurance = false;
         public bool PlaySoundFinishList = false;
 
+        /// <summary>製作被迫停下、需要人處理時播放提示音（遊戲錯誤、缺消耗品、無法修理、解算器不能用等；正常做完與使用者自己停的不算）。</summary>
+        /// <remarks>各停止點經由 <c>Endurance.NotifyForcedStop</c> 觸發，「三十秒內最多一次」的節流在 <c>Endurance.PlayErrorSound</c>。</remarks>
+        public bool PlaySoundError = false;
+
+        /// <summary>
+        /// 製作清單整份跑完時，透過 IPC 請 TataruPraise 念一句誇獎。
+        /// </summary>
+        /// <remarks>
+        /// 📌 預設 <c>true</c>：TataruPraise 沒安裝時整條路是靜默 no-op（IPC 擲 <c>IpcNotReadyError</c>
+        /// 被吃掉），而 TataruPraise 自己的總開關（預設關）與冷卻也還在，所以預設開不會讓任何人多聽到聲音。
+        /// </remarks>
+        public bool TataruPraiseFinishList = true;
+
+        /// <summary>
+        /// 耐力模式<b>自己跑到結束</b>時（份數做完、或素材用完），請 TataruPraise 說一句。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 一輪最多說一句（去重在 <c>Artisan.IPC.TataruPraiseIPC</c> 的 <c>stopNoticeArmed</c>）。
+        /// ⚠️ 使用者自己把耐力模式關掉、或取消一次製作，都<b>不算</b>「跑完了」，不會說。
+        /// </remarks>
+        public bool TataruPraiseFinishEndurance = true;
+
+        /// <summary>
+        /// 製作<b>被迫停下</b>時，請 TataruPraise 說一句「需要幫忙」。
+        /// </summary>
+        /// <remarks>
+        /// 📌 只在「不是你要的停止」時說，停止點與 <see cref="PlaySoundError"/> 是同一組（都經由 <c>Endurance.NotifyForcedStop</c>）。
+        /// 🔴 一輪最多說一句，而且清單模式與耐力模式共用同一個閘門；暫停中的清單不算在跑，不會重喊。
+        /// </remarks>
+        public bool TataruPraiseCraftNeedHelp = true;
+
         public float SoundVolume = 0.25f;
 
         public bool DefaultListMateria = false;
@@ -119,6 +158,31 @@ namespace Artisan
         public bool HideContextMenus = false;
         public int ContextMenuLoops = 1;
         public float ListCraftThrottle2 = 1f;
+
+        public bool SubtractOwnedFinishedProductFromIngredientTable = false;
+        public bool RestockFinishedProductsFromRetainers = false;
+
+        /// <summary>製作清單碰到素材不夠的項目時，先把自己做得出來的缺料做到足夠再繼續；關掉＝照舊跳過。</summary>
+        /// <remarks>Load 走 JObject.ToObject：舊設定檔沒有這個鍵時保留這裡的初始值（開）。</remarks>
+        public bool PrecraftMissingIngredients = true;
+
+        /// <summary>
+        /// Whether retainer restocking may ask AutoRetainer to fire the game's retrieve command directly at a
+        /// slot instead of driving the retainer window. Defaults on because that is the whole point of the
+        /// integration; turning it off restores the window-driving path exactly as it was, and the path is
+        /// skipped automatically anyway whenever AutoRetainer is missing or too old.
+        /// </summary>
+        public bool UseDirectRetainerRetrieval = true;
+
+        /// <summary>
+        /// How many free player bag slots the retainer-window restock path must be able to see before it takes
+        /// a whole stack instead of only the amount still needed. Defaults to 2, which is the value the path
+        /// shipped with as a constant: a full stack landing on top of an existing partial stack of the same
+        /// item can split across two slots, so one spare slot is not always enough.
+        /// An unknown free-slot count (-1, e.g. while zoning) always falls back to the exact amount no matter what
+        /// this is set to, which is why the effective value is clamped to at least 1 at the point of use.
+        /// </summary>
+        public int RestockFullStackFreeSlots = 2;
 
         public bool DefaultHideInventoryColumn = false;
         public bool DefaultHideRetainerColumn = false;
@@ -138,6 +202,24 @@ namespace Artisan
         public bool UseUniversalis = false;
         public bool LimitUnversalisToDC = false;
         public bool UniversalisOnDemand = false;
+
+        /// <summary>
+        /// 向 Universalis 查價時，每件道具最多取回幾筆掛售（0＝不限）。
+        /// </summary>
+        /// <remarks>
+        /// ⚠️ 真的被截斷時 <c>MarketboardData.ListingsTruncated</c> 會標起來，畫面改顯示
+        /// 下界而不是假裝那是總數。
+        /// </remarks>
+        public int UniversalisListingsPerItem = 300;
+
+        /// <summary>
+        /// 同一個範圍＋同一件道具的查價結果快取多久（分鐘，0＝不快取）。
+        /// </summary>
+        /// <remarks>
+        /// ⚠️ 只快取「問到了」的結果；失敗與「沒有市場資料」不入快取，
+        /// 否則使用者再按一次「取得價格」會什麼都不做。
+        /// </remarks>
+        public int UniversalisCacheMinutes = 10;
 
         public int SolverCollectibleMode = 3;
         public ItemFilter ShowItemsV1 { get; set; } = ItemFilter.All;
@@ -173,7 +255,6 @@ namespace Artisan
 
         public static Configuration Load()
         {
-            var fallback = Svc.PluginInterface.GetPluginConfig() as Configuration ?? new();
             try
             {
                 var contents = File.ReadAllText(Svc.PluginInterface.ConfigFile.FullName);
@@ -185,7 +266,8 @@ namespace Artisan
             catch (Exception e)
             {
                 Svc.Log.Error($"Failed to load config from {Svc.PluginInterface.ConfigFile.FullName}: {e}");
-                return fallback;
+                // 備援只在上面失敗時才讀：成功時它整份反序列化完就丟掉。
+                return Svc.PluginInterface.GetPluginConfig() as Configuration ?? new();
             }
         }
 

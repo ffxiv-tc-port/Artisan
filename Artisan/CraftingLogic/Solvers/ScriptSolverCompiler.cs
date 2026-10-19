@@ -35,7 +35,7 @@ public class ScriptSolverCompiler : IDisposable
     {
         _cancel = true;
         _sema.Release();
-        _compilerThread.Join();
+        _compilerThread?.Join();
     }
 
     public void Recompile(ScriptSolverSettings.Script script)

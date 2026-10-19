@@ -6,34 +6,51 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System;
 using static ECommons.GenericHelpers;
+using RepairManager = Artisan.Autocraft.RepairManager;
+using YesAlreadyBotherPause = Artisan.IPC.YesAlreadyBotherPause;
 
 namespace Artisan.RawInformation
 {
     public unsafe static class Spiritbond
     {
-        public static ushort Weapon { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[0].SpiritbondOrCollectability; }
+        /// <summary>已裝備欄位的精魂值安全讀取。讀不到一律回 0。
+        /// 擋三件事：
+        /// (a) 換區／剛登入時 <c>GetInventoryContainer</c> 直接回 null，<c>-&gt;Items</c>（偏移 0x08）會炸；
+        /// (b) 容器已存在但 <c>Items</c> 尚未配置 —— 此時 <c>Size</c> 可能已非 0，
+        ///     而 <c>Items[slot]</c> 會從「null + slot * 0x48」這個小偏移假位址讀出垃圾精魂值；
+        /// (c) 容器只載入一半、<c>Size</c> 還沒到 13。
+        ///    0 與「該欄位真的沒裝備」同值，語意上沒有損失（空欄位本來就讀 0）。</summary>
+        private static ushort GetEquippedSpiritbond(int slot)
+        {
+            var equipment = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
+            if (equipment == null || equipment->Items == null) return 0;
+            if (slot < 0 || slot >= equipment->Size) return 0;
+            return equipment->Items[slot].SpiritbondOrCollectability;
+        }
 
-        public static ushort Offhand { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[1].SpiritbondOrCollectability; }
+        public static ushort Weapon { get => GetEquippedSpiritbond(0); }
 
-        public static ushort Helm { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[2].SpiritbondOrCollectability; }
+        public static ushort Offhand { get => GetEquippedSpiritbond(1); }
 
-        public static ushort Body { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[3].SpiritbondOrCollectability; }
+        public static ushort Helm { get => GetEquippedSpiritbond(2); }
 
-        public static ushort Hands { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[4].SpiritbondOrCollectability; }
+        public static ushort Body { get => GetEquippedSpiritbond(3); }
 
-        public static ushort Legs { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[6].SpiritbondOrCollectability; }
+        public static ushort Hands { get => GetEquippedSpiritbond(4); }
 
-        public static ushort Feet { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[7].SpiritbondOrCollectability; }
+        public static ushort Legs { get => GetEquippedSpiritbond(6); }
 
-        public static ushort Earring { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[8].SpiritbondOrCollectability; }
+        public static ushort Feet { get => GetEquippedSpiritbond(7); }
 
-        public static ushort Neck { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[9].SpiritbondOrCollectability; }
+        public static ushort Earring { get => GetEquippedSpiritbond(8); }
 
-        public static ushort Wrist { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[10].SpiritbondOrCollectability; }
+        public static ushort Neck { get => GetEquippedSpiritbond(9); }
 
-        public static ushort Ring1 { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[11].SpiritbondOrCollectability; }
+        public static ushort Wrist { get => GetEquippedSpiritbond(10); }
 
-        public static ushort Ring2 { get => InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems)->Items[12].SpiritbondOrCollectability; }
+        public static ushort Ring1 { get => GetEquippedSpiritbond(11); }
+
+        public static ushort Ring2 { get => GetEquippedSpiritbond(12); }
 
         public static bool IsSpiritbondReadyAny()
         {
@@ -66,8 +83,11 @@ namespace Artisan.RawInformation
 
         public unsafe static void CloseMateriaMenu()
         {
-            if (Svc.GameGui.GetAddonByName("Materialize", 1) != IntPtr.Zero)
+            var materialize = (AtkUnitBase*)Svc.GameGui.GetAddonByName("Materialize", 1).Address;
+            if (materialize != null)
             {
+                // 切換動作在窗開著時就是關窗:記下來,之後對這一扇的 FireCallback 不會落在關閉中那幾幀。
+                AddonPressGuard.MarkClosing("Materialize", materialize);
                 ActionManagerEx.UseMateriaExtraction();
             }
         }
@@ -80,11 +100,17 @@ namespace Artisan.RawInformation
                 if (materializePTR == IntPtr.Zero)
                     return;
 
-                var materalizeWindow = (AtkUnitBase*)materializePTR;
+                var materalizeWindow = (AtkUnitBase*)materializePTR.Address;
                 if (materalizeWindow == null)
                     return;
 
+                // 🔴 MaterializeDialog 按下確認就關,關閉中那幾幀 GetAddonByName 仍非零、按鈕仍可用;
+                // 外層 _nextRetry 500ms 是節流不是防護,而這個 try/catch 對 AVE 完全無效。同一扇窗只按一次。
+                if (!AddonPressGuard.TryBeginPress("MaterializeDialog", materalizeWindow))
+                    return;
+
                 new AddonMaster.MaterializeDialog(materializePTR).Materialize();
+                _lastMaterializePressAt = Environment.TickCount64;
             }
             catch
             {
@@ -93,6 +119,17 @@ namespace Artisan.RawInformation
         }
 
         private static DateTime _nextRetry;
+
+        // 精製確認框由 Artisan 自己按；送出精製前請 YesAlready 暫停它的精製確認。
+        private const int YesAlreadyPauseMs = 10_000;
+
+        // 以下只在框架執行緒讀寫。
+        private static long _lastMaterializePressAt;
+        private static long _nextYesAlreadyFailLogAt;
+
+        /// <summary>Artisan 5 秒內送出過精製或按過精製確認框。</summary>
+        internal static bool RecentlyPressedMaterialize
+            => _lastMaterializePressAt != 0 && Environment.TickCount64 - _lastMaterializePressAt <= 5_000;
 
         public unsafe static bool ExtractMateriaTask(bool option)
         {
@@ -121,7 +158,9 @@ namespace Artisan.RawInformation
 
                     if (IsMateriaMenuOpen() && !PreCrafting.Occupied())
                     {
-                        ExtractFirstMateria();
+                        // 製作狀態旗標還在時送出的精製會被遊戲拒絕；呼叫端對 false 會先退出製作，清掉之後的下一輪才送。
+                        if (!RepairManager.InCraftingState())
+                            ExtractFirstMateria();
                         _nextRetry = DateTime.Now.Add(TimeSpan.FromMilliseconds(500));
                         return false;
                     }
@@ -150,11 +189,17 @@ namespace Artisan.RawInformation
                         if (materializePTR == IntPtr.Zero)
                             return;
 
-                        var materalizeWindow = (AtkUnitBase*)materializePTR;
+                        var materalizeWindow = (AtkUnitBase*)materializePTR.Address;
                         if (materalizeWindow == null)
                             return;
 
-                        var list = (AtkComponentList*)materalizeWindow->UldManager.NodeList[5];
+                        // 🔴 NodeList 的長度恰為 NodeListCount，[5] 越界時讀的是陣列後方的 8 bytes
+                        // 堆積垃圾（不是 null）。這個區域變數目前沒有任何消費端，所以只把越界讀擋掉，
+                        // 不改後面 FireCallback 的行為 —— 刻意不把它改成「讀不到就不送」，那是回退既有行為。
+                        var materializeUld = materalizeWindow->UldManager;
+                        var list = materializeUld.NodeList != null && materializeUld.NodeListCount > 5
+                            ? (AtkComponentList*)materializeUld.NodeList[5]
+                            : null;
 
                         var values = stackalloc AtkValue[2];
                         values[0] = new()
@@ -168,7 +213,25 @@ namespace Artisan.RawInformation
                             UInt = 0,
                         };
 
-                        materalizeWindow->FireCallback(1, values);
+                        // 精製窗本身不會因為這個 callback 而關(它只是開 MaterializeDialog),每顆魔晶石都會再送一次
+                        // ⇒ 多次互動窗的 15 幀逃生口;要擋的是 CloseMateriaMenu(MarkClosing)之後落在關閉中的那幾幀。
+                        var yesAlready = YesAlreadyBotherPause.Pause("MaterializeDialog", YesAlreadyPauseMs);
+                        if (yesAlready == YesAlreadyBotherPause.Result.Failed)
+                        {
+                            var now = Environment.TickCount64;
+                            if (now >= _nextYesAlreadyFailLogAt)
+                            {
+                                _nextYesAlreadyFailLogAt = now + 30_000;
+                                Svc.Log.Information("[Artisan][精製] 無法請 YesAlready 暫停精製確認框（可能和它同時按到同一扇），這次不送出精製，稍後再試。");
+                            }
+                            return;
+                        }
+
+                        if (AddonPressGuard.TryBeginPress("Materialize", materalizeWindow, "1|2|0", AddonPressGuard.RoutineRePressEscapeFrames))
+                        {
+                            materalizeWindow->FireCallback(1, values);
+                            _lastMaterializePressAt = Environment.TickCount64;
+                        }
 
 
 

@@ -10,6 +10,7 @@ using ECommons.Logging;
 using Dalamud.Game.Text.SeStringHandling;
 using System.Linq;
 using Lumina.Excel.Sheets;
+using Artisan.IPC;
 
 namespace Artisan.Autocraft
 {
@@ -30,10 +31,16 @@ namespace Artisan.Autocraft
                 if (message.Payloads.Any(x => x.Type == PayloadType.Item))
                 {
                     var item = (ItemPayload)message.Payloads.First(x => x.Type == PayloadType.Item);
-                    if (Svc.Data.Excel.GetSheet<Item>().GetRow(item.Item.RowId).CanBeHq)
+                    // ItemPayload.Item 在 Kind == EventItem 時回傳的是 EventItem 的 RowRef，
+                    // 其 RowId 落在 2000000+ (台服 EventItem 為 2000000..2003789)，而 Item 表只有
+                    // 0..49200 —— 直接餵進去會擲 ArgumentOutOfRangeException。這裡是
+                    // Svc.Chat.ChatMessage 回呼，Dalamud 會逐個 handler 攔下例外並記錄，所以後果
+                    // 是每則符合條件的訊息都洗一次 log，不是帶崩；但仍應在來源擋掉。
+                    if (Svc.Data.Excel.GetSheet<Item>().TryGetRow(item.Item.RowId, out var craftedItem) && craftedItem.CanBeHq)
                     {
                         if (Endurance.Enable && P.Config.EnduranceStopNQ && !item.IsHQ)
                         {
+                            Endurance.NotifyForcedStop("做出了非 HQ 的成品（你設定了遇到就停）");
                             Endurance.ToggleEndurance(false);
                             Svc.Toasts.ShowError("You crafted a non-HQ item. Disabling Endurance.");
                             DuoLog.Error("You crafted a non-HQ item. Disabling Endurance.");
@@ -72,12 +79,14 @@ namespace Artisan.Autocraft
             {
                 if (cancelled)
                 {
+                    // 刻意不響錯誤提示音：放棄製作幾乎都是使用者自己按的，人就在畫面前。
                     Endurance.ToggleEndurance(false);
                     Svc.Toasts.ShowError("You've cancelled a craft. Disabling Endurance.");
                     DuoLog.Error("You've cancelled a craft. Disabling Endurance.");
                 }
                 else if (finalStep.Progress < craft.CraftProgress && P.Config.EnduranceStopFail)
                 {
+                    Endurance.NotifyForcedStop("製作失敗（你設定了遇到就停）");
                     Endurance.ToggleEndurance(false);
                     Svc.Toasts.ShowError("You failed a craft. Disabling Endurance.");
                     DuoLog.Error("You failed a craft. Disabling Endurance.");
@@ -92,15 +101,27 @@ namespace Artisan.Autocraft
                         if (P.Config.PlaySoundFinishEndurance)
                             SoundPlayer.PlaySound();
                         DuoLog.Information("Craft X has completed.");
+                        TataruPraiseIPC.NotifyEnduranceFinished("指定的份數做完了");
 
                     }
                 }
             }
         }
 
+        // 這一輪簡易製作是不是自動化開的：開始時決定，之後中途暫停清單，剩下的件數照樣算進清單。
+        private static bool? quickSynthOwnedByAutomation;
+
         private static void OnQuickSynthProgress(int cur, int max)
         {
             if (cur == 0)
+            {
+                quickSynthOwnedByAutomation = max == 0 ? null : DutyPause.AutomationRunning;
+                return;
+            }
+
+            quickSynthOwnedByAutomation ??= DutyPause.AutomationRunning;
+            // 使用者自己做的簡易製作：不關他的視窗、不推進暫停中清單的進度。
+            if (quickSynthOwnedByAutomation != true)
                 return;
 
             CraftingListFunctions.CurrentIndex++;

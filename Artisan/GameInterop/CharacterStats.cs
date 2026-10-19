@@ -63,20 +63,44 @@ public unsafe struct ItemStats
         if (Data == null)
             return;
          
-        foreach (var p in Data.Value.BaseParams())
+        // 逐項照表的順序加總，讀不到的那一項略過；不建暫存清單（每幀路徑）。
+        var item = Data.Value;
+        var baseParams = item.BaseParam;
+        var baseValues = item.BaseParamValue;
+        for (var i = 0; i < baseParams.Count; i++)
         {
-            if (Array.IndexOf(CharacterStatsUtils.ParamIds, p.BaseParam.RowId) is var stat && stat >= 0)
+            uint paramId;
+            short value;
+            try
             {
-                Stats[stat].Base += p.BaseParamValue;
+                paramId = baseParams[i].Value.RowId;
+                value = baseValues[i];
+            }
+            catch { continue; }
+
+            if (Array.IndexOf(CharacterStatsUtils.ParamIds, paramId) is var stat && stat >= 0)
+            {
+                Stats[stat].Base += value;
             }
         }
         if (hq)
         {
-            foreach (var p in Data.Value.BaseParamSpecials())
+            var specialParams = item.BaseParamSpecial;
+            var specialValues = item.BaseParamValueSpecial;
+            for (var i = 0; i < specialParams.Count; i++)
             {
-                if (Array.IndexOf(CharacterStatsUtils.ParamIds, p.BaseParamSpecial.RowId) is var stat && stat >= 0)
+                uint paramId;
+                short value;
+                try
                 {
-                    Stats[stat].Base += p.BaseParamValueSpecial;
+                    paramId = specialParams[i].Value.RowId;
+                    value = specialValues[i];
+                }
+                catch { continue; }
+
+                if (Array.IndexOf(CharacterStatsUtils.ParamIds, paramId) is var stat && stat >= 0)
+                {
+                    Stats[stat].Base += value;
                 }
             }
         }
@@ -180,8 +204,14 @@ public unsafe struct CharacterStats
         stats.Craftsmanship = CharacterInfo.Craftsmanship;
         stats.Control = CharacterInfo.Control;
         stats.CP = (int)CharacterInfo.MaxCP;
-        stats.Specialist = InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 13)->ItemId != 0; // specialist == job crystal equipped
-        stats.SplendorCosmic = Svc.Data.GetExcelSheet<Item>()?.GetRow(InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 0)->ItemId) is { LevelEquip: 90 or 100, Rarity: >= 4 };
+        // InventoryManager.GetInventorySlot(type, index) 有 null 回傳路徑（換區／剛登入時容器還沒載入）。
+        // 讀不到時兩個旗標都留 false：
+        // Specialist=false 讓求解器不去規劃專家限定技能（假定有而實際不能用，整條製作序列會斷）；
+        // SplendorCosmic=false 同樣是「少假設一個加成」的方向。
+        var soulCrystal = InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 13);
+        stats.Specialist = soulCrystal != null && soulCrystal->ItemId != 0; // specialist == job crystal equipped
+        var mainHand = InventoryManager.Instance()->GetInventorySlot(InventoryType.EquippedItems, 0);
+        stats.SplendorCosmic = mainHand != null && Svc.Data.GetExcelSheet<Item>()?.GetRow(mainHand->ItemId) is { LevelEquip: 90 or 100, Rarity: >= 4 };
         stats.Manipulation = CharacterInfo.IsManipulationUnlocked(CharacterInfo.JobID);
 
         return stats;
@@ -195,7 +225,10 @@ public unsafe struct CharacterStats
     {
         var res = GetBaseStatsNaked();
         var inventory = InventoryManager.Instance()->GetInventoryContainer(InventoryType.EquippedItems);
-        if (inventory == null)
+        // 只判 inventory == null 不夠：容器存在但 Items（偏移 0x08）尚未配置時 Size 可能已非 0，
+        // 下面的 inventory->Items + i 會變成「null + i * 0x48」的小偏移假指標，
+        // ItemStats 會照著它讀出垃圾裝備數值 —— 那比讀不到更糟（求解器會拿假的匠心/加工去排序列）。
+        if (inventory == null || inventory->Items == null)
             return res;
 
         for (int i = 0; i < inventory->Size; ++i)
@@ -232,7 +265,16 @@ public unsafe struct CharacterStats
     {
         if (CharacterInfo.JobID == job)
             return GetBaseStatsEquipped();
-        foreach (ref var gs in RaptureGearsetModule.Instance()->Entries)
+
+        // Instance() 沒登入時合法回 null(它是 UIModule 的轉手,FFXIVClientStructs 裡就寫成
+        // 「uiModule == null ? null : ...」)。直接 ->Entries 是解參考 null =
+        // AccessViolationException,而它是 corrupted-state exception:下面那個 try/catch
+        // 完全攔不到。取不到裝備組清單就走本來就有的 fallback。
+        var gearsetModule = RaptureGearsetModule.Instance();
+        if (gearsetModule == null)
+            return GetBaseStatsEquipped();
+
+        foreach (ref var gs in gearsetModule->Entries)
         {
             try
             {
@@ -257,9 +299,110 @@ public unsafe struct CharacterStats
     }
 
     public void AddConsumables(ConsumableStats food, ConsumableStats pot, Dalamud.Game.ClientState.Statuses.Status fcCraftBuff)
+        => AddConsumables(food, pot, fcCraftBuff != null ? fcCraftBuff.Param : 0);
+
+    /// <summary>
+    /// 與上面那個多載完全相同,只是部隊加成以<b>純量</b>傳入。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 背景執行緒一律用這一個。另一個多載收的是 Dalamud 的 <c>Status</c> 包裝,
+    /// 而 <c>Status.Param</c> 的實作是 <c>this.Struct-&gt;Param</c> —— 那是原生解參考,
+    /// 只能在遊戲主執行緒上讀;而且 <c>CharacterInfo.FCCraftsmanshipbuff</c> 是
+    /// <b>跨幀保存</b>的包裝(每次 <c>UpdateCharaStats</c> 才換一次)。
+    /// </remarks>
+    public void AddConsumables(ConsumableStats food, ConsumableStats pot, int fcCraftBuffParam)
     {
-        Craftsmanship += food.EffectiveValue(CharacterStatsUtils.Stat.Craftsmanship, Craftsmanship) + pot.EffectiveValue(CharacterStatsUtils.Stat.Craftsmanship, Craftsmanship) + (fcCraftBuff != null ? fcCraftBuff.Param : 0);
+        Craftsmanship += food.EffectiveValue(CharacterStatsUtils.Stat.Craftsmanship, Craftsmanship) + pot.EffectiveValue(CharacterStatsUtils.Stat.Craftsmanship, Craftsmanship) + fcCraftBuffParam;
         Control += food.EffectiveValue(CharacterStatsUtils.Stat.Control, Control) + pot.EffectiveValue(CharacterStatsUtils.Stat.Control, Control);
         CP += food.EffectiveValue(CharacterStatsUtils.Stat.CP, CP) + pot.EffectiveValue(CharacterStatsUtils.Stat.CP, CP);
     }
+}
+
+/// <summary>
+/// 八個製作職業的基礎能力值 ＋ 部隊工匠加成,<b>在遊戲主執行緒上一次讀完</b>的純量快照。
+/// </summary>
+/// <remarks>
+/// 🔴 刻意做成<b>參考型別</b>而不是 struct:<see cref="Current"/> 的快取欄位會被
+/// 主執行緒寫、被別的執行緒讀,而 struct 指派(一個參考 ＋ 一個 int)<b>不是不可分割的</b>
+/// ⇒ 撕裂讀會拿到「新陣列 ＋ 舊加成」。換成參考型別之後發布一個參考就是原子操作。
+/// ⚠️ 只涵蓋 <c>CraftType</c> 的八列(台服 7.20 離線查表:恰好 8 列、id 0..7 連續,
+/// 對應 CRP..CUL)。索引以外回 <c>default(CharacterStats)</c>。
+/// </remarks>
+public sealed class CrafterStatsSnapshot
+{
+    /// <summary><c>CraftType</c> 的列數(台服 7.20 離線查表為 8,id 0..7)。</summary>
+    public const int CraftTypeCount = 8;
+
+    /// <summary><see cref="Current"/> 的重讀間隔。</summary>
+    private const long CacheMs = 500;
+
+    private readonly CharacterStats[] statsByCraftType;
+
+    /// <summary>部隊「工匠精神」(狀態 356)的 <c>Param</c>;沒有這個加成時為 0。</summary>
+    public int FcCraftsmanshipParam { get; }
+
+    private CrafterStatsSnapshot(CharacterStats[] stats, int fcParam)
+    {
+        statsByCraftType = stats;
+        FcCraftsmanshipParam = fcParam;
+    }
+
+    /// <summary>
+    /// 現在就重讀一份。<b>只能在遊戲主執行緒上呼叫</b>
+    /// (呼叫端都已經在上面,所以刻意不加閘門 —— 加了反而會在主執行緒上多繞一圈)。
+    /// </summary>
+    public static CrafterStatsSnapshot Read()
+    {
+        var stats = new CharacterStats[CraftTypeCount];
+        for (var craftType = 0u; craftType < CraftTypeCount; ++craftType)
+        {
+            var job = (Job)((uint)Job.CRP + craftType);
+            var s = CharacterStats.GetBaseStatsForClassHeuristic(job);
+            // GetBaseStats* 從來不填 Level(GetBaseStatsNaked 只設 CP=180),而
+            // Crafting.BuildCraftStateForRecipe 只在 Level 是 default 時才去讀
+            // PlayerState.Instance()->ClassJobLevels。在這裡就把它填好,背景那側
+            // 就不會再發生那一次原生讀取。
+            if (s.Level == default)
+                s.Level = CharacterInfo.JobLevel(job);
+            stats[craftType] = s;
+        }
+        return new CrafterStatsSnapshot(stats, CharacterInfo.FCCraftsmanshipbuff?.Param ?? 0);
+    }
+
+    private static CrafterStatsSnapshot? current;
+    private static long currentExpiresAt;
+
+    /// <summary>
+    /// <b>每幀路徑專用</b>:在遊戲主執行緒上最多每 <see cref="CacheMs"/> 毫秒重讀一次,
+    /// 其餘時間回上一份。不是主執行緒時<b>絕不重讀</b>,只回已經發布的那一份(可能是 <c>null</c>)。
+    /// </summary>
+    /// <remarks>
+    /// 🔑 為什麼要這一層:<c>ListEditor.DrawRecipeData</c> 每一幀都會走到,而
+    /// <see cref="Read"/> 要走訪 <c>gearsetModule-&gt;Entries</c>(100 格)並為八個職業各建
+    /// 十幾份 <c>ItemStats</c>。每幀做一次會把成本從執行緒池搬到<b>主執行緒的幀時間</b>上
+    /// —— 那是把一個崩潰問題換成一個掉幀問題,不可接受。
+    /// ⚠️ 代價是「約略清單時間」最多慢 500 毫秒反映換裝 —— 那個欄位的標題本身就寫著「約略」。
+    /// </remarks>
+    public static CrafterStatsSnapshot? Current()
+    {
+        if (!Svc.Framework.IsInFrameworkUpdateThread)
+            return System.Threading.Volatile.Read(ref current);
+
+        var now = Environment.TickCount64;
+        var cached = System.Threading.Volatile.Read(ref current);
+        if (cached is null || now >= currentExpiresAt)
+        {
+            cached = Read();
+            System.Threading.Volatile.Write(ref current, cached);
+            currentExpiresAt = now + CacheMs;
+        }
+        return cached;
+    }
+
+    /// <summary>
+    /// 取某個 <c>CraftType</c> 的基礎能力值。<see cref="CharacterStats"/> 是 struct,
+    /// 所以回的是<b>複本</b> —— 呼叫端可以安全地在上面 <c>AddConsumables</c> 而不污染快照。
+    /// </summary>
+    public CharacterStats StatsForCraftType(uint craftType)
+        => craftType < statsByCraftType.Length ? statsByCraftType[craftType] : default;
 }

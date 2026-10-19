@@ -16,6 +16,7 @@ using Dalamud.Plugin;
 using ECommons;
 using ECommons.Automation.LegacyTaskManager;
 using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using ECommons.Logging;
 using OtterGui.Classes;
 using PunishLib;
@@ -45,7 +46,8 @@ public unsafe class Artisan : IDalamudPlugin
     public Artisan(IDalamudPluginInterface pluginInterface)
     {
         ECommonsMain.Init(pluginInterface, this, Module.All);
-        PunishLibMain.Init(pluginInterface, "Artisan", new AboutPlugin() { Sponsor = "https://ko-fi.com/taurenkey" });
+        ECommons.LanguageHelpers.Localization.Init("ChineseTraditional");
+        PunishLibMain.Init(pluginInterface, "Artisan", new AboutPlugin() { Sponsor = "https://ko-fi.com/taurenkey", IconPath = LocalIconPath(pluginInterface) });
         P = this;
 
         LuminaSheets.Init();
@@ -60,24 +62,25 @@ public unsafe class Artisan : IDalamudPlugin
 #endif
         ws = new();
         ri = new();
-        Icons = new(Svc.Data, Svc.Texture, Svc.Log);
+        Icons = new(Svc.Data, Svc.Texture);
         Config = P.Config;
         PluginUi = new();
 
         Svc.Commands.AddHandler(commandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开Artisan主窗口。\n" +
-            "/artisan lists → 打开制作清单设置窗口。\n" +
-            "/artisan lists <ID> → 按ID打开指定的制作清单。\n" +
-            "/artisan lists <ID> start → 按ID开始指定的制作清单。\n" +
-            "/artisan macros → 打开宏设置窗口。\n" +
-            "/artisan macros <ID> → 按ID打开指定的宏。\n" +
-            "/artisan endurance → 打开耐力模式设置窗口。\n" +
-            "/artisan endurance start|stop → 开始或停止耐力模式。\n" +
-            "/artisan settings → 打开插件设置窗口。\n" +
-            "/artisan workshops → 打开部队工房设置窗口。\n" +
-            "/artisan builder → 打开清单生成器窗口。\n" +
-            "/artisan automode → 开关自动制作模式。",
+            HelpMessage = "Opens the Artisan menu, or closes it if already open.".Loc() + "\n" +
+            "/artisan lists → Open Lists.".Loc() + "\n" +
+            "/artisan lists <ID> → Opens specific list by ID.".Loc() + "\n" +
+            "/artisan lists <ID> start → Starts specific list by ID.".Loc() + "\n" +
+            "/artisan macros → Open Macros.".Loc() + "\n" +
+            "/artisan macros <ID> → Opens specific macro by ID.".Loc() + "\n" +
+            "/artisan endurance → Open Endurance.".Loc() + "\n" +
+            "/artisan endurance start|stop → Starts or stops endurance mode.".Loc() + "\n" +
+            "/artisan settings → Open Settings.".Loc() + "\n" +
+            "/artisan workshop → Open FC Workshops.".Loc() + "\n" +
+            "/artisan builder → Open List Builder.".Loc() + "\n" +
+            "/artisan sim → Open Simulator.".Loc() + "\n" +
+            "/artisan automode → Toggles Automatic Action Execution Mode on/off.".Loc(),
             ShowInHelp = true,
         });
 
@@ -91,6 +94,7 @@ public unsafe class Artisan : IDalamudPlugin
         ConsumableChecker.Init();
         Endurance.Init();
         IPC.IPC.Init();
+        ItemVendorLocation.Init();
         RetainerInfo.Init();
         CraftingListContextMenu.Init();
         UniversalsisClient = new();
@@ -112,8 +116,20 @@ public unsafe class Artisan : IDalamudPlugin
         ConvertCraftingLists();
     }
 
+    /// <summary>
+    /// 出貨包裡與外掛庫圖示相同的 Images/Icon.png；不存在時回 null（關於分頁沿用 manifest 的 IconUrl）。
+    /// </summary>
+    private static string? LocalIconPath(IDalamudPluginInterface pluginInterface)
+    {
+        var dir = pluginInterface.AssemblyLocation.DirectoryName;
+        if (dir is null) return null;
+        var path = System.IO.Path.Combine(dir, "Images/Icon.png");
+        return System.IO.File.Exists(path) ? path : null;
+    }
+
     private void DisableEndurance(int type, int code)
     {
+        DutyPause.Cancel("登入或登出");
         Endurance.ToggleEndurance(false);
         CraftingListUI.Processing = false;
     }
@@ -162,20 +178,32 @@ public unsafe class Artisan : IDalamudPlugin
     private void Condition_ConditionChange(ConditionFlag flag, bool value)
     {
 
+        if (flag == ConditionFlag.WaitingForDutyFinder && !value)
+            DutyPause.OnPopClosed();
+        if (flag == ConditionFlag.BoundByDuty && value)
+            DutyPause.OnEnterDuty();
+
         if (P.Config.RequestToStopDuty)
         {
-            if (flag == ConditionFlag.WaitingForDutyFinder && value)
+            // 使用者沒在跑自動化（例如自己手動製作）就不動：不然會關掉他自己開的製作筆記。
+            if (flag == ConditionFlag.WaitingForDutyFinder && value && DutyPause.AutomationRunning)
             {
                 IPC.IPC.StopCraftingRequest = true;
                 PreCrafting.Tasks.Clear();
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), default));
+                DutyPause.Arm();
             }
+        }
 
-            if (flag == ConditionFlag.BoundByDuty && !value && IPC.IPC.StopCraftingRequest && P.Config.RequestToResumeDuty)
+        if (flag == ConditionFlag.BoundByDuty && !value
+            && DutyPause.OnLeaveDuty(P.Config.RequestToStopDuty && P.Config.RequestToResumeDuty, out var resumeToken))
+        {
+            var resumeDelay = P.Config.RequestToResumeDelay;
+            Svc.Framework.RunOnTick(() =>
             {
-                var resumeDelay = P.Config.RequestToResumeDelay;
-                Svc.Framework.RunOnTick(() => { IPC.IPC.StopCraftingRequest = false; }, TimeSpan.FromSeconds(resumeDelay));
-            }
+                if (DutyPause.TryConsumeResume(resumeToken))
+                    IPC.IPC.StopCraftingRequest = false;
+            }, TimeSpan.FromSeconds(resumeDelay));
         }
     }
 
@@ -184,14 +212,81 @@ public unsafe class Artisan : IDalamudPlugin
         DisableEndurance(0, 0);
     }
 
+    // RecipeNote appear/disappear watcher (diagnostic for the stuck crafting list).
+    private static bool _rnWasOpen;
+    private static DateTime _rnOpenedAt;
+    private static DateTime _rnLastLog = DateTime.MinValue;
+
+    private static unsafe void WatchRecipeNote()
+    {
+        var addonPtr = Svc.GameGui.GetAddonByName("RecipeNote", 1).Address;
+        var open = addonPtr != nint.Zero
+                   && ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)addonPtr)->IsVisible;
+        if (open == _rnWasOpen)
+            return;
+        _rnWasOpen = open;
+
+        // Rate cap so an open/close loop cannot flood the log.
+        var quiet = (DateTime.Now - _rnLastLog).TotalMilliseconds >= 300;
+        if (open)
+        {
+            _rnOpenedAt = DateTime.Now;
+            if (quiet)
+            {
+                _rnLastLog = DateTime.Now;
+                var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
+                var active = agent != null && agent->AgentInterface.IsAgentActive();
+                var agentAddonId = agent != null ? agent->AgentInterface.AddonId : 0;
+                var openedMsg =
+                    $"Artisan: RecipeNote OPENED - addon=0x{addonPtr:X}, "
+                    + $"agentActive={active}, agentAddonId={agentAddonId}. "
+                    + "If this window is visibly on screen while agentActive=False, "
+                    + "AgentId.RecipeNote resolves to the wrong agent on this client.";
+                // agentActive=True 是已確認的常態，只寫 Verbose；False 才是這條診斷要抓的異常，留 Information。
+                if (active)
+                    Svc.Log.Verbose(openedMsg);
+                else
+                    Svc.Log.Information(openedMsg);
+            }
+        }
+        else if (quiet)
+        {
+            _rnLastLog = DateTime.Now;
+            var ms = (int)(DateTime.Now - _rnOpenedAt).TotalMilliseconds;
+            Svc.Log.Verbose($"Artisan: RecipeNote CLOSED after {ms} ms.");
+        }
+    }
+
     private void OnFrameworkUpdate(IFramework framework)
     {
+        // 「這扇窗按過了」守衛的解除點:放最前面、不受登入與任何開關限制(理由見 AddonPressGuard.Tick)。
+        AddonPressGuard.Tick();
+        // Artisan.IsBusy 是別的外掛高頻輪詢的 IPC 端點,不能讓它從呼叫端執行緒直接讀
+        // TaskManager 的裸 List,也不能用五秒逾時的閘門把呼叫端卡住 ⇒ 由這裡每幀推一份快照。
+        // 🔴 放在登入檢查之前、不受任何開關限制:登出那一幀也要發佈,
+        //    否則快照會永遠停在登出前的「忙」。
+        IPC.IPC.PublishBusySnapshot();
+        // AllaganTools 的物品事件回呼跑在對方的執行緒上，只在那裡記筆數；真正的條件判斷與
+        // 僱員快取清除在這裡做。放在登入檢查之前：排乾一定會發生，計數不會跨登入累積。
+        RetainerInfo.DrainInventoryEvents();
+        RetainerInfo.RefreshAToolsIfRequested();
+        WatchRecipeNote();
+
         if (!Svc.ClientState.IsLoggedIn)
         {
             Endurance.ToggleEndurance(false);
             CraftingListUI.Processing = false;
+            // 沒登入時 UpdateCharaStats 不會跑：在這裡放掉指向舊角色狀態表的部隊加成包裝。
+            CharacterInfo.FCCraftsmanshipbuff = null;
             return;
         }
+
+        // 掛著的製作還在跑 ⇒ 把「停下來時說一句」重新舉起。耐力模式的中止路徑很多，
+        // 這個「每幀重舉、送出即放下」的旗標是「一輪只說一句」唯一的保證。
+        // 🔴 只是一個 bool 指派，不做任何 IPC、不讀遊戲結構。
+        // 暫停中的清單不算在跑：停下時已經說過，暫停期間手動製作碰到同一個錯誤不再重喊。
+        if (Endurance.Enable || (CraftingListUI.Processing && !CraftingListFunctions.Paused))
+            TataruPraiseIPC.ArmStopNotice();
 
         CharacterInfo.UpdateCharaStats();
         Crafting.Update();
@@ -217,57 +312,64 @@ public unsafe class Artisan : IDalamudPlugin
 
     public void Dispose()
     {
-        PluginUi.Dispose();
+        // 每一步各自 Safe：任何一步擲例外都不能跳過後面的 IPC 退訂（Chat2／AllaganTools／IPC 端點），
+        // 否則 CallGate 會握著委派、整個舊版本卸不掉。
+        // 卸載不會取消已排的 RunOnTick：先作廢，延遲到期的恢復就什麼都不做。
+        ECommons.GenericHelpers.Safe(() => DutyPause.Cancel("插件卸載"));
+        ECommons.GenericHelpers.Safe(() => PluginUi.Dispose());
 
         Svc.Commands.RemoveHandler(commandName);
         Svc.PluginInterface.UiBuilder.OpenConfigUi -= DrawConfigUI;
         Svc.PluginInterface.UiBuilder.Draw -= ws.Draw;
         Svc.PluginInterface.UiBuilder.OpenMainUi -= DrawConfigUI;
-        cw?.Dispose();
-        ri?.Dispose();
-        ws?.RemoveAllWindows();
+        ECommons.GenericHelpers.Safe(() => cw?.Dispose());
+        ECommons.GenericHelpers.Safe(() => ri?.Dispose());
+        ECommons.GenericHelpers.Safe(() => ws?.RemoveAllWindows());
         ws = null!;
 
         //Config.ScriptSolverConfig?.Dispose();
-        EnduranceCraftWatcher.Dispose();
-        PreCrafting.Dispose();
-        CraftingProcessor.Dispose();
-        Crafting.Dispose();
+        ECommons.GenericHelpers.Safe(EnduranceCraftWatcher.Dispose);
+        ECommons.GenericHelpers.Safe(PreCrafting.Dispose);
+        ECommons.GenericHelpers.Safe(CraftingProcessor.Dispose);
+        ECommons.GenericHelpers.Safe(Crafting.Dispose);
 
-        LuminaSheets.Dispose();
+        ECommons.GenericHelpers.Safe(LuminaSheets.Dispose);
+        ECommons.GenericHelpers.Safe(ItemVendorLocation.Dispose);
 
         if (!DalamudInfo.IsOnStaging())
         {
-            CraftingListContextMenu.Dispose();
-            UniversalsisClient.Dispose();
+            ECommons.GenericHelpers.Safe(CraftingListContextMenu.Dispose);
+            ECommons.GenericHelpers.Safe(() => UniversalsisClient.Dispose());
 
             Svc.Condition.ConditionChange -= Condition_ConditionChange;
             Svc.Framework.Update -= OnFrameworkUpdate;
             Svc.ClientState.Logout -= DisableEndurance;
             Svc.ClientState.Login -= DisableEndurance;
-            Endurance.Dispose();
-            RetainerInfo.Dispose();
-            IPC.IPC.Dispose();
+            ECommons.GenericHelpers.Safe(Endurance.Dispose);
+            ECommons.GenericHelpers.Safe(RetainerInfo.Dispose);
+            ECommons.GenericHelpers.Safe(() => Sounds.SoundPlayer.Dispose());
+            ECommons.GenericHelpers.Safe(IPC.IPC.Dispose);
         }
+        ECommons.GenericHelpers.Safe(AddonPressGuard.ForceTeardown);
         ECommonsMain.Dispose();
         P = null!;
     }
 
     private void OnCommand(string command, string args)
     {
-        var subcommands = args.Split(' ');
-
-        if (subcommands.Length == 0)
+        if (ArtisanCommandArgs.ClosesMainWindow(args, PluginUi.IsOpen))
         {
-            PluginUi.IsOpen = !PluginUi.IsOpen;
+            PluginUi.IsOpen = false;
             return;
         }
+
+        var subcommands = args.Split(' ');
 
         var firstArg = subcommands[0];
 
         if (firstArg.ToLower() == "automode")
         {
-            P.Config.AutoMode = !P.Config.AutoMode;
+            P.Config.SetAutoMode(!P.Config.AutoMode);
             P.Config.Save();
             return;
         }
@@ -298,19 +400,19 @@ public unsafe class Artisan : IDalamudPlugin
                         }
                         else
                         {
-                            DuoLog.Error("List ID does not exist.");
+                            DuoLog.Error("List ID does not exist.".Loc());
                             return;
                         }
                     }
                     else
                     {
-                        DuoLog.Error("Unable to parse ID as a number.");
+                        DuoLog.Error("Unable to parse ID as a number.".Loc());
                         return;
                     }
                 }
                 else
                 {
-                    DuoLog.Error("Unable to open list whilst processing.");
+                    DuoLog.Error("Unable to open list whilst processing.".Loc());
                     return;
                 }
             }
@@ -329,19 +431,19 @@ public unsafe class Artisan : IDalamudPlugin
                         }
                         else
                         {
-                            DuoLog.Error("Macro ID does not exist.");
+                            DuoLog.Error("Macro ID does not exist.".Loc());
                             return;
                         }
                     }
                     else
                     {
-                        DuoLog.Error("Unable to parse ID as a number.");
+                        DuoLog.Error("Unable to parse ID as a number.".Loc());
                         return;
                     }
                 }
                 else
                 {
-                    DuoLog.Error("Unable to open edit macros whilst crafting.");
+                    DuoLog.Error("Unable to open edit macros whilst crafting.".Loc());
                     return;
                 }
             }
@@ -352,17 +454,17 @@ public unsafe class Artisan : IDalamudPlugin
                 {
                     if (CraftingListUI.Processing)
                     {
-                        DuoLog.Error("Cannot start endurance whilst processing a list.");
+                        DuoLog.Error("Cannot start endurance whilst processing a list.".Loc());
                         return;
                     }
                     if (Endurance.RecipeID == 0)
                     {
-                        DuoLog.Error("Cannot start endurance without setting a recipe.");
+                        DuoLog.Error("Cannot start endurance without setting a recipe.".Loc());
                         return;
                     }
                     if (!CraftingListFunctions.HasItemsForRecipe(Endurance.RecipeID))
                     {
-                        DuoLog.Error("Cannot start endurance as you do not possess all ingredients for your recipe in your inventory.");
+                        DuoLog.Error("Cannot start endurance as you do not possess all ingredients for your recipe in your inventory.".Loc());
                         return;
                     }
 
@@ -377,7 +479,7 @@ public unsafe class Artisan : IDalamudPlugin
                 {
                     if (!Endurance.Enable)
                     {
-                        DuoLog.Error("Endurance is not running so cannot be stopped.");
+                        DuoLog.Error("Endurance is not running so cannot be stopped.".Loc());
                         return;
                     }
                     if (Endurance.Enable)
@@ -424,6 +526,11 @@ public unsafe class Artisan : IDalamudPlugin
 
         if (Crafting.CurState == Crafting.State.QuickCraft)
             Operations.CloseQuickSynthWindow();
+
+        // 已排進佇列的「設定素材 → 開始製作」與補貨鏈一起清掉，否則按下停止之後仍會開始下一場。
+        P.TM.Abort();
+        CraftingListFunctions.CLTM.Abort();
+        RetainerInfo.AbortRestock("停止製作");
 
         PreCrafting.Tasks.Clear();
         PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), default));

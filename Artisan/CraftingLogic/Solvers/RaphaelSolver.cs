@@ -1,4 +1,5 @@
-﻿using Artisan.GameInterop;
+﻿using Artisan.Autocraft;
+using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.UI;
 using Dalamud.Interface.Colors;
@@ -7,8 +8,9 @@ using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using ECommons.Logging;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -29,7 +31,12 @@ namespace Artisan.CraftingLogic.Solvers
             var key = RaphaelCache.GetKey(craft);
             if (RaphaelCache.HasSolution(craft, out var output))
             {
-                return new MacroSolver(output!, craft);
+                // a macro plays back a fixed action list and cannot react to conditions; wrap it so we can deviate
+                // opportunistically, but only when the simulator says the deviation still finishes with strictly better quality.
+                // 再包一層奇蹟之材:Raphael 的狀態模型只有 通常/高品質/最高品質/低品質,所以它永遠不會提議 41269。
+                // ⚠️ 順序是刻意的:奇蹟之材在最外層,底下才是機會性偏離,
+                //    這樣閘門的 rollout 驅動的是「真正會執行的那份計畫」。
+                return new MaterialMiracleSolver(new OpportunisticSolver(new MacroSolver(output!, craft)));
             }
             return craft.CraftExpert ? new ExpertSolver() : new StandardSolver(false);
         }
@@ -37,7 +44,26 @@ namespace Artisan.CraftingLogic.Solvers
         public IEnumerable<ISolverDefinition.Desc> Flavours(CraftState craft)
         {
             if (RaphaelCache.HasSolution(craft, out var solution))
-                yield return new(this, 3, 0, $"Raphael 配方求解器");
+            {
+                yield return new(this, 3, 0, "Raphael Recipe Solver".Loc());
+            }
+            else if (!RaphaelCache.FallbackToStandardAllowed)
+            {
+                // Yielding an *unsupported* flavour rather than nothing at all: GetAvailableSolversForRecipe
+                // still filters this out of every picker (it passes returnUnsupported: false), but FindSolver
+                // now returns it for a recipe explicitly assigned to Raphael, so CraftingProcessor raises
+                // SolverFailed with this reason instead of silently starting on the standard solver.
+                var ignored = RaphaelCache.DescribeIgnoredSolution(craft);
+                var failed = RaphaelCache.DescribeFailure(craft);
+                // 三種「沒有解」要分得開:①有解但能力值對不上 ②這個 session 已經求解失敗過
+                // ③根本還沒產生過。
+                var reason = ignored.Length > 0
+                    ? "No Raphael solution matches your current stats: ??".Loc(ignored)
+                    : failed.Length > 0
+                        ? failed
+                        : "No Raphael solution has been generated for this recipe.".Loc();
+                yield return new(this, 3, 0, "Raphael Recipe Solver".Loc(), reason);
+            }
         }
     }
 
@@ -47,25 +73,129 @@ namespace Artisan.CraftingLogic.Solvers
         [NonSerialized]
         public static Dictionary<string, RaphaelSolutionConfig> TempConfigs = new();
 
+        /// <summary>
+        /// 這個 session 裡已知求解不出來的組合(配方＋職業等級＋能力值)。
+        /// 🔴 為什麼需要:唯一會「自動」呼叫 <see cref="Build"/> 的地方是
+        /// <see cref="DrawRaphaelDropdown"/>,而它是 <c>RecipeConfig.Draw</c> 的一部分 ——
+        /// 那是 ImGui 的繪製路徑,<b>每一幀都會跑一次</b>。
+        /// 把失敗記下來之後,同一組條件在同一個 session 內只會試一次。
+        /// 使用者按「Build Raphael Solution」等於明確要求重試 —— 那顆按鈕會先清掉這裡的紀錄。
+        /// </summary>
+        internal static readonly ConcurrentDictionary<string, string> FailedSolves = [];
+
+        /// <summary>
+        /// 失敗快取的鍵。與 <see cref="GetKey"/> 是不同的東西:那個是「解的形狀」
+        /// (等級/進度/品質/耐久…),這個是「這次求解請求的身分」—— 配方、職業等級、
+        /// 能力值或起始品質任一改變都應該重新試一次。
+        /// </summary>
+        internal static string GetFailureKey(CraftState craft)
+            => $"{craft.RecipeId}/{craft.StatLevel}/{craft.StatCraftsmanship}/{craft.StatControl}/{craft.StatCP}/{craft.InitialQuality}";
+
+        /// <summary>這組條件上次求解失敗的原因;沒失敗過就回空字串。</summary>
+        internal static string DescribeFailure(CraftState craft)
+            => FailedSolves.TryGetValue(GetFailureKey(craft), out var reason) ? reason : "";
+
+        /// <summary>
+        /// 「職業等級根本不夠,送去 raphael-cli 一定是白跑」的判斷。
+        /// 回傳非 null 就代表不該 spawn,字串是要給使用者看的原因。
+        /// ⚠️ 用 <c>craft.CraftLevel</c> 當需求等級是刻意的:它就是
+        /// <c>Recipe.RecipeLevelTable.ClassJobLevel</c>,而宇宙配方(Number == 0)那條路徑
+        /// 在 <c>BuildCraftStateForRecipe</c> 已經改成依玩家等級選 RecipeLevelTable,
+        /// 兩者相等 ⇒ 這個閘門對宇宙製作不會誤擋。
+        /// </summary>
+        internal static string? DescribeLevelGate(CraftState craft)
+        {
+            if (craft.StatLevel > 0 && craft.StatLevel >= craft.CraftLevel)
+                return null;
+
+            var jobName = LuminaSheets.ClassJobSheet != null
+                && LuminaSheets.ClassJobSheet.TryGetValue(craft.Recipe.CraftType.RowId + 8, out var classJob)
+                    ? classJob.Name.ToString()
+                    : $"CraftType {craft.Recipe.CraftType.RowId}";
+            var recipeName = craft.Recipe.ItemResult.Value.Name.ToString();
+
+            return $"{jobName}等級 {craft.StatLevel} 低於配方需求 {craft.CraftLevel},無法求解「{recipeName}」(配方 {craft.RecipeId})。";
+        }
+
+        /// <summary>
+        /// raphael-cli 的配方參數。能從台服資料表算齊就送明確數字(<c>--custom-recipe</c>＋<c>--override-base-increases</c>),
+        /// 求解設定與 <c>--recipe-id</c> 相同,但不依賴 raphael-data 寫死的配方表(改版後新配方也解得出來)。
+        /// 算不齊時回 <c>--recipe-id</c>,<paramref name="fallbackReason"/> 是原因;送明確數字時為 null。
+        /// </summary>
+        internal static string RecipeArgs(CraftState craft, out string? fallbackReason)
+        {
+            fallbackReason = ExplicitRecipeUnavailable(craft);
+            if (fallbackReason != null)
+                return $"--recipe-id {craft.RecipeId}";
+
+            // 最大品質用配方表原值,不用 CraftQualityMax(有 RequiredQuality 的配方那欄被改成門檻)。
+            var maxQuality = Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable);
+            var expert = craft.CraftExpert ? 1 : 0;
+            return $"--custom-recipe {craft.LevelTable.RowId} {craft.CraftProgress} {maxQuality} {craft.CraftDurability} {expert} "
+                + $"--override-base-increases {craft.CraftLevel} {Simulator.BaseProgress(craft)} {Simulator.BaseQuality(craft)}";
+        }
+
+        private static string? ExplicitRecipeUnavailable(CraftState craft)
+        {
+            var lt = craft.LevelTable;
+            var recipe = craft.Recipe;
+            if (lt.RowId == 0 || craft.CraftProgressDivider <= 0 || craft.CraftQualityDivider <= 0)
+                return "讀不到配方等級表";
+            // raphael-cli 依等級查自己的等級對照表(只到 100),超出會直接崩潰。
+            if (craft.CraftLevel is <= 0 or > 100)
+                return $"配方等級 {craft.CraftLevel} 超出 raphael-cli 支援範圍";
+            // raphael-cli 的換算:可調等級的配方用 GathererCrafterLvAdjustTable[min(上限, 職業等級)] 那列等級表、耐久一律以 80 計,
+            // 其餘用配方自己的等級表。Artisan 對等級不足 100 的宇宙配方一律換表,兩邊不一致時保留舊參數。
+            var maxAdjust = recipe.MaxAdjustableJobLevel.RowId;
+            var sameTable = maxAdjust == 0
+                ? lt.RowId == recipe.RecipeLevelTable.RowId
+                : Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.GathererCrafterLvAdjustTable>().GetRowOrDefault(Math.Min(maxAdjust, (uint)craft.StatLevel)) is { } adjust
+                    && adjust.RecipeLevel.RowId == lt.RowId && recipe.RecipeLevelTable.Value.Durability == 80;
+            if (!sameTable)
+                return "配方等級表與 raphael-cli 的換算方式不同";
+            var maxQuality = Calculations.RecipeMaxQuality(recipe, lt);
+            int[] values = [craft.CraftProgress, maxQuality, craft.CraftDurability, Simulator.BaseProgress(craft), Simulator.BaseQuality(craft)];
+            if (craft.CraftProgress <= 0 || craft.CraftDurability <= 0 || values.Any(v => v is < 0 or > ushort.MaxValue))
+                return "配方數字超出 raphael-cli 可接受的範圍";
+            return null;
+        }
+
         public static void Build(CraftState craft, RaphaelSolutionConfig config)
         {
             var key = GetKey(craft);
 
             if (CLIExists() && !Tasks.ContainsKey(key))
             {
+                // 🔴 這兩道閘門是「每幀重試」的剎車 —— 呼叫端是每一幀都會重畫的 UI。
+                var failKey = GetFailureKey(craft);
+                if (FailedSolves.ContainsKey(failKey))
+                    return;
+
+                // 等級不夠時連 spawn 都不必:raphael-cli 收到 --level 0 只會回 NoSolution。
+                var levelGate = DescribeLevelGate(craft);
+                if (levelGate != null)
+                {
+                    // TryAdd 保證同一組條件只寫一行 log(不然這裡每幀都會印一次)。
+                    if (FailedSolves.TryAdd(failKey, levelGate))
+                        Svc.Log.Information($"Raphael:{levelGate}不送出求解。");
+                    return;
+                }
+
                 P.Config.RaphaelSolverCacheV3.TryRemove(key, out _);
 
-                Svc.Log.Information("启动 Raphael 进程");
+                Svc.Log.Information("Spawning Raphael process");
 
                 var manipulation = craft.UnlockedManipulation ? "--manipulation" : "";
-                var itemText = $"--recipe-id {craft.RecipeId}";
+                var itemText = RecipeArgs(craft, out var explicitFallback);
+                if (explicitFallback != null)
+                    Svc.Log.Information($"Raphael:{explicitFallback}(配方 {craft.RecipeId}),改用 raphael-cli 內建配方表(--recipe-id)。");
                 var extraArgsBuilder = new StringBuilder();
 
                 extraArgsBuilder.Append($"--initial {craft.InitialQuality} "); // must always have a space after
 
                 if (config.EnsureReliability)
                 {
-                    Svc.Log.Error("已启用确保可靠性，这可能需要较长时间。启用后不提供任何支持。");
+                    Svc.Log.Error("Ensuring reliability is enabled, this may take a while. NO SUPPORT GIVEN IF ENABLED.");
                     extraArgsBuilder.Append($"--adversarial "); // must always have a space after
                 }
 
@@ -105,93 +235,205 @@ namespace Artisan.CraftingLogic.Solvers
                 Svc.Log.Information(process.StartInfo.Arguments);
 
                 var cts = new CancellationTokenSource();
-                cts.Token.Register(() => { process.Kill(); Tasks.Remove(key, out var _); });
+                // 🔴 取消回呼跑在 CancelAfter 的計時器執行緒(或任何呼叫 Cancel() 的執行緒)上,回呼丟出來的例外
+                //    會變成執行緒集區的未處理例外(計時器回呼只攔 ObjectDisposedException)。
+                //    process.Kill() 在「行程根本沒啟動成功」時會丟 InvalidOperationException,所以這個清理回呼必須自己攔下例外,
+                //    而且 Tasks 的移除要放進 finally 才保證跑得到 —— key 沒被移掉的話 InProgressAny() 就永遠是 true。
+                cts.Token.Register(() =>
+                {
+                    try
+                    {
+                        process.Kill();
+                    }
+                    catch (Exception ex)
+                    {
+                        Svc.Log.Information($"Raphael: 取消時終止 raphael-cli 失敗(多半代表它已經自己結束了):{ex.Message}");
+                    }
+                    finally
+                    {
+                        Tasks.TryRemove(key, out _);
+                    }
+                });
                 cts.CancelAfter(TimeSpan.FromMinutes(P.Config.RaphaelSolverConfig.TimeOutMins));
 
-                var task = Task.Run(() =>
+                // 🔴 這個工作必須「先登記進 Tasks,再開始跑」。Task.Run(...) 之後才 TryAdd 的話:
+                //    快速失敗的路徑(raphael-cli 一啟動就非零離開)可以在 TryAdd 之前就把 key 移掉,
+                //    接著 TryAdd 又把它加回去,而 cts 已經取消不會再觸發清理 ⇒ key 永遠留在 Tasks 裡,
+                //    InProgressAny() 永遠是 true,Operations.RepeatActualCraft() 從此被擋死。
+                var task = new Task(() =>
                 {
-                    process.Start();
-                    var output = process.StandardOutput.ReadToEnd();
-                    var error = process.StandardError.ReadToEnd().Trim();
-                    if (process.ExitCode != 0)
+                    try
                     {
-                        DuoLog.Error(error.Split('\r', '\n')[1]);
-                        cts.Cancel();
-                        return;
-                    }
-                    var rng = new Random();
-                    var ID = rng.Next(50001, 10000000);
-                    while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
-                        ID = rng.Next(50001, 10000000);
-
-                    var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
-                    P.Config.RaphaelSolverCacheV3[key] = new MacroSolverSettings.Macro()
-                    {
-                        ID = ID,
-                        Name = key,
-                        Steps = MacroUI.ParseMacro(cleansedOutput),
-                        Options = new()
+                        process.Start();
+                        var output = process.StandardOutput.ReadToEnd();
+                        var error = process.StandardError.ReadToEnd().Trim();
+                        if (process.ExitCode != 0)
                         {
-                            SkipQualityIfMet = false,
-                            UpgradeProgressActions = false,
-                            UpgradeQualityActions = false,
-                            MinCP = craft.StatCP,
-                            MinControl = craft.StatControl,
-                            MinCraftsmanship = craft.StatCraftsmanship,
+                            var failure = DescribeCliFailure(error, process.ExitCode);
+                            // 記下來:同一組條件在這個 session 內不再重複 spawn。
+                            FailedSolves[failKey] = failure;
+                            DuoLog.Error(failure);
+                            cts.Cancel();
+                            AbortWaitingAutomation();
+                            return;
                         }
-                    };
+                        var rng = new Random();
+                        var ID = rng.Next(50001, 10000000);
+                        while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
+                            ID = rng.Next(50001, 10000000);
 
-                    cts.Token.ThrowIfCancellationRequested();
-                    if (P.Config.RaphaelSolverCacheV3[key] == null || P.Config.RaphaelSolverCacheV3[key].Steps.Count == 0)
-                    {
-                        Svc.Log.Error($"Raphael 无法生成有效的宏。这可能是以下原因之一：" +
-                            $"\n- 如果您不在运行 Windows，Raphael 可能与您的操作系统不兼容。" +
-                            $"\n- 您取消了生成过程。" +
-                            $"\n- Raphael 在找不到结果后放弃了。{(P.Config.RaphaelSolverConfig.AutoGenerate ? "\n自动生成将因此被禁用。" : "")}");
-                        P.Config.RaphaelSolverConfig.AutoGenerate = false;
-                        cts.Cancel();
-                        return;
-                    }
-
-
-                    if (P.Config.RaphaelSolverConfig.AutoSwitch)
-                    {
-                        if (!P.Config.RaphaelSolverConfig.AutoSwitchOnAll)
+                        var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
+                        P.Config.RaphaelSolverCacheV3[key] = new MacroSolverSettings.Macro()
                         {
-                            Svc.Log.Debug("切换到 Raphael 求解器");
-                            var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
-                            if (opt is not null)
+                            ID = ID,
+                            Name = key,
+                            Steps = MacroUI.ParseMacro(cleansedOutput),
+                            Options = new()
                             {
-                                var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
-                                config.SolverType = opt?.Def.GetType().FullName!;
-                                config.SolverFlavour = (int)(opt?.Flavour);
-                                P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
+                                SkipQualityIfMet = false,
+                                // 🔴 這兩個維持 false 是刻意的,
+                                //    原因是 Raphael 的解把 CP 與耐久算得剛剛好,把某一步換成
+                                //    集中加工/集中製作會改變消耗,整份計畫的預算就崩了。
+                                //    要在好/高品質狀態撿便宜,正確做法是 OpportunisticSolver。
+                                UpgradeProgressActions = false,
+                                UpgradeQualityActions = false,
+                                MinCP = craft.StatCP,
+                                MinControl = craft.StatControl,
+                                MinCraftsmanship = craft.StatCraftsmanship,
                             }
-                        }
-                        else
+                        };
+
+                        cts.Token.ThrowIfCancellationRequested();
+                        if (P.Config.RaphaelSolverCacheV3[key] == null || P.Config.RaphaelSolverCacheV3[key].Steps.Count == 0)
                         {
-                            var crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId).ToList();
-                            Svc.Log.Debug($"将求解器应用到 {crafts.Count()} 个配方。");
-                            var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
-                            if (opt is not null)
+                            Svc.Log.Error($"Raphael failed to generate a valid macro. This could be one of the following reasons:" +
+                                $"\n- If you are not running Windows, Raphael may not be compatible with your OS." +
+                                $"\n- You cancelled the generation." +
+                                $"\n- Raphael just gave up after not finding a result.{(P.Config.RaphaelSolverConfig.AutoGenerate ? "\nAutomatic generation will be disabled as a result." : "")}");
+                            P.Config.RaphaelSolverConfig.AutoGenerate = false;
+                            FailedSolves[failKey] = "Raphael 沒有產生可用的巨集(求解器放棄了,或求解被取消)。";
+                            cts.Cancel();
+                            AbortWaitingAutomation();
+                            return;
+                        }
+
+
+                        if (P.Config.RaphaelSolverConfig.AutoSwitch)
+                        {
+                            if (!P.Config.RaphaelSolverConfig.AutoSwitchOnAll)
                             {
-                                var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
-                                config.SolverType = opt?.Def.GetType().FullName!;
-                                config.SolverFlavour = (int)(opt?.Flavour);
-                                foreach (var c in crafts)
+                                Svc.Log.Debug("Switching to Raphael solver");
+                                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
+                                if (opt is not null)
                                 {
-                                    Svc.Log.Debug($"将 {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) 切换到 Raphael 求解器");
-                                    P.Config.RecipeConfigs[c.Recipe.RowId] = config;
+                                    var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
+                                    config.SolverType = opt?.Def.GetType().FullName!;
+                                    config.SolverFlavour = (int)(opt?.Flavour);
+                                    P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
+                                }
+                            }
+                            else
+                            {
+                                // 產生這份解的配方本身一定要套用,不靠下面的相容性掃描把它找回來。
+                                var crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId)
+                                    .Append(craft)
+                                    .DistinctBy(x => x.Recipe.RowId)
+                                    .ToList();
+                                Svc.Log.Debug($"Applying solver to {crafts.Count()} recipes.");
+                                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
+                                if (opt is not null)
+                                {
+                                    var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
+                                    config.SolverType = opt?.Def.GetType().FullName!;
+                                    config.SolverFlavour = (int)(opt?.Flavour);
+                                    foreach (var c in crafts)
+                                    {
+                                        Svc.Log.Debug($"Switching {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) to Raphael solver");
+                                        P.Config.RecipeConfigs[c.Recipe.RowId] = config;
+                                    }
                                 }
                             }
                         }
+                        // 成功了就讓這組條件恢復成「可以再試」。
+                        FailedSolves.TryRemove(failKey, out _);
+                        P.Config.Save();
                     }
-                    P.Config.Save();
-                    Tasks.Remove(key, out var _);
-                }, cts.Token);
+                    catch (OperationCanceledException)
+                    {
+                        // 使用者按了取消、或逾時到了,不是故障 —— 清理照做,但不必再吵一次。
+                        Svc.Log.Information($"Raphael 解算已取消:{key}");
+                    }
+                    catch (Exception ex)
+                    {
+                        // 🔴 例外從這裡逃出去 ＝ 後面的清理整段跳過,而且 Task 的例外沒有人觀察,
+                        //    使用者唯一看得到的現象是「Artisan 從此不再開工」而且一句話都沒有。
+                        Svc.Log.Error(ex, "Raphael solution generation threw");
+                        DuoLog.Error("Raphael solution generation failed: ??".Loc(ex.Message));
+                        AbortWaitingAutomation();
+                    }
+                    finally
+                    {
+                        // 不論成功、失敗還是取消,這個 key 一定要離開 Tasks。
+                        Tasks.TryRemove(key, out _);
+                    }
+                }, cts.Token, TaskCreationOptions.DenyChildAttach);
 
                 Tasks.TryAdd(key, new(cts, task));
+                try
+                {
+                    task.Start(TaskScheduler.Default);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    // 登記與啟動之間 cts 就被取消掉的極端情況:工作已經是完成狀態,Start() 會丟例外。
+                    Svc.Log.Information($"Raphael 解算工作在啟動前就被取消:{ex.Message}");
+                    Tasks.TryRemove(key, out _);
+                }
             }
+        }
+
+        /// <summary>
+        /// raphael-cli 失敗時 stderr 不保證有兩行:它可能一個字都沒印,也可能只印一行。
+        /// 固定取 Split(...)[1] 的話那兩種情況都會丟 IndexOutOfRangeException,而那個例外會從
+        /// 解算工作裡逃出去、把後面的清理整段跳過,於是 Tasks 裡的 key 永遠移不掉、
+        /// InProgressAny() 永遠是 true,製作就靜默凍結在那裡。
+        /// </summary>
+        private static string DescribeCliFailure(string error, int exitCode)
+        {
+            // 取第 2 行是刻意的:raphael-cli 的第 1 行通常是 "error: ..." 這種標題,真正的說明在下一行。
+            // 有第 2 行就照舊,只有一行就用那一行,完全沒輸出至少把離開碼講出來。
+            var lines = error.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length > 1)
+                return lines[1];
+            if (lines.Length == 1)
+                return lines[0];
+            return "raphael-cli exited with code ?? without printing an error message.".Loc(exitCode);
+        }
+
+        /// <summary>
+        /// 解算失敗時的收尾。耐力模式在等 Raphael 的期間,Operations.RepeatActualCraft() 被
+        /// InProgressAny() 擋著;而 Endurance 那個「連續五次開不了工就停機並說明原因」的退避,
+        /// 本身也寫在 if (!RaphaelCache.InProgressAny()) 裡面 —— 兩邊被同一個條件同時關掉,
+        /// 所以解算一旦失敗又沒有人把耐力模式關掉,呼叫端只會看到 Artisan 一直「忙」而永遠不動。
+        /// 這裡主動把耐力模式關掉,讓呼叫端自己的守衛(例如 ICE 的 CraftProgressGuard,它是在
+        /// 「Artisan 不忙了」時才會去檢查有沒有進展)看得到狀態改變而接手處理。
+        /// </summary>
+        private static void AbortWaitingAutomation()
+        {
+            if (!Endurance.Enable)
+                return;
+
+            // 這裡是解算工作的背景執行緒,而 ToggleEndurance 會動到 PreCrafting.Tasks 這種
+            // 只有框架執行緒該碰的狀態,所以排回框架執行緒再做。
+            Svc.Framework?.RunOnFrameworkThread(() =>
+            {
+                if (!Endurance.Enable)
+                    return;
+
+                DuoLog.Error("Raphael was unable to produce a solution - Endurance has been stopped.".Loc());
+                Endurance.NotifyForcedStop("Raphael 求解失敗");
+                Endurance.ToggleEndurance(false);
+            });
         }
 
         public static string GetKey(CraftState craft)
@@ -202,10 +444,16 @@ namespace Artisan.CraftingLogic.Solvers
         public static IEnumerable<CraftState> AllValidCrafts(string key, uint craftType)
         {
             var stats = KeyParts(key);
-            var recipes = LuminaSheets.RecipeSheet.Values.Where(x => x.CraftType.RowId == craftType && x.RecipeLevelTable.Value.ClassJobLevel == stats.Level);
+            // 宇宙配方(Number == 0)實際用哪列 RecipeLevelTable 由職業等級決定,不能拿表上那列的等級篩;
+            // RecipeSheet 已排除 ItemResult 為 0 的佔位列,所以這裡 Number == 0 只會是宇宙配方。
+            var recipes = LuminaSheets.RecipeSheet.Values.Where(x =>
+                x.CraftType.RowId == craftType &&
+                (x.Number == 0 || x.RecipeLevelTable.Value.ClassJobLevel == stats.Level));
             foreach (var recipe in recipes)
             {
-                var state = Crafting.BuildCraftStateForRecipe(default, Job.CRP + recipe.CraftType.RowId, recipe);
+                // 用 key 的等級重建:default 會在背景執行緒逐筆等主執行緒讀玩家等級,也未必是產生 key 時的等級。
+                var characterStats = new CharacterStats { Level = stats.Level };
+                var state = Crafting.BuildCraftStateForRecipe(characterStats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
                 if (stats.Prog == state.CraftProgress &&
                     stats.Qual == state.CraftQualityMax &&
                     stats.Dur == state.CraftDurability)
@@ -213,7 +461,22 @@ namespace Artisan.CraftingLogic.Solvers
             }
         }
 
-        public static (int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP) KeyParts(string key)
+        // 解析結果是鍵字串的純函式，依鍵記住、不必作廢；解析擲例外的鍵不記，每次照舊擲。
+        private static readonly ConcurrentDictionary<string, (int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP, bool Expert)> parsedKeys = new();
+        private const int ParsedKeysLimit = 4096;
+
+        public static (int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP, bool Expert) KeyParts(string key)
+        {
+            if (parsedKeys.TryGetValue(key, out var known))
+                return known;
+
+            var parsed = ParseKey(key);
+            if (parsedKeys.Count >= ParsedKeysLimit)
+                parsedKeys.Clear();
+            return parsedKeys[key] = parsed;
+        }
+
+        private static (int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP, bool Expert) ParseKey(string key)
         {
             var parts = key.Split('/');
 
@@ -225,33 +488,145 @@ namespace Artisan.CraftingLogic.Solvers
             int.TryParse(parts[4], out var ctrl);
             int.TryParse(parts[5].Split('-')[0], out var cp);
             int.TryParse(parts[6], out var initial);
+            // GetKey 產生的第 5 段是 "{CP}-{Expert|Standard}"。後半也要解析,
+            // 否則「專家配方的解」跟「一般配方的解」在比對時完全無法區分。
+            var expert = parts[5].Split('-').Length > 1 && parts[5].Split('-')[1] == "Expert";
 
-            return (lvl, prog, qual, dur, initial, crafts, ctrl, cp);
+            return (lvl, prog, qual, dur, initial, crafts, ctrl, cp, expert);
         }
 
         public static bool HasSolution(CraftState craft, out MacroSolverSettings.Macro? raphaelSolutionConfig)
         {
-            foreach (var solution in P.Config.RaphaelSolverCacheV3.OrderByDescending(x => KeyParts(x.Key).Control))
+            // 每幀會被問好幾次，所以不排序、不另建陣列。答案與「依 Control 由高到低穩定排序後取第一筆相符」相同：
+            // 相符的裡面 Control 最高者，同分取列舉順序在前的。每一筆都先解析鍵，壞鍵照舊讓整個呼叫擲例外。
+            raphaelSolutionConfig = null;
+            var bestControl = 0;
+            foreach (var solution in P.Config.RaphaelSolverCacheV3)
             {
-                if (solution.Value.Steps.Count == 0) continue;
-
                 var solKey = KeyParts(solution.Key);
 
+                // 這裡每一筆都會走到（排序版找到就離開），所以空的值一併跳過，不讓它變成新的例外來源。
+                if (solution.Value is not { Steps.Count: > 0 }) continue;
+
+                // 耐久與 Expert 旗標也要比對:
+                // 兩個配方的等級/進度/品質可以完全一樣而耐久不同(DurabilityFactor 不同就會這樣),
+                // 那種情況下拿另一個耐久的解來跑,巨集會在中途把耐久用光,而且是靜默的。
+                // Expert 同理:專家配方的狀態機完全不同,不能共用一般配方的解。
                 if (solKey.Level == craft.CraftLevel &&
                     solKey.Prog == craft.CraftProgress &&
                     solKey.Qual == craft.CraftQualityMax &&
+                    solKey.Dur == craft.CraftDurability &&
+                    solKey.Expert == craft.CraftExpert &&
                     solKey.Crafts == craft.StatCraftsmanship &&
                     solKey.Control <= craft.StatControl &&
                     solKey.Initial == craft.InitialQuality &&
-                    solKey.CP <= craft.StatCP)
+                    solKey.CP <= craft.StatCP &&
+                    (raphaelSolutionConfig == null || solKey.Control > bestControl))
                 {
                     raphaelSolutionConfig = solution.Value;
-                    return true;
+                    bestControl = solKey.Control;
                 }
             }
-            raphaelSolutionConfig = null;
-            return false;
+            return raphaelSolutionConfig != null;
         }
+
+        /// <summary>
+        /// HasSolution throws a cached solution away the moment a single stat dimension misses - craftsmanship
+        /// has to be EXACTLY equal, while control/CP only have to be greater-or-equal - so swapping gear or
+        /// letting food expire makes the Raphael option disappear and the craft quietly fall back to the standard solver.
+        /// <para/>
+        /// This finds the closest cache entry generated for this same recipe (level, progress, quality and
+        /// durability all match) that was rejected on stats, and describes what disqualified it. Returns an empty
+        /// string when nothing is cached for this recipe, so callers can tell "no solution exists" from "ignored".
+        /// </summary>
+        public static string DescribeIgnoredSolution(CraftState craft)
+        {
+            // 每幀路徑：先只用數字挑出距離最近的那一筆（同距離取列舉順序在前的），只替那一筆組說明文字。
+            string? bestKey = null;
+            var bestDistance = long.MaxValue;
+
+            foreach (var solution in P.Config.RaphaelSolverCacheV3)
+            {
+                if (solution.Value.Steps.Count == 0) continue;
+
+                var k = KeyParts(solution.Key);
+                if (k.Level != craft.CraftLevel || k.Prog != craft.CraftProgress ||
+                    k.Qual != craft.CraftQualityMax || k.Dur != craft.CraftDurability)
+                    continue;
+
+                var ignored = false;
+                long distance = 0;
+
+                if (k.Crafts != craft.StatCraftsmanship)
+                {
+                    ignored = true;
+                    distance += Math.Abs(k.Crafts - craft.StatCraftsmanship);
+                }
+                if (k.Control > craft.StatControl)
+                {
+                    ignored = true;
+                    distance += k.Control - craft.StatControl;
+                }
+                if (k.CP > craft.StatCP)
+                {
+                    ignored = true;
+                    distance += k.CP - craft.StatCP;
+                }
+                if (k.Initial != craft.InitialQuality)
+                {
+                    ignored = true;
+                    distance += Math.Abs(k.Initial - craft.InitialQuality);
+                }
+                if (k.Expert != craft.CraftExpert)
+                {
+                    // 沒有這條的話,「只有專家旗標不同」會被當成「其實沒有被忽略」,
+                    // 使用者就會看到「有解但沒說為什麼」的空白提示。
+                    ignored = true;
+                    distance += 1;
+                }
+
+                // Not ignored means HasSolution would have accepted it.
+                if (!ignored) continue;
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestKey = solution.Key;
+                }
+            }
+
+            return bestKey == null ? "" : DescribeMismatch(KeyParts(bestKey), craft);
+        }
+
+        /// <summary><see cref="DescribeIgnoredSolution"/> 挑中的那一筆被拒的理由，一行一個；條件與上面逐項相同。</summary>
+        private static string DescribeMismatch((int Level, int Prog, int Qual, int Dur, int Initial, int Crafts, int Control, int CP, bool Expert) k, CraftState craft)
+        {
+            var reasons = new List<string>();
+            if (k.Crafts != craft.StatCraftsmanship)
+                reasons.Add("Craftsmanship must match exactly: solution ??, you have ??".Loc(k.Crafts, craft.StatCraftsmanship));
+            if (k.Control > craft.StatControl)
+                reasons.Add("Control is ?? short: solution needs ??, you have ??".Loc(k.Control - craft.StatControl, k.Control, craft.StatControl));
+            if (k.CP > craft.StatCP)
+                reasons.Add("CP is ?? short: solution needs ??, you have ??".Loc(k.CP - craft.StatCP, k.CP, craft.StatCP));
+            if (k.Initial != craft.InitialQuality)
+                reasons.Add("Starting quality must match exactly: solution ??, this craft ??".Loc(k.Initial, craft.InitialQuality));
+            if (k.Expert != craft.CraftExpert)
+                reasons.Add(k.Expert
+                    ? "The cached solution was generated for an expert recipe, but this one is not.".Loc()
+                    : "The cached solution was generated for a standard recipe, but this one is expert.".Loc());
+            return string.Join("\n", reasons);
+        }
+
+        /// <summary>
+        /// 「指定的解算器現在不能用的時候,可不可以安靜地改用標準解算器」。
+        /// 使用者的設定說可以,也還有一個問題要問:這場製作是不是別的外掛透過 IPC 叫起來的
+        /// (ICE 的宇宙製作就是,見 IPC.CraftX 設 Endurance.IPCOverride)。那種情況沒有人在看
+        /// 畫面,退回標準解算器會把金牌需要的品質默默做丟,而且從頭到尾一聲不響 —— 已知的
+        /// 唯一徵兆是事後發現獎牌不對。IPC 驅動時一律當成不准降級,讓 CraftingProcessor 觸發
+        /// SolverFailed 把「哪個解算器不能用、為什麼」講出來並停下,而不是硬做完。
+        /// </summary>
+        internal static bool FallbackToStandardAllowed
+            => P.Config.RaphaelSolverConfig.AllowFallbackToStandard && !Endurance.IPCOverride;
 
         public static bool InProgress(CraftState craft) => Tasks.TryGetValue(GetKey(craft), out var _);
 
@@ -282,21 +657,21 @@ namespace Artisan.CraftingLogic.Solvers
 
                 if (hasSolution)
                 {
-                    var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == $"Raphael 配方求解器");
+                    var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
                     var solverIsRaph = config.SolverType == opt?.Def.GetType().FullName!;
                     var curStats = CharacterStats.GetCurrentStats();
                     //Svc.Log.Debug($"{curStats.Craftsmanship}/{craft.StatCraftsmanship} - {curStats.Control}/{craft.StatControl} - {curStats.CP}/{craft.StatCP}");
                     if (liveStats && craft.StatCraftsmanship != curStats.Craftsmanship && solverIsRaph)
                     {
-                        var craftsmanshipError = curStats.Craftsmanship - craft.StatCraftsmanship > 0 ? $"(超出 {curStats.Craftsmanship - craft.StatCraftsmanship}) " : "";
-                        ImGuiEx.Text(ImGuiColors.DalamudRed, $"您当前的制作力 {craftsmanshipError}与生成的结果不匹配。\n由于可能提前完成，此求解器在匹配之前不会被使用。\n(您可能需要应用正确的增益效果)");
+                        var craftsmanshipError = curStats.Craftsmanship - craft.StatCraftsmanship > 0 ? "(Excess of ??) ".Loc(curStats.Craftsmanship - craft.StatCraftsmanship) : "";
+                        ImGuiEx.Text(ImGuiColors.DalamudRed, "Your current Craftsmanship ??does not match the generated result.\nThis solver won't be used until they match due to possible early finishes.\n(You may just need to have the correct buffs applied)".Loc(craftsmanshipError));
                     }
 
                     if (!solverIsRaph)
                     {
                         if (liveStats)
                         {
-                            ImGuiEx.TextCentered($"已生成 Raphael 解决方案。(点击切换)");
+                            ImGuiEx.TextCentered("Raphael Solution Has Been Generated. (Click to Switch)".Loc());
                             if (ImGui.IsItemClicked())
                             {
                                 config.SolverType = opt?.Def.GetType().FullName!;
@@ -306,13 +681,34 @@ namespace Artisan.CraftingLogic.Solvers
                         }
                         else
                         {
-                            ImGuiEx.TextCentered($"已生成 Raphael 解决方案。");
+                            ImGuiEx.TextCentered("Raphael Solution Has Been Generated.".Loc());
                         }
                     }
                 }
                 else
                 {
-                    if (liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
+                    // "A solution exists but is being ignored" has to be visible on the row itself - drawing
+                    // nothing here is what made this look like "Raphael never solved this recipe". The row says
+                    // THAT it is being ignored; the tooltip carries which stat is off and by how much.
+                    var ignored = DescribeIgnoredSolution(craft);
+                    if (ignored.Length > 0)
+                    {
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, "A Raphael solution exists but does not match your current stats - not used.".Loc());
+                        ImGuiEx.Tooltip(ignored + "\n\n" + "Rebuild the solution with your current gear, or restore the stats it was generated for.".Loc());
+                    }
+
+                    // 求解失敗過的話,那件事本身要在**列上**看得見 —— 否則使用者只會看到
+                    // 「沒有 Raphael 解」,分不出「還沒解」與「解不出來而且已經不再重試」。
+                    var failedReason = DescribeFailure(craft);
+                    if (failedReason.Length > 0)
+                    {
+                        ImGuiEx.TextCentered(ImGuiColors.DalamudYellow, "Raphael 求解失敗,已停止自動重試。");
+                        ImGuiEx.Tooltip(failedReason + "\n\n" + "按下方的按鈕會清掉這個結果並重新求解一次。");
+                    }
+
+                    // 臨時解算器生效中就不要自動產生 Raphael 解:那是別的外掛透過 IPC 指定的,
+                    // 自動產生會在使用者沒看畫面時把設定檔的解算器解算起來、蓋掉臨時指定的意圖。
+                    if (config.TempSolverType.Length == 0 && liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
                     {
                         if (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts))
                             Build(craft, TempConfigs[key]);
@@ -327,13 +723,13 @@ namespace Artisan.CraftingLogic.Solvers
                     ImGui.BeginDisabled();
 
                 if (P.Config.RaphaelSolverConfig.AllowEnsureReliability)
-                    raphChanges |= ImGui.Checkbox($"确保可靠性##{key}Reliability", ref TempConfigs[key].EnsureReliability);
+                    raphChanges |= ImGui.Checkbox("Ensure reliability".Loc() + $"##{key}Reliability", ref TempConfigs[key].EnsureReliability);
                 if (P.Config.RaphaelSolverConfig.AllowBackloadProgress)
-                    raphChanges |= ImGui.Checkbox($"后置进度##{key}Progress", ref TempConfigs[key].BackloadProgress);
+                    raphChanges |= ImGui.Checkbox("Backload progress".Loc() + $"##{key}Progress", ref TempConfigs[key].BackloadProgress);
                 if (P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist)
-                    raphChanges |= ImGui.Checkbox($"允许使用专心致志##{key}HS", ref TempConfigs[key].HeartAndSoul);
+                    raphChanges |= ImGui.Checkbox("Allow heart and soul usage".Loc() + $"##{key}HS", ref TempConfigs[key].HeartAndSoul);
                 if (P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist)
-                    raphChanges |= ImGui.Checkbox($"允许使用快速改革##{key}QI", ref TempConfigs[key].QuickInno);
+                    raphChanges |= ImGui.Checkbox("Allow quick innovation usage".Loc() + $"##{key}QI", ref TempConfigs[key].QuickInno);
 
                 changed |= raphChanges;
 
@@ -342,14 +738,16 @@ namespace Artisan.CraftingLogic.Solvers
 
                 if (!inProgress)
                 {
-                    if (ImGui.Button("构建 Raphael 解决方案", new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
+                    if (ImGui.Button("Build Raphael Solution".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
                     {
+                        // 使用者明確要求重新求解 —— 先清掉「已知失敗」,不然 Build 會直接短路。
+                        FailedSolves.TryRemove(GetFailureKey(craft), out _);
                         Build(craft, TempConfigs[key]);
                     }
                 }
                 else
                 {
-                    if (ImGui.Button("取消 Raphael 生成", new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
+                    if (ImGui.Button("Cancel Raphael Generation".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
                     {
                         Tasks.TryRemove(key, out var task);
                         task.Item1.Cancel();
@@ -359,18 +757,18 @@ namespace Artisan.CraftingLogic.Solvers
                 if (TempConfigs[key].EnsureReliability && ImGui.IsItemHovered())
                 {
                     ImGui.BeginTooltip();
-                    ImGui.Text("已启用确保质量，由于可能造成的问题，启用后不提供任何支持。");
+                    ImGui.Text("Ensuring quality is enabled, no support shall be provided when its enabled\nDue to problems that can be caused.".Loc());
                     ImGui.EndTooltip();
                 }
 
                 if (TempConfigs[key].HeartAndSoul || TempConfigs[key].QuickInno)
                 {
-                    ImGui.Text("已启用专家技能，这会显著降低求解器速度。");
+                    ImGui.Text("Specialist actions are enabled, this can slow down the solver a lot.".Loc());
                 }
 
                 if (inProgress)
                 {
-                    ImGuiEx.TextCentered("生成中...");
+                    ImGuiEx.TextCentered("Generating...".Loc());
                 }
             }
 
@@ -390,51 +788,66 @@ namespace Artisan.CraftingLogic.Solvers
         public int MaximumThreads = 0;
         public bool GenerateOnExperts = false;
         public int TimeOutMins = 1;
+        public bool OpportunisticDeviation = true;
+        // Default true == the behaviour Artisan has always had: when the solver a recipe is assigned to
+        // cannot produce a usable flavour (Raphael with no matching cached solution, a deleted macro, ...)
+        // the craft silently runs on whatever solver has the highest priority, i.e. the standard solver.
+        // Turning this off makes that case raise SolverFailed instead, so the craft stops and says why.
+        public bool AllowFallbackToStandard = true;
 
         public bool Draw()
         {
             bool changed = false;
 
             ImGui.Indent();
-            ImGui.TextWrapped($"Raphael 设置会改变性能和系统内存消耗。如果您内存较少，请尽量不要更改设置，建议至少保留 2GB 可用内存");
+            ImGui.TextWrapped("Raphael settings can change the performance and system memory consumption. If you have low amounts of RAM try not to change settings, recommended minimum amount of RAM free is 2GB".Loc());
 
-            if (ImGui.SliderInt("最大线程数", ref MaximumThreads, 0, Environment.ProcessorCount))
+            ImGui.SliderInt("Maximum Threads".Loc(), ref MaximumThreads, 0, Environment.ProcessorCount);
+            if (ImGui.IsItemDeactivatedAfterEdit())
             {
                 P.Config.Save();
             }
-            ImGuiEx.TextWrapped("默认使用所有可用资源，但在低端机器上您可能需要使用更少的 CPU 以牺牲速度为代价。(0 = 全部)");
+            ImGuiEx.TextWrapped("By default uses all it can, but on lower end machines you might need to use less cpu at the cost of speed. (0 = everything)".Loc());
 
-            changed |= ImGui.Checkbox("在宏生成中确保 100% 可靠性", ref AllowEnsureReliability);
+            changed |= ImGui.Checkbox("Ensure 100% reliability in macro generation".Loc(), ref AllowEnsureReliability);
             ImGui.PushTextWrapPos(0);
-            ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "确保可靠性可能并不总是有效，且非常消耗 CPU 和内存，建议至少保留 16GB+ 可用内存。启用此选项后将不提供任何支持");
+            ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "Ensuring reliability may not always work and is very CPU and RAM intensive, suggested RAM at least 16GB+ spare. NO SUPPORT SHALL BE GIVEN IF YOU HAVE THIS ON".Loc());
             ImGui.PopTextWrapPos();
-            changed |= ImGui.Checkbox("在宏生成中允许后置进度", ref AllowBackloadProgress);
-            changed |= ImGui.Checkbox("在可用时显示专家选项", ref ShowSpecialistSettings);
-            changed |= ImGui.Checkbox($"如果尚未创建有效解决方案，则自动生成解决方案。", ref AutoGenerate);
+            changed |= ImGui.Checkbox("Allow backloading of progress in macro generation".Loc(), ref AllowBackloadProgress);
+            changed |= ImGui.Checkbox("Show specialist options when available".Loc(), ref ShowSpecialistSettings);
+            changed |= ImGui.Checkbox("Automatically generate a solution if a valid one hasn't been created.".Loc(), ref AutoGenerate);
 
             if (AutoGenerate)
             {
                 ImGui.Indent();
-                changed |= ImGui.Checkbox($"在专家配方上生成", ref GenerateOnExperts);
+                changed |= ImGui.Checkbox("Generate on Expert Recipes".Loc(), ref GenerateOnExperts);
                 ImGui.Unindent();
             }
 
-            changed |= ImGui.Checkbox($"一旦创建解决方案，自动切换到 Raphael 求解器。", ref AutoSwitch);
+            changed |= ImGui.Checkbox("Automatically switch to the Raphael Solver once a solution has been created.".Loc(), ref AutoSwitch);
 
             if (AutoSwitch)
             {
                 ImGui.Indent();
-                changed |= ImGui.Checkbox($"应用到所有有效制作", ref AutoSwitchOnAll);
+                changed |= ImGui.Checkbox("Apply to all valid crafts".Loc(), ref AutoSwitchOnAll);
                 ImGui.Unindent();
             }
 
-            changed |= ImGui.SliderInt("解决方案生成超时", ref TimeOutMins, 1, 15);
+            changed |= ImGui.Checkbox("依製作狀態機會性偏離解算結果", ref OpportunisticDeviation);
+            ImGuiComponents.HelpMarker("Raphael 產生的是固定步驟,本身看不到「高品質／最高品質／低品質」。開啟後,遇到這些狀態時會先用模擬器把候選動作連同剩下的巨集整段跑完,只有在「仍然完成製作」且「最終品質確實更高」時才偏離,否則照原計畫走。不會動用能工巧匠圖紙。");
 
-            ImGuiComponents.HelpMarker($"如果解决方案生成时间超过此分钟数，将取消生成任务。");
+            changed |= ImGui.Checkbox("Allow automatic fallback to the standard solver".Loc(), ref AllowFallbackToStandard);
+            ImGuiComponents.HelpMarker("When the solver a recipe is assigned to cannot be used right now - Raphael with no cached solution matching your current stats, an assigned macro that was deleted - Artisan quietly starts the craft on the standard solver instead. Turn this off to make it stop and tell you which solver was unavailable rather than silently crafting with a different one.".Loc());
 
-            if (ImGui.Button($"清除 raphael 宏缓存 (当前存储 {P.Config.RaphaelSolverCacheV3.Count} 个)"))
+            changed |= ImGui.SliderInt("Timeout solution generation".Loc(), ref TimeOutMins, 1, 15);
+
+            ImGuiComponents.HelpMarker("If a solution takes longer than this many minutes to generate, it will cancel the generation task.".Loc());
+
+            if (ImGui.Button("Clear raphael macro cache (Currently ?? stored)".Loc(P.Config.RaphaelSolverCacheV3.Count)))
             {
                 P.Config.RaphaelSolverCacheV3.Clear();
+                // 連「這個 session 求解失敗過」的紀錄一起清掉,不然按了清除還是不會重新求解。
+                RaphaelCache.FailedSolves.Clear();
                 changed |= true;
             }
 

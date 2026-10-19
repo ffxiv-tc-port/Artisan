@@ -15,13 +15,15 @@ using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -91,14 +93,26 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
-            if (addonPtr->UldManager.NodeListCount >= 5)
+            // 守衛數字必須 >= 本區塊用到的最大索引 + 1(這裡用到 [6] 與 [24],所以是 25)。
+            // UldManager.NodeList 的長度恰為 NodeListCount,count 不足時
+            // NodeList[24] 讀到的是陣列尾端之外的堆積垃圾,再當成 AtkResNode* 解參考 →
+            // 攔不到的 AccessViolation(corrupted-state exception,try/catch 無效)。
+            // 另加 IsAddonReady:GetAddonByName 在 addon 還在建構時就會回傳指標。
+            if (GenericHelpers.IsAddonReady(addonPtr) && addonPtr->UldManager.NodeListCount >= 25)
             {
                 //var node = addonPtr->UldManager.NodeList[1]->GetAsAtkComponentNode()->Component->UldManager.NodeList[4];
                 var node = addonPtr->UldManager.NodeList[6];
+                var countNode = addonPtr->UldManager.NodeList[24];
+                if (node == null || countNode == null)
+                    return;
+
+                var countTextNode = countNode->GetAsAtkTextNode();
+                if (countTextNode == null)
+                    return;
 
                 var position = AtkResNodeFunctions.GetNodePosition(node);
                 var scale = AtkResNodeFunctions.GetNodeScale(node);
@@ -106,7 +120,8 @@ namespace Artisan
                 var center = new Vector2((position.X + size.X) / 2, (position.Y - size.Y) / 2);
                 //position += ImGuiHelpers.MainViewport.Pos;
                 var textHeight = ImGui.CalcTextSize("Craft X Times:");
-                var craftableCount = addonPtr->UldManager.NodeList[24]->GetAsAtkTextNode()->NodeText.ToString() == "" ? 0 : Convert.ToInt32(addonPtr->UldManager.NodeList[24]->GetAsAtkTextNode()->NodeText.ToString().GetNumbers());
+                var countText = countTextNode->NodeText.ToString();
+                var craftableCount = countText == "" ? 0 : Convert.ToInt32(countText.GetNumbers());
 
                 if (craftableCount == 0) return;
 
@@ -126,14 +141,16 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
             var baseX = addonPtr->X;
             var baseY = addonPtr->Y;
 
-            if (addonPtr->UldManager.NodeListCount >= 2 && addonPtr->UldManager.NodeList[1]->IsVisible())
+            // 節點數只保證陣列長度，不保證元素非空：元素為 null 時解參考會直接 AVE（每影格路徑，安靜跳過）。
+            if (addonPtr->UldManager.NodeListCount >= 2 && addonPtr->UldManager.NodeList != null
+                && addonPtr->UldManager.NodeList[1] != null && addonPtr->UldManager.NodeList[1]->IsVisible())
             {
                 var node = addonPtr->UldManager.NodeList[1];
 
@@ -167,7 +184,7 @@ namespace Artisan
                 DrawCopyOfCraftMenu();
                 if (SimpleTweaks.IsFocusTweakEnabled())
                 {
-                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, $@"Warning: You have the ""Auto Focus Recipe Search"" SimpleTweak enabled. This is highly incompatible with Artisan and is recommended to disable it.");
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, SharedText.AutoFocusRecipeSearchWarning.Loc());
                 }
                 if (Endurance.RecipeID != 0)
                 {
@@ -185,6 +202,22 @@ namespace Artisan
             }
         }
 
+        // 搜尋取代的命中清單與列文字：配方表和名字在插件載入後不變，命中只取決於搜尋字 ⇒ 字沒變就沿用。只在繪製執行緒用。
+        private static string? searchHitsFor;
+        private static List<Recipe> searchHits = new();
+        private static readonly Dictionary<uint, string> SearchHitLabels = new();
+
+        /// <summary>與逐列 <c>Regex.Match(成品名, search, IgnoreCase).Success</c> 同一批、同順序；搜尋字不是合法的正規式時照樣擲（不記）。</summary>
+        internal static List<Recipe> SearchHits(string search)
+        {
+            if (searchHitsFor != search)
+            {
+                searchHits = LuminaSheets.RecipeSheet.Values.Where(x => Regex.IsMatch(x.RowId.NameOfRecipeOrThrow(), search, RegexOptions.IgnoreCase)).ToList();
+                searchHitsFor = search;
+            }
+            return searchHits;
+        }
+
         private unsafe void DrawSearchReplace()
         {
             if (TryGetAddonByName<AddonRecipeNote>("RecipeNote", out var addon))
@@ -200,7 +233,7 @@ namespace Artisan
 
                 if (P.Config.ReplaceSearch)
                 {
-                    searchLabel->GetAsAtkTextNode()->SetText("Artisan搜索");
+                    searchLabel->GetAsAtkTextNode()->SetText("Artisan Search".Loc());
                 }
                 else
                 {
@@ -230,7 +263,8 @@ namespace Artisan
 
                     if (Search.Length > 0 && !searched)
                     {
-                        if (LuminaSheets.RecipeSheet.Values.Count(x => Regex.Match(x.ItemResult.Value.Name.ToDalamudString().ToString(), Search, RegexOptions.IgnoreCase).Success) > 0)
+                        var hits = SearchHits(Search);
+                        if (hits.Count > 0)
                         {
                             ImGui.Begin($"###Search{searchNode->NodeId}", ImGuiWindowFlags.NoScrollbar
                                 | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoNavFocus
@@ -240,16 +274,24 @@ namespace Artisan
                             ImGui.SetNextItemWidth(size.Length() - 12f);
 
                             int results = 0;
-                            foreach (var recipe in LuminaSheets.RecipeSheet.Values.Where(x => Regex.Match(x.ItemResult.Value.Name.ToDalamudString().ToString(), Search, RegexOptions.IgnoreCase).Success))
+                            foreach (var recipe in hits)
                             {
                                 if (results >= 24) continue;
-                                var selected = ImGui.Selectable($"{recipe.ItemResult.Value.Name.ToDalamudString()} ({(Job)recipe.CraftType.RowId + 8})###{recipe.RowId}");
+                                if (!SearchHitLabels.TryGetValue(recipe.RowId, out var label))
+                                    SearchHitLabels[recipe.RowId] = label = $"{recipe.RowId.NameOfRecipeOrThrow()} ({(Job)recipe.CraftType.RowId + 8})###{recipe.RowId}";
+                                var selected = ImGui.Selectable(label);
                                 if (selected)
                                 {
                                     var orid = Operations.GetSelectedRecipeEntry();
                                     if (orid == null || (orid != null && orid->RecipeId != recipe.RowId))
                                     {
-                                        AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                                        // 🔴 AgentRecipeNote.Instance() 合法回 null(產生器本體即
+                                        //    agentModule == null ? null : ...);裸解參考 = AVE,
+                                        //    corrupted-state,外面那圈 catch (Exception) 攔不到。
+                                        // fail-closed:取不到就不開 —— 使用者再點一次即可。
+                                        var recipeAgent = AgentRecipeNote.Instance();
+                                        if (recipeAgent != null)
+                                            recipeAgent->OpenRecipeByRecipeId(recipe.RowId);
                                     }
 
                                     searched = true;
@@ -274,31 +316,46 @@ namespace Artisan
             {
                 try
                 {
-                    var subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu");
+                    var subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu").Address;
                     if (subcontext != null && subcontext->IsVisible)
                         return;
 
                     if (addon->SupplyRadioButton is null)
                         return;
 
-                    if (addon->SupplyRadioButton->UldManager.NodeList[1] != null && addon->SupplyRadioButton->UldManager.NodeList[1]->IsVisible())
+                    // 🔴 只判空是半套：UldManager.NodeList 的長度恰為 NodeListCount，索引越界讀到的是
+                    // 陣列後方的堆積垃圾（**不是 null**），再當 AtkResNode* 交給 IsVisible()
+                    //（[MemberFunction] 原生呼叫）就是攔不到的 AVE —— 外面那個 try/catch 對
+                    // corrupted-state exception 完全無效。
+                    var radioUld = addon->SupplyRadioButton->UldManager;
+                    if (radioUld.NodeList == null || radioUld.NodeListCount <= 1)
+                        return;
+
+                    var radioNode = radioUld.NodeList[1];
+                    if (radioNode != null && radioNode->IsVisible())
                         return;
 
                     var timerWindow = Svc.GameGui.GetAddonByName("GrandCompanySupplyList");
                     if (timerWindow == IntPtr.Zero)
                         return;
 
-                    var atkUnitBase = (AtkUnitBase*)timerWindow;
+                    var atkUnitBase = (AtkUnitBase*)timerWindow.Address;
+
+                    // 同上，這裡用到 NodeList[19] ⇒ 要求 count >= 20；節點本身也要判空。
+                    if (atkUnitBase == null || atkUnitBase->UldManager.NodeList == null
+                        || atkUnitBase->UldManager.NodeListCount <= 19)
+                        return;
+
                     var node = atkUnitBase->UldManager.NodeList[19];
 
-                    if (!node->IsVisible())
+                    if (node == null || !node->IsVisible())
                         return;
 
                     var position = AtkResNodeFunctions.GetNodePosition(node);
                     var scale = AtkResNodeFunctions.GetNodeScale(node);
                     var size = new Vector2(node->Width, node->Height) * scale;
                     var center = new Vector2((position.X + size.X) / 2, (position.Y - size.Y) / 2);
-                    var textSize = ImGui.CalcTextSize("创建制作清单");
+                    var textSize = ImGui.CalcTextSize("Create Crafting List".Loc());
 
                     ImGuiHelpers.ForceNextWindowMainViewport();
                     ImGuiHelpers.SetNextWindowPosRelativeMainViewport(new Vector2(position.X, position.Y + (textSize.Y * scale.Y) + (14f * scale.Y)));
@@ -315,14 +372,14 @@ namespace Artisan
 
                     if (ImGui.GetIO().KeyShift)
                     {
-                        if (ImGui.Button($"Create Crafting List (Star only)", new Vector2(size.X / 2, 0)))
+                        if (ImGui.Button("Create Crafting List (Star only)".Loc(), new Vector2(size.X / 2, 0)))
                         {
                             CreateGCListAgent(atkUnitBase, false, true);
                             P.PluginUi.IsOpen = true;
                             P.PluginUi.OpenWindow = OpenWindow.Lists;
                         }
                         ImGui.SameLine();
-                        if (ImGui.Button($"Create Crafting List (with subcrafts) (Star only)", new Vector2(size.X / 2, 0)))
+                        if (ImGui.Button(SharedText.CreateListWithSubcraftsStarOnly.Loc(), new Vector2(size.X / 2, 0)))
                         {
                             CreateGCListAgent(atkUnitBase, true, true);
                             P.PluginUi.IsOpen = true;
@@ -331,14 +388,14 @@ namespace Artisan
                     }
                     else
                     {
-                        if (ImGui.Button($"创建制作清单", new Vector2(size.X / 2, 0)))
+                        if (ImGui.Button("Create Crafting List".Loc(), new Vector2(size.X / 2, 0)))
                         {
                             CreateGCListAgent(atkUnitBase, false, false);
                             P.PluginUi.IsOpen = true;
                             P.PluginUi.OpenWindow = OpenWindow.Lists;
                         }
                         ImGui.SameLine();
-                        if (ImGui.Button($"创建制作清单（带前置配方）", new Vector2(size.X / 2, 0)))
+                        if (ImGui.Button("Create Crafting List (with subcrafts)".Loc(), new Vector2(size.X / 2, 0)))
                         {
                             CreateGCListAgent(atkUnitBase, true, false);
                             P.PluginUi.IsOpen = true;
@@ -360,12 +417,12 @@ namespace Artisan
             {
                 try
                 {
-                    var subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("AddonContextSub");
+                    var subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("AddonContextSub").Address;
 
                     if (subcontext != null && subcontext->IsVisible)
                         return;
 
-                    subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu");
+                    subcontext = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu").Address;
                     if (subcontext != null && subcontext->IsVisible)
                         return;
 
@@ -373,14 +430,27 @@ namespace Artisan
                     if (timerWindow == IntPtr.Zero)
                         return;
 
-                    var atkUnitBase = (AtkUnitBase*)timerWindow;
+                    var atkUnitBase = (AtkUnitBase*)timerWindow.Address;
+                    if (atkUnitBase == null)
+                        return;
+
+                    // 🔴 AtkValues 與 NodeList 都是原生指標陣列，長度分別恰為 AtkValuesCount 與
+                    // NodeListCount。越界讀到的是堆積垃圾不是 null ⇒ 判空擋不住，而 [233] 這一格
+                    // 只是讀 Type 就已經是越界讀，[97] 更是要當節點指標交給 IsVisible() 原生呼叫。
+                    // 外面那層 try/catch 對 AVE（corrupted-state exception）無效。
+                    // 本區塊用到 AtkValues[233] 與 NodeList[97]。
+                    if (atkUnitBase->AtkValues == null || atkUnitBase->AtkValuesCount <= 233)
+                        return;
 
                     if (atkUnitBase->AtkValues[233].Type != FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int)
                         return;
 
+                    if (atkUnitBase->UldManager.NodeList == null || atkUnitBase->UldManager.NodeListCount <= 97)
+                        return;
+
                     var node = atkUnitBase->UldManager.NodeList[97];
 
-                    if (!node->IsVisible())
+                    if (node == null || !node->IsVisible())
                         return;
 
                     var position = AtkResNodeFunctions.GetNodePosition(node);
@@ -388,7 +458,7 @@ namespace Artisan
                     var size = new Vector2(node->Width, node->Height) * scale;
                     var center = new Vector2((position.X + size.X) / 2, (position.Y - size.Y) / 2);
 
-                    var textSize = ImGui.CalcTextSize("创建制作清单");
+                    var textSize = ImGui.CalcTextSize("Create Crafting List".Loc());
 
                     ImGuiHelpers.ForceNextWindowMainViewport();
                     ImGuiHelpers.SetNextWindowPosRelativeMainViewport(new Vector2(position.X, position.Y - (textSize.Y * scale.Y) - (5f * scale.Y)));
@@ -405,7 +475,7 @@ namespace Artisan
 
                     if (ImGui.GetIO().KeyShift)
                     {
-                        if (ImGui.Button($"创建制作列表（仅星标）", new Vector2(size.X / 2, 0)))
+                        if (ImGui.Button("Create Crafting List (Star only)".Loc(), new Vector2(size.X / 2, 0)))
                         {
                             CreateGCList(atkUnitBase, false, true);
                             P.PluginUi.IsOpen = true;
@@ -417,7 +487,7 @@ namespace Artisan
                         ImGui.GetIO().FontGlobalScale = 0.80f * scale.X;
                         using (var f = ImRaii.PushFont(ImGui.GetFont()))
                         {
-                            if (ImGui.Button($"创建配方列表（包含子配方）（仅限星标）", new Vector2(size.X / 2, s.Y)))
+                            if (ImGui.Button(SharedText.CreateListWithSubcraftsStarOnly.Loc(), new Vector2(size.X / 2, s.Y)))
                             {
                                 CreateGCList(atkUnitBase, true, true);
                                 P.PluginUi.IsOpen = true;
@@ -428,14 +498,14 @@ namespace Artisan
                     }
                     else
                     {
-                        if (ImGui.Button($"创建制作清单", new Vector2(size.X / 2, 0)))
+                        if (ImGui.Button("Create Crafting List".Loc(), new Vector2(size.X / 2, 0)))
                         {
                             CreateGCList(atkUnitBase, false, false);
                             P.PluginUi.IsOpen = true;
                             P.PluginUi.OpenWindow = OpenWindow.Lists;
                         }
                         ImGui.SameLine();
-                        if (ImGui.Button($"创建制作清单（带前置配方）", new Vector2(size.X / 2, 0)))
+                        if (ImGui.Button("Create Crafting List (with subcrafts)".Loc(), new Vector2(size.X / 2, 0)))
                         {
                             CreateGCList(atkUnitBase, true, false);
                             P.PluginUi.IsOpen = true;
@@ -461,8 +531,21 @@ namespace Artisan
             NewCraftingList craftingList = new NewCraftingList();
             craftingList.Name = $"GC Supply List ({DateTime.Now.ToShortDateString()})";
 
+            // 🔴 AtkValues 的長度恰為 AtkValuesCount；越界讀到的是堆積垃圾不是 null ⇒ 判空擋不住。
+            // 這個迴圈用到 [i]、[i-40]、[i-360]、[i-400]，衍生索引全都小於 i，所以驗 i 就夠。
+            // 台服的佈局若與這組寫死索引對不上，失敗形式是「清單建不出來」而不是崩潰。
+            var valueCount = atkUnitBase == null ? 0 : atkUnitBase->AtkValuesCount;
+            if (atkUnitBase == null || atkUnitBase->AtkValues == null || valueCount <= 425)
+            {
+                Svc.Log.Information($"Artisan: GrandCompanySupplyList 的 AtkValues 只有 {valueCount} 格（需要 433），無法建立補給任務清單");
+                return;
+            }
+
             for (int i = 425; i <= 432; i++)
             {
+                if (i >= valueCount)
+                    break;
+
                 if (atkUnitBase->AtkValues[i].Type == 0)
                     continue;
 
@@ -496,7 +579,7 @@ namespace Artisan
             craftingList.SetID();
             craftingList.Save(true);
 
-            Notify.Success("制作清单已创建");
+            Notify.Success("Crafting List Created".Loc());
         }
 
         private static uint TextureIdToJob(int textureId)
@@ -520,8 +603,20 @@ namespace Artisan
             NewCraftingList craftingList = new NewCraftingList();
             craftingList.Name = $"GC Supply List ({DateTime.Now.ToShortDateString()})";
 
+            // 同 CreateGCListAgent。這裡衍生索引是 [i+16]／[i+8]／[i+40]，最大是 i+40，
+            // 所以每一圈驗的是 i + 40 而不是 i —— 只驗 i 會漏掉後面三個。
+            var valueCount = atkUnitBase == null ? 0 : atkUnitBase->AtkValuesCount;
+            if (atkUnitBase == null || atkUnitBase->AtkValues == null || valueCount <= 273)
+            {
+                Svc.Log.Information($"Artisan: ContentsInfoDetail 的 AtkValues 只有 {valueCount} 格（需要 281），無法建立補給任務清單");
+                return;
+            }
+
             for (int i = 233; i <= 240; i++)
             {
+                if (i + 40 >= valueCount)
+                    break;
+
                 if (atkUnitBase->AtkValues[i].Type == 0)
                     continue;
 
@@ -554,7 +649,83 @@ namespace Artisan
             craftingList.SetID();
             craftingList.Save(true);
 
-            Notify.Success("制作清单已创建");
+            Notify.Success("Crafting List Created".Loc());
+        }
+
+        /// <summary>
+        /// 取出 SubmarinePartsMenu 的指定文字節點。
+        /// 🔴 上界（NodeListCount）只是三層裡的第一層：NodeList 元素本身可為 null，
+        /// 而 GetAsAtkTextNode() 在節點型別不是文字節點時也回 null。
+        /// 三層任一沒過就回 null，呼叫端 fail-closed 不做事，不要拿去解參考 NodeText。
+        /// </summary>
+        private static unsafe AtkTextNode* GetWorkshopTextNode(AtkUnitBase* addonPtr, uint index)
+        {
+            if (addonPtr == null || addonPtr->UldManager.NodeList == null || addonPtr->UldManager.NodeListCount <= index)
+                return null;
+
+            var node = addonPtr->UldManager.NodeList[index];
+            if (node == null)
+                return null;
+
+            return node->GetAsAtkTextNode();
+        }
+
+        /// <summary>
+        /// 由 SubmarinePartsMenu 的文字節點推出目前階段並建立對應的製作清單。
+        /// 兩顆按鈕（含／不含前置素材）除了 withPrecrafts 以外邏輯完全相同，收斂在此。
+        /// </summary>
+        private static unsafe void CreateWorkshopPhaseList(AtkUnitBase* addonPtr, bool withPrecrafts)
+        {
+            var itemNameNode = GetWorkshopTextNode(addonPtr, 37);
+            var phaseProgress = GetWorkshopTextNode(addonPtr, 26);
+
+            if (itemNameNode == null || phaseProgress == null)
+            {
+                // 使用者按下按鈕才會走到這裡（不是每影格路徑），安靜失敗會讓人以為清單已經建好了。
+                Svc.Log.Information("Artisan: SubmarinePartsMenu 的成品名或階段進度文字節點取不到，未建立工坊清單。");
+                return;
+            }
+
+            // 🔴 下面兩行拿它去比 Lumina 的 ResultItem.Value.Name.ExtractText() ⇒ 這一端也要走
+            // Lumina 解析器。Utf8String 上的 ExtractText() 綁到 ECommons 已標 [Obsolete] 的那支,
+            // 會丟掉連字符 payload ⇒ 名字含破折號的潛水艇零件永遠找不到,靜默 return。
+            var itemName = LuminaText.Extract(&itemNameNode->NodeText);
+
+            if (!LuminaSheets.WorkshopSequenceSheet.Values.Any(x => x.ResultItem.Value.Name.ExtractText() == itemName))
+                return;
+
+            var project = LuminaSheets.WorkshopSequenceSheet.Values.First(x => x.ResultItem.Value.Name.ExtractText() == itemName);
+            var phaseNum = Convert.ToInt32(phaseProgress->NodeText.ToString().First().ToString());
+
+            if (project.CompanyCraftPart.Count(x => x.RowId > 0) == 1)
+            {
+                var part = project.CompanyCraftPart.First(x => x.RowId > 0).Value;
+                var phase = part.CompanyCraftProcess[phaseNum - 1];
+
+                FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, withPrecrafts, null, project);
+                Notify.Success("FC Workshop List Created".Loc());
+            }
+            else
+            {
+                var currentPartNode = GetWorkshopTextNode(addonPtr, 28);
+                if (currentPartNode == null)
+                {
+                    Svc.Log.Information("Artisan: SubmarinePartsMenu 的目前部件文字節點取不到，未建立工坊清單。");
+                    return;
+                }
+
+                // 🔴 理由同上:下面比的是 Lumina 的 CompanyCraftType.Value.Name.ExtractText()。
+                string partStep = LuminaText.Extract(&currentPartNode->NodeText).Split(":").Last();
+
+                if (project.CompanyCraftPart.Any(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep))
+                {
+                    var part = project.CompanyCraftPart.First(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep).Value;
+                    var phase = part.CompanyCraftProcess[phaseNum - 1];
+
+                    FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, withPrecrafts, null, project);
+                    Notify.Success("FC Workshop List Created".Loc());
+                }
+            }
         }
 
         private unsafe void DrawWorkshopOverlay()
@@ -565,23 +736,23 @@ namespace Artisan
                 if (subWindow == IntPtr.Zero)
                     return;
 
-                var addonPtr = (AtkUnitBase*)subWindow;
+                var addonPtr = (AtkUnitBase*)subWindow.Address;
                 if (addonPtr == null)
                     return;
 
-                if (addonPtr->UldManager.NodeListCount < 38)
+                if (addonPtr->UldManager.NodeList == null || addonPtr->UldManager.NodeListCount < 38)
                     return;
 
                 var node = addonPtr->UldManager.NodeList[2];
 
-                if (!node->IsVisible())
+                if (node == null || !node->IsVisible())
                     return;
 
                 var position = AtkResNodeFunctions.GetNodePosition(node);
                 var scale = AtkResNodeFunctions.GetNodeScale(node);
                 var size = new Vector2(node->Width, node->Height) * scale;
                 var center = new Vector2((position.X + size.X) / 2, (position.Y - size.Y) / 2);
-                var textSize = ImGui.CalcTextSize("为此阶段创建制作清单");
+                var textSize = ImGui.CalcTextSize("Create crafting list for this phase".Loc());
 
                 ImGuiHelpers.ForceNextWindowMainViewport();
                 ImGuiHelpers.SetNextWindowPosRelativeMainViewport(new Vector2(position.X + (4f * scale.X), position.Y + size.Y - textSize.Y - (34f * scale.Y)));
@@ -600,74 +771,14 @@ namespace Artisan
                     | ImGuiWindowFlags.AlwaysUseWindowPadding | ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoSavedSettings);
 
 
-                if (ImGui.Button("为此阶段创建制作清单"))
+                if (ImGui.Button("Create crafting list for this phase".Loc()))
                 {
-                    var itemNameNode = addonPtr->UldManager.NodeList[37]->GetAsAtkTextNode();
-                    var phaseProgress = addonPtr->UldManager.NodeList[26]->GetAsAtkTextNode();
-
-                    if (LuminaSheets.WorkshopSequenceSheet.Values.Any(x => x.ResultItem.Value.Name.ExtractText() == itemNameNode->NodeText.ExtractText()))
-                    {
-                        var project = LuminaSheets.WorkshopSequenceSheet.Values.First(x => x.ResultItem.Value.Name.ExtractText() == itemNameNode->NodeText.ExtractText());
-                        var phaseNum = Convert.ToInt32(phaseProgress->NodeText.ToString().First().ToString());
-
-                        if (project.CompanyCraftPart.Count(x => x.RowId > 0) == 1)
-                        {
-                            var part = project.CompanyCraftPart.First(x => x.RowId > 0).Value;
-                            var phase = part.CompanyCraftProcess[phaseNum - 1];
-
-                            FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, false, null, project);
-                            Notify.Success("部队工房清单已创建");
-                        }
-                        else
-                        {
-                            var currentPartNode = addonPtr->UldManager.NodeList[28]->GetAsAtkTextNode();
-                            string partStep = currentPartNode->NodeText.ExtractText().Split(":").Last();
-
-                            if (project.CompanyCraftPart.Any(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep))
-                            {
-                                var part = project.CompanyCraftPart.First(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep).Value;
-                                var phase = part.CompanyCraftProcess[phaseNum - 1];
-
-                                FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, false, null, project);
-                                Notify.Success("部队工房清单已创建");
-                            }
-                        }
-                    }
+                    CreateWorkshopPhaseList(addonPtr, false);
                 }
 
-                if (ImGui.Button("为此阶段创建制作清单（含前置配方）"))
+                if (ImGui.Button("Create crafting list for this phase (including precrafts)".Loc()))
                 {
-                    var itemNameNode = addonPtr->UldManager.NodeList[37]->GetAsAtkTextNode();
-                    var phaseProgress = addonPtr->UldManager.NodeList[26]->GetAsAtkTextNode();
-
-                    if (LuminaSheets.WorkshopSequenceSheet.Values.Any(x => x.ResultItem.Value.Name.ExtractText() == itemNameNode->NodeText.ExtractText()))
-                    {
-                        var project = LuminaSheets.WorkshopSequenceSheet.Values.First(x => x.ResultItem.Value.Name.ExtractText() == itemNameNode->NodeText.ExtractText());
-                        var phaseNum = Convert.ToInt32(phaseProgress->NodeText.ToString().First().ToString());
-
-                        if (project.CompanyCraftPart.Count(x => x.RowId > 0) == 1)
-                        {
-                            var part = project.CompanyCraftPart.First(x => x.RowId > 0).Value;
-                            var phase = part.CompanyCraftProcess[phaseNum - 1];
-
-                            FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, true, null, project);
-                            Notify.Success("部队工房清单已创建");
-                        }
-                        else
-                        {
-                            var currentPartNode = addonPtr->UldManager.NodeList[28]->GetAsAtkTextNode();
-                            string partStep = currentPartNode->NodeText.ExtractText().Split(":").Last();
-
-                            if (project.CompanyCraftPart.Any(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep))
-                            {
-                                var part = project.CompanyCraftPart.First(x => x.Value.CompanyCraftType.Value.Name.ExtractText() == partStep).Value;
-                                var phase = part.CompanyCraftProcess[phaseNum - 1];
-
-                                FCWorkshopUI.CreatePhaseList(phase.Value!, part.CompanyCraftType.Value.Name.ExtractText(), phaseNum, true, null, project);
-                                Notify.Success("FC Workshop List Created");
-                            }
-                        }
-                    }
+                    CreateWorkshopPhaseList(addonPtr, true);
                 }
 
                 ImGui.End();
@@ -687,10 +798,17 @@ namespace Artisan
                 P.Style.Push();
                 P.StylePushed = true;
             }
+            // base.PreDraw() 推入 Dalamud 的每視窗不透明度(標題列右鍵選單的「不透明度」滑桿)。
+            // 🔴 base 必須放在 P.Style.Push() **之後**:StyleModel.Push() 自己會推一個
+            // 絕對值的 ImGuiStyleVar.Alpha(Dalamud/Interface/Style/StyleModelV1.cs)，
+            // 先呼叫 base 再 Push 的話 base 推的不透明度會被主題的 Alpha 直接蓋掉。
+            base.PreDraw();
         }
 
         public override void PostDraw()
         {
+            // 後進先出:base 在 PreDraw 的最後才推，所以這裡要最先 pop。
+            base.PostDraw();
             if (P.StylePushed)
             {
                 P.Style.Pop();
@@ -705,7 +823,7 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
@@ -714,7 +832,9 @@ namespace Artisan
 
             if (addonPtr->UldManager.NodeListCount > 1)
             {
-                if (addonPtr->UldManager.NodeList[1]->IsVisible())
+                // 節點數只保證陣列長度，不保證元素非空：元素為 null 時解參考會直接 AVE（每影格路徑，安靜跳過）。
+                if (addonPtr->UldManager.NodeList != null && addonPtr->UldManager.NodeList[1] != null
+                    && addonPtr->UldManager.NodeList[1]->IsVisible())
                 {
                     var node = addonPtr->UldManager.NodeList[1];
 
@@ -762,29 +882,35 @@ namespace Artisan
 
         private static void DrawCopyOfCraftMenu()
         {
-            if (ImGuiEx.AddHeaderIcon("OpenConfig", FontAwesomeIcon.Cog, new ImGuiEx.HeaderIconOptions() { Tooltip = "打开设置" }))
+            // ECommons dropped AddHeaderIcon in favor of Window.TitleBarButton, but this
+            // window uses NoTitleBar so the native title bar button row never renders;
+            // draw an equivalent inline icon button instead.
+            if (ImGuiEx.IconButton(FontAwesomeIcon.Cog, "OpenConfig"))
             {
                 P.PluginUi.IsOpen = true;
             }
+            ImGuiEx.Tooltip("Open Config".Loc());
 
             bool autoMode = P.Config.AutoMode;
 
-            if (ImGui.Checkbox("自动制作模式", ref autoMode))
+            if (ImGui.Checkbox("Automatic Action Execution Mode".Loc(), ref autoMode))
             {
-                P.Config.AutoMode = autoMode;
+                P.Config.SetAutoMode(autoMode);
                 P.Config.Save();
             }
             bool enable = Endurance.Enable;
 
-            if (!CraftingListFunctions.HasItemsForRecipe(Endurance.RecipeID) && !Endurance.Enable)
+            // 耐力模式執行中、材料已用完時取消勾選，會在中間把 Endurance.Enable 改掉；EndDisabled 必須照推入當下的判定。
+            var toggleDisabled = !CraftingListFunctions.HasItemsForRecipe(Endurance.RecipeID) && !Endurance.Enable;
+            if (toggleDisabled)
                 ImGui.BeginDisabled();
 
-            if (ImGui.Checkbox("耐力模式开关", ref enable))
+            if (ImGui.Checkbox("Endurance Mode Toggle".Loc(), ref enable))
             {
                 Endurance.ToggleEndurance(enable);
             }
 
-            if (!CraftingListFunctions.HasItemsForRecipe(Endurance.RecipeID) && !Endurance.Enable)
+            if (toggleDisabled)
             {
                 ImGui.EndDisabled();
 
@@ -792,7 +918,7 @@ namespace Artisan
                 {
                     var recipe = LuminaSheets.RecipeSheet!.First(x => x.Key == Endurance.RecipeID).Value;
                     ImGui.BeginTooltip();
-                    ImGui.Text($"无法开始耐力模式，没有足够的材料来制作这个配方。\r\n缺少：{string.Join("，", PreCrafting.MissingIngredients(recipe))}");
+                    ImGui.Text("You cannot start Endurance as you do not possess ingredients to craft this recipe.\nMissing: ??".Loc(string.Join(", ", PreCrafting.MissingIngredients(recipe))));
                     ImGui.EndTooltip();
                 }
             }
@@ -804,14 +930,16 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
             var baseX = addonPtr->X;
             var baseY = addonPtr->Y;
 
-            if (addonPtr->UldManager.NodeListCount >= 2 && addonPtr->UldManager.NodeList[1]->IsVisible())
+            // 節點數只保證陣列長度，不保證元素非空：元素為 null 時解參考會直接 AVE（每影格路徑，安靜跳過）。
+            if (addonPtr->UldManager.NodeListCount >= 2 && addonPtr->UldManager.NodeList != null
+                && addonPtr->UldManager.NodeList[1] != null && addonPtr->UldManager.NodeList[1]->IsVisible())
             {
                 var node = addonPtr->UldManager.NodeList[1];
 
@@ -844,7 +972,7 @@ namespace Artisan
 
                 if (SimpleTweaks.IsFocusTweakEnabled())
                 {
-                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, $@"警告：您启用了 SimpleTweak 中的 ""Auto Focus Recipe Search"" 功能。这与 Artisan 有极大冲突，建议禁用它。");
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudRed, SharedText.AutoFocusRecipeSearchWarning.Loc());
                 }
                 if (Endurance.RecipeID != 0)
                 {
@@ -872,22 +1000,33 @@ namespace Artisan
             if (recipeWindow == IntPtr.Zero)
                 return;
 
-            var addonPtr = (AtkUnitBase*)recipeWindow;
+            var addonPtr = (AtkUnitBase*)recipeWindow.Address;
             if (addonPtr == null)
                 return;
 
-            if (addonPtr->UldManager.NodeListCount >= 5)
+            // 守衛數字必須 >= 本區塊用到的最大索引 + 1(這裡用到 [8] 與 [35],所以是 36)。
+            // count 不足時 NodeList[35] 讀到的是陣列尾端之外的堆積垃圾,
+            // 當成 AtkResNode* 解參考 → 攔不到的 AVE。
+            if (GenericHelpers.IsAddonReady(addonPtr) && addonPtr->UldManager.NodeListCount >= 36)
             {
                 //var node = addonPtr->UldManager.NodeList[1]->GetAsAtkComponentNode()->Component->UldManager.NodeList[4];
                 var node = addonPtr->UldManager.NodeList[8];
+                var countNode = addonPtr->UldManager.NodeList[35];
+                if (node == null || countNode == null)
+                    return;
+
+                var countTextNode = countNode->GetAsAtkTextNode();
+                if (countTextNode == null)
+                    return;
 
                 var position = AtkResNodeFunctions.GetNodePosition(node);
                 var scale = AtkResNodeFunctions.GetNodeScale(node);
                 var size = new Vector2(node->Width, node->Height) * scale;
                 var center = new Vector2((position.X + size.X) / 2, (position.Y - size.Y) / 2);
                 //position += ImGuiHelpers.MainViewport.Pos;
-                var textHeight = ImGui.CalcTextSize("多次制作：");
-                var craftableCount = addonPtr->UldManager.NodeList[35]->GetAsAtkTextNode()->NodeText.ToString() == "" ? 0 : Convert.ToInt32(addonPtr->UldManager.NodeList[35]->GetAsAtkTextNode()->NodeText.ToString().GetNumbers());
+                var textHeight = ImGui.CalcTextSize("Craft X Times:".Loc());
+                var countText = countTextNode->NodeText.ToString();
+                var craftableCount = countText == "" ? 0 : Convert.ToInt32(countText.GetNumbers());
 
                 if (craftableCount == 0) return;
 
@@ -918,7 +1057,7 @@ namespace Artisan
             using (var font = ImRaii.PushFont(ImGui.GetFont()))
             {
                 ImGui.AlignTextToFramePadding();
-                ImGui.Text("多次制作：");
+                ImGui.Text("Craft X Times:".Loc());
                 ImGui.SameLine();
                 ImGui.PushItemWidth(110f * scale.X);
                 if (ImGui.InputInt($"###TimesRepeat{node->NodeId}", ref P.Config.CraftX))
@@ -933,7 +1072,7 @@ namespace Artisan
                 ImGui.SameLine();
                 if (P.Config.CraftX > 0)
                 {
-                    if (ImGui.Button($"制作{P.Config.CraftX}"))
+                    if (ImGui.Button("Craft ??".Loc(P.Config.CraftX)))
                     {
                         P.Config.CraftingX = true;
                         Endurance.ToggleEndurance(true);
@@ -941,7 +1080,7 @@ namespace Artisan
                 }
                 else
                 {
-                    if (ImGui.Button($"制作全部({craftableCount})"))
+                    if (ImGui.Button("Craft All (??)".Loc(craftableCount)))
                     {
                         P.Config.CraftX = craftableCount;
                         P.Config.CraftingX = true;

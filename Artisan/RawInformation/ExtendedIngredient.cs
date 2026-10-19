@@ -6,6 +6,7 @@ using ECommons.DalamudServices;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -24,7 +25,6 @@ namespace Artisan.RawInformation
         public Recipe CraftedRecipe;
         public Item Data;
         public TerritoryType GatherZone;
-        public IDalamudTextureWrap? Icon;
         public int MaterialIndex;
         public NewCraftingList OriginList;
         public Dictionary<uint, int> OriginListMaterials;
@@ -38,13 +38,13 @@ namespace Artisan.RawInformation
         public Dictionary<uint, int> UsedInMaterialsListCount = new();
         public Dictionary<uint, List<Tuple<uint, int, int>>> SubSubMaterials = new();
         public MarketboardData? MarketboardData;
+        public bool MarketboardFetchFailed;
         public bool RecipeOnList;
         public IngredientHelpers IngredientHelper;
 
         public Ingredient(uint ItemId, int required, NewCraftingList originList, Dictionary<uint, int> materials, IngredientHelpers ingredientHelpers)
         {
             Data = LuminaSheets.ItemSheet.Values.First(x => x.RowId == ItemId);
-            Icon = P.Icons.TryLoadIconAsync(Data.Icon).Result;
             Required = required;
             if (LuminaSheets.RecipeSheet.Values.FindFirst(x => x.ItemResult.RowId == ItemId, out CraftedRecipe)) { Sources.Add(1); CanBeCrafted = true; }
             if (LuminaSheets.GatheringItemSheet.Values.Any(x => x.Item.RowId == ItemId)) Sources.Add(2);
@@ -99,13 +99,22 @@ namespace Artisan.RawInformation
             RecipeOnList = originList.Recipes.Any(x => LuminaSheets.RecipeSheet[x.ID].ItemResult.RowId == ItemId);
             if (P.Config.UseUniversalis && !P.Config.UniversalisOnDemand)
             {
-                if (P.Config.LimitUnversalisToDC)
-                    Task.Run(() => P.UniversalsisClient.GetDCData(ItemId, ref MarketboardData));
-                else
-                    Task.Run(() => P.UniversalsisClient.GetRegionData(ItemId, ref MarketboardData));
+                // Building a list creates one Ingredient per material; the Universalis client coalesces and
+                // paces the requests, so kicking one off per ingredient is safe.
+                var limitToDC = P.Config.LimitUnversalisToDC;
+                var itemIdForPrice = ItemId;
+                _ = Task.Run(async () => MarketboardData = limitToDC
+                    ? await P.UniversalsisClient.GetDCDataAsync(itemIdForPrice).ConfigureAwait(false)
+                    : await P.UniversalsisClient.GetRegionDataAsync(itemIdForPrice).ConfigureAwait(false));
             }
             IngredientHelper = ingredientHelpers;
         }
+
+        // 下面三個都是遊戲資料（Data／GatherZone／Category 只在建構子裡指定），清單編輯器每幀每列都要畫 ⇒ 只轉一次字串。
+        private string? itemName, gatherZoneName, categoryName;
+        public string ItemName => itemName ??= Data.Name.ToString();
+        public string GatherZoneName => gatherZoneName ??= GatherZone.PlaceName.Value.Name.ToString();
+        public string CategoryName => categoryName ??= Svc.Data.Excel.GetSheet<ItemSearchCategory>().GetRow(Category).Name.ToString();
 
         public virtual event EventHandler<bool>? OnRemainingChange;
 
@@ -118,7 +127,12 @@ namespace Artisan.RawInformation
             {
                 if (DateTime.Now > RemainingCheck)
                 {
-                    var current = Math.Max(0, Required - Inventory - RetainerCount - (CanBeCrafted ? TotalCraftable : 0) - (OriginList.SkipIfEnough && OriginList.SkipLiteral ? 0 : AmountUsedForSubcrafts));
+                    // "Remaining" is the physical shortfall shown to the user and used by exports/filters/
+                    // market-board lookups. Do not subtract TotalCraftable or AmountUsedForSubcrafts here:
+                    // NumberCraftable evaluates each recipe on the list independently, so a material shared by
+                    // multiple recipes would be deducted once per recipe from the same finite pool. Downstream
+                    // products already crafted are also not inventory of this raw ingredient.
+                    var current = Math.Max(0, Required - Inventory - RetainerCount);
                     if (remaining != current)
                     {
                         remaining = current;
@@ -136,7 +150,10 @@ namespace Artisan.RawInformation
             {
                 if (DateTime.Now > RetainerCheck)
                 {
-                    retainerCount = Task.Run(() => RetainerInfo.GetRetainerItemCount(Data.RowId)).Result;
+                    // Called synchronously in place (matching the ReainterCountHQ getter below). Do not wrap it in
+                    // Task.Run(...).Result: GetRetainerItemCount marshals its native reads back to the framework
+                    // thread, which may be the very thread blocked waiting on the result.
+                    retainerCount = RetainerInfo.GetRetainerItemCount(Data.RowId);
                     RetainerCheck = DateTime.Now.AddSeconds(0.5);
                 }
                 return retainerCount;
@@ -161,6 +178,51 @@ namespace Artisan.RawInformation
         private int retainerCount;
         private int retainerCountHQ;
 
+        // GetSubCraftCount 在清單編輯器每幀每列都跑（道具名欄的底色），所以下面幾支查找寫成迴圈、不經 LINQ／Ingredients()。
+        // 找不到時擲 InvalidOperationException（與 LINQ 的 First 同一種失敗形式）。
+        private static int AmountUsedIn(Recipe recipe, uint itemId)
+        {
+            for (var i = 0; i < recipe.Ingredient.Count; i++)
+            {
+                if (recipe.Ingredient[i].RowId == itemId && recipe.Ingredient[i].IsValid)
+                    return recipe.AmountIngredient[i];
+            }
+            throw new InvalidOperationException("Sequence contains no matching element");
+        }
+
+        private int QuantityOnList(uint recipeId)
+        {
+            foreach (var r in OriginList.Recipes)
+            {
+                if (r.ID == recipeId)
+                    return r.Quantity;
+            }
+            throw new InvalidOperationException("Sequence contains no matching element");
+        }
+
+        private Ingredient? FindHelper(uint itemId)
+        {
+            foreach (var x in IngredientHelper.HelperList)
+            {
+                if (x.Data.RowId == itemId)
+                    return x;
+            }
+            return null;
+        }
+
+        private bool SubSubMaterialsContain(uint recipeId)
+        {
+            foreach (var list in SubSubMaterials.Values)
+            {
+                foreach (var y in list)
+                {
+                    if (y.Item1 == recipeId)
+                        return true;
+                }
+            }
+            return false;
+        }
+
         public int GetSubCraftCount()
         {
             int output = 0;
@@ -171,11 +233,11 @@ namespace Artisan.RawInformation
             {
                 var recipe = LuminaSheets.RecipeSheet[craft];
                 var owned = RetainerInfo.GetRetainerItemCount(recipe.ItemResult.RowId) + CraftingListUI.NumberOfIngredient(recipe.ItemResult.RowId);
-                var numberUsedInRecipe = recipe.Ingredients().First(x => x.Item.RowId == Data.RowId).Amount;
-                var numberOnList = OriginList.Recipes.First(x => x.ID == craft).Quantity; // * recipe.AmountResult; Did I want to multiply that? Answers on a postcard
-                if (IngredientHelper.HelperList.Any(x => x.Data.RowId == recipe.ItemResult.RowId))
+                var numberUsedInRecipe = AmountUsedIn(recipe, Data.RowId);
+                var numberOnList = QuantityOnList(craft); // * recipe.AmountResult; Did I want to multiply that? Answers on a postcard
+                var subing = FindHelper(recipe.ItemResult.RowId);
+                if (subing != null)
                 {
-                    var subing = IngredientHelper.HelperList.First(x => x.Data.RowId == recipe.ItemResult.RowId);
                     if (subing.UsedInCrafts.Count > 0)
                     {
                         //output += subing.GetSubCraftCount() * numberUsedInRecipe;
@@ -185,7 +247,7 @@ namespace Artisan.RawInformation
 
                             if (SubSubMaterials.ContainsKey(recipe.RowId))
                             {
-                                if (SubSubMaterials.Values.Any(x => x.Any(y => y.Item1 == i.Key)))
+                                if (SubSubMaterialsContain(i.Key))
                                     continue;
                                 SubSubMaterials[recipe.RowId].Add(new Tuple<uint, int, int>(i.Key, i.Value * numberUsedInRecipe, i.Value));
                             }
@@ -231,41 +293,53 @@ namespace Artisan.RawInformation
             //return output;
         }
 
+        // 材料集合與順序同 Ingredients().Where(Amount > 0)（有效的列、數量大於 0）；取最小值不收進 List。
         private int NumberCraftable(uint ItemId)
         {
-            List<int> NumberOfUses = new();
-            if (LuminaSheets.RecipeSheet.Values.FindFirst(x => x.ItemResult.RowId == ItemId, out var recipe))
+            if (LuminaSheets.TryGetFirstRecipeByResult(ItemId, out var recipe))
             {
-                foreach (var ingredient in recipe.Ingredients().Where(x => x.Amount > 0))
+                var minUses = int.MaxValue;
+                var anyIngredient = false;
+                for (var slot = 0; slot < recipe.Ingredient.Count; slot++)
                 {
-                    int invCount = CraftingListUI.NumberOfIngredient(ingredient.Item.RowId);
-                    int retainerCount = RetainerInfo.GetRetainerItemCount(ingredient.Item.RowId);
+                    int amount = recipe.AmountIngredient[slot];
+                    if (amount <= 0 || !recipe.Ingredient[slot].IsValid)
+                        continue;
+                    var ingredientId = recipe.Ingredient[slot].RowId;
+
+                    int invCount = CraftingListUI.NumberOfIngredient(ingredientId);
+                    int retainerCount = RetainerInfo.GetRetainerItemCount(ingredientId);
 
                     int craftableCount = 0;
                     Recipe? subRecipe;
-                    if (subRecipes.ContainsKey(ingredient.Item.RowId))
+                    if (subRecipes.ContainsKey(ingredientId))
                     {
-                        subRecipe = subRecipes[ingredient.Item.RowId];
+                        subRecipe = subRecipes[ingredientId];
                     }
                     else
                     {
-                        subRecipe = CraftingListHelpers.GetIngredientRecipe(ingredient.Item.RowId);
-                        subRecipes.Add(ingredient.Item.RowId, subRecipe);
+                        subRecipe = CraftingListHelpers.GetIngredientRecipe(ingredientId);
+                        subRecipes.Add(ingredientId, subRecipe);
                     }
 
                     if (subRecipe is not null)
                     {
-                        craftableCount = NumberCraftable(ingredient.Item.RowId);
+                        craftableCount = NumberCraftable(ingredientId);
                     }
 
                     int total = invCount + retainerCount + craftableCount;
 
-                    int uses = total / ingredient.Amount    ;
+                    int uses = total / amount;
 
-                    NumberOfUses.Add(uses);
+                    if (uses < minUses)
+                        minUses = uses;
+                    anyIngredient = true;
                 }
 
-                return NumberOfUses.Min() * recipe.AmountResult;
+                // 與對空集合呼叫 Min() 相同的失敗形式。
+                if (!anyIngredient)
+                    throw new InvalidOperationException("Sequence contains no elements");
+                return minUses * recipe.AmountResult;
             }
             else
                 return -1;

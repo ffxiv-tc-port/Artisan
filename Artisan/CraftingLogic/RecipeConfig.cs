@@ -10,9 +10,11 @@ using ECommons;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
+using ECommons.LanguageHelpers;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -25,6 +27,51 @@ public class RecipeConfig
     public const uint Default = 0;
     public const uint Disabled = 1;
 
+    // 臨時覆寫:只活在記憶體裡,不進設定檔(NonSerialized 擋欄位序列化、JsonIgnore 擋
+    // Newtonsoft)。由 Artisan.SetTemporary* 這組 IPC 設定,Artisan.ClearTemporary*
+    // 或 Artisan 卸載時清掉。
+    // 🔴 未設定時一律沿用既有欄位 —— 既有使用者的行為與設定檔內容都不變。
+    [NonSerialized, JsonIgnore]
+    public string TempSolverType = "";
+    [NonSerialized, JsonIgnore]
+    public int TempSolverFlavour = -1;
+    [NonSerialized, JsonIgnore]
+    public uint? TempRequiredFood;
+    [NonSerialized, JsonIgnore]
+    public bool TempRequiredFoodHQ;
+    [NonSerialized, JsonIgnore]
+    public uint? TempRequiredPotion;
+    [NonSerialized, JsonIgnore]
+    public bool TempRequiredPotionHQ;
+
+    // 🔴 這一整組唯讀計算屬性都掛 [JsonIgnore]:臨時覆寫絕對不能落地。Temp* 欄位掛 [NonSerialized, JsonIgnore] **不夠** ——
+    //    Newtonsoft 的 DefaultContractResolver(Dalamud 的 SavePluginConfig 走的就是它)**會序列化公開的唯讀屬性**,
+    //    而下面每一個的值都是從 Temp* 算出來的 ⇒ 別的外掛透過 IPC 設了臨時解算器/食物之後,
+    //    只要使用者動到任何別的設定觸發一次 Save(),臨時值就會透過這些屬性寫進設定檔。
+    //    ⚠️ 失敗形式是靜默的:唯讀屬性**寫得出去、讀不回來**(反序列化找不到 setter 就跳過)。
+    [JsonIgnore]
+    public string CurrentSolverType => TempSolverType.Length > 0 ? TempSolverType : SolverType;
+    [JsonIgnore]
+    public int CurrentSolverFlavour => TempSolverFlavour >= 0 ? TempSolverFlavour : SolverFlavour;
+    [JsonIgnore]
+    public uint CurrentRequiredFood => TempRequiredFood ?? requiredFood;
+    [JsonIgnore]
+    public bool CurrentRequiredFoodHQ => TempRequiredFood.HasValue ? TempRequiredFoodHQ : requiredFoodHQ;
+    [JsonIgnore]
+    public uint CurrentRequiredPotion => TempRequiredPotion ?? requiredPotion;
+    [JsonIgnore]
+    public bool CurrentRequiredPotionHQ => TempRequiredPotion.HasValue ? TempRequiredPotionHQ : requiredPotionHQ;
+
+    public void ClearTemporaryOverrides()
+    {
+        TempSolverType = "";
+        TempSolverFlavour = -1;
+        TempRequiredFood = null;
+        TempRequiredFoodHQ = false;
+        TempRequiredPotion = null;
+        TempRequiredPotionHQ = false;
+    }
+
 
     public string SolverType = ""; // TODO: ideally it should be a Type?, but that causes problems for serialization
     public int SolverFlavour;
@@ -36,35 +83,49 @@ public class RecipeConfig
     public bool requiredPotionHQ = true;
 
 
+    [JsonIgnore]
     public bool FoodEnabled => RequiredFood != Disabled;
+    [JsonIgnore]
     public bool PotionEnabled => RequiredPotion != Disabled;
+    [JsonIgnore]
     public bool ManualEnabled => RequiredManual != Disabled;
+    [JsonIgnore]
     public bool SquadronManualEnabled => RequiredSquadronManual != Disabled;
 
 
-    public uint RequiredFood => requiredFood == Default ? P.Config.DefaultConsumables.requiredFood : requiredFood;
-    public uint RequiredPotion => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotion : requiredPotion;
+    [JsonIgnore]
+    public uint RequiredFood => CurrentRequiredFood == Default ? P.Config.DefaultConsumables.requiredFood : CurrentRequiredFood;
+    [JsonIgnore]
+    public uint RequiredPotion => CurrentRequiredPotion == Default ? P.Config.DefaultConsumables.requiredPotion : CurrentRequiredPotion;
+    [JsonIgnore]
     public uint RequiredManual => requiredManual == Default ? P.Config.DefaultConsumables.requiredManual : requiredManual;
+    [JsonIgnore]
     public uint RequiredSquadronManual => requiredSquadronManual == Default ? P.Config.DefaultConsumables.requiredSquadronManual : requiredSquadronManual;
-    public bool RequiredFoodHQ => requiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : requiredFoodHQ;
-    public bool RequiredPotionHQ => requiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : requiredPotionHQ;
+    [JsonIgnore]
+    public bool RequiredFoodHQ => CurrentRequiredFood == Default ? P.Config.DefaultConsumables.requiredFoodHQ : CurrentRequiredFoodHQ;
+    [JsonIgnore]
+    public bool RequiredPotionHQ => CurrentRequiredPotion == Default ? P.Config.DefaultConsumables.requiredPotionHQ : CurrentRequiredPotionHQ;
 
 
-    public string FoodName => requiredFood == Default ? $"{P.Config.DefaultConsumables.FoodName} (默认)" : RequiredFood == Disabled ? "已禁用" : $"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
-    public string PotionName => requiredPotion == Default ? $"{P.Config.DefaultConsumables.PotionName} (默认)" : RequiredPotion == Disabled ? "已禁用" : $"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
-    public string ManualName => requiredManual == Default ? $"{P.Config.DefaultConsumables.ManualName} (默认)" : RequiredManual == Disabled ? "已禁用" : $"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
-    public string SquadronManualName => requiredSquadronManual == Default ? $"{P.Config.DefaultConsumables.SquadronManualName} (默认)" : RequiredSquadronManual == Disabled ? "已禁用" : $"{ConsumableChecker.SquadronManuals.FirstOrDefault(x => x.Id == RequiredSquadronManual).Name}";
+    [JsonIgnore]
+    public string FoodName => requiredFood == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.FoodName) : RequiredFood == Disabled ? "Disabled".Loc() :$"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
+    [JsonIgnore]
+    public string PotionName => requiredPotion == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.PotionName) : RequiredPotion == Disabled ? "Disabled".Loc() :$"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
+    [JsonIgnore]
+    public string ManualName => requiredManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.ManualName) : RequiredManual == Disabled ? "Disabled".Loc() :$"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
+    [JsonIgnore]
+    public string SquadronManualName => requiredSquadronManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.SquadronManualName) : RequiredSquadronManual == Disabled ? "Disabled".Loc() :$"{ConsumableChecker.SquadronManuals.FirstOrDefault(x => x.Id == RequiredSquadronManual).Name}";
 
 
 
     public bool Draw(uint recipeId)
     {
         var recipe = LuminaSheets.RecipeSheet[recipeId];
-        ImGuiEx.LineCentered($"###RecipeName{recipeId}", () => { ImGuiEx.TextUnderlined($"{recipe.ItemResult.Value.Name.ToDalamudString().ToString()}"); });
+        ImGuiEx.LineCentered($"###RecipeName{recipeId}", () => { ImGuiEx.TextUnderlined(recipeId.NameOfRecipeOrThrow()); });
         var config = this;
-        var stats = CharacterStats.GetBaseStatsForClassHeuristic(Job.CRP + recipe.CraftType.RowId);
+        var stats = CharacterStats.GetBaseStatsForClassHeuristic((Job)((uint)Job.CRP + recipe.CraftType.RowId));
         stats.AddConsumables(new(config.RequiredFood, config.RequiredFoodHQ), new(config.RequiredPotion, config.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
-        var craft = Crafting.BuildCraftStateForRecipe(stats, Job.CRP + recipe.CraftType.RowId, recipe);
+        var craft = Crafting.BuildCraftStateForRecipe(stats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
         craft.InitialQuality = Simulator.GetStartingQuality(recipe, false, craft.StatLevel);
         bool changed = false;
         changed |= DrawFood();
@@ -79,21 +140,21 @@ public class RecipeConfig
     public bool DrawFood(bool hasButton = false)
     {
         bool changed = false;
-        ImGuiEx.TextV("食物使用：");
+        ImGuiEx.TextV("Food Usage:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         if (ImGui.BeginCombo("##foodBuff", FoodName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.FoodName})"))
+                if (ImGui.Selectable("Default (??)".Loc(P.Config.DefaultConsumables.FoodName)))
                 {
                     requiredFood = Default;
                     requiredFoodHQ = false;
                     changed = true;
                 }
             }
-            if (ImGui.Selectable("禁用"))
+            if (ImGui.Selectable("Disable".Loc()))
             {
                 requiredFood = Disabled;
                 requiredFoodHQ = false;
@@ -125,21 +186,21 @@ public class RecipeConfig
     public bool DrawPotion(bool hasButton = false)
     {
         bool changed = false;
-        ImGuiEx.TextV("药水使用：");
+        ImGuiEx.TextV("Medicine Usage:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         if (ImGui.BeginCombo("##potBuff", PotionName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.PotionName})"))
+                if (ImGui.Selectable("Default (??)".Loc(P.Config.DefaultConsumables.PotionName)))
                 {
                     requiredPotion = Default;
                     requiredPotionHQ = false;
                     changed = true;
                 }
             }
-            if (ImGui.Selectable("禁用"))
+            if (ImGui.Selectable("Disable".Loc()))
             {
                 requiredPotion = Disabled;
                 requiredPotionHQ = false;
@@ -171,20 +232,20 @@ public class RecipeConfig
     public bool DrawManual(bool hasButton = false)
     {
         bool changed = false;
-        ImGuiEx.TextV("指南使用：");
+        ImGuiEx.TextV("Manual Usage:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         if (ImGui.BeginCombo("##manualBuff", ManualName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.ManualName})"))
+                if (ImGui.Selectable("Default (??)".Loc(P.Config.DefaultConsumables.ManualName)))
                 {
                     requiredManual = Default;
                     changed = true;
                 }
             }
-            if (ImGui.Selectable("禁用"))
+            if (ImGui.Selectable("Disable".Loc()))
             {
                 requiredManual = Disabled;
                 changed = true;
@@ -207,20 +268,20 @@ public class RecipeConfig
     public bool DrawSquadronManual(bool hasButton = false)
     {
         bool changed = false;
-        ImGuiEx.TextV("军用指南：");
+        ImGuiEx.TextV("Squadron Manual:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         if (ImGui.BeginCombo("##squadronManualBuff", SquadronManualName))
         {
             if (this != P.Config.DefaultConsumables)
             {
-                if (ImGui.Selectable($"默认 ({P.Config.DefaultConsumables.SquadronManualName})"))
+                if (ImGui.Selectable("Default (??)".Loc(P.Config.DefaultConsumables.SquadronManualName)))
                 {
                     requiredSquadronManual = Default;
                     changed = true;
                 }
             }
-            if (ImGui.Selectable("禁用"))
+            if (ImGui.Selectable("Disable".Loc()))
             {
                 requiredSquadronManual = Disabled;
                 changed = true;
@@ -241,7 +302,7 @@ public class RecipeConfig
     public bool DrawSolver(CraftState craft, bool hasButton = false, bool liveStats = true)
     {
         bool changed = false;
-        ImGuiEx.TextV($"解算器：");
+        ImGuiEx.TextV("Solver:".Loc());
         ImGui.SameLine(130f.Scale());
         if (hasButton) ImGuiEx.SetNextItemFullWidth(-120);
         var solver = CraftingProcessor.GetSolverForRecipe(this, craft);
@@ -252,7 +313,7 @@ public class RecipeConfig
                 if (opt == default) continue;
                 if (opt.UnsupportedReason.Length > 0)
                 {
-                    ImGui.Text($"{opt.Name} 不受支持 - {opt.UnsupportedReason}");
+                    ImGui.Text("?? is unsupported - ??".Loc(opt.Name, opt.UnsupportedReason));
                 }
                 else
                 {
@@ -280,20 +341,53 @@ public class RecipeConfig
         {
             var recipe = craft.Recipe;
             var config = this;
-            var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor);
+            var solverHint = Simulator.SimulatorResult(recipe, config, craft, out var hintColor, out var solverTooltip);
             var solver = CraftingProcessor.GetSolverForRecipe(config, craft);
 
-            if (solver.Name != "专家配方求解器")
+            // 🔑 「這個宇宙任務有奇蹟之材」以及「現在這個解算器到底會不會用它」必須在**列上**看得見。
+            //    不論哪一種解算器都要講:配方(自動)切到 Raphael 時,不講的話使用者被靜默降級成「整場不用奇蹟之材」而無從得知。
+            //    tooltip 藏的是「為什麼」,不是「有沒有問題」。
+            if (craft.MissionHasMaterialMiracle)
             {
-                if (craft.MissionHasMaterialMiracle && solver.Name == "标准配方求解器" && P.Config.UseMaterialMiracle)
-                    ImGuiEx.TextWrapped($"这将使用材料奇迹，与模拟器不兼容。");
+                if (!P.Config.UseMaterialMiracle)
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "This mission grants Material Miracle, but it will not be used.".Loc());
+                    // 📌 代打是逐場過閘門(見 StandardSolver.ShouldDelegateDuringMiracle),所以這裡只給建議、不給警告。
+                    ImGuiEx.Tooltip("Turn on \"Use Material Miracle when available\" in the main settings to let solvers use it.".Loc());
+                }
+                else if (!Solvers.MaterialMiracleSolver.SolverUsesMaterialMiracle(solver))
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudYellow, "This mission grants Material Miracle, but ?? will not use it.".Loc(solver.Name));
+                    ImGuiEx.Tooltip("Only the standard, expert and Raphael solvers know about Material Miracle. Pick one of those for this recipe to make use of it.".Loc());
+                }
                 else
+                {
+                    ImGuiEx.TextWrapped(ImGuiColors.DalamudWhite, "?? will use Material Miracle on this mission.".Loc(solver.Name));
+                    ImGuiEx.Tooltip("Material Miracle costs no step, no CP and no durability, and does not tick any buff down. While it is up every condition is a beneficial one.".Loc());
+                }
+            }
+
+            var showedDistribution = false;
+            if (solver.Name != "Expert Recipe Solver".Loc())
+            {
+                if (craft.MissionHasMaterialMiracle && solver.Name == "Standard Recipe Solver".Loc() && P.Config.UseMaterialMiracle)
+                    ImGuiEx.TextWrapped("This would use Material Miracle, which is not compatible with the simulator.".Loc());
+                else
+                {
                     ImGuiEx.TextWrapped(hintColor, solverHint);
+                    showedDistribution = true;
+                }
             }
             else
-                ImGuiEx.TextWrapped($"请在模拟器中运行此配方以获得结果。");
+                ImGuiEx.TextWrapped(SharedText.RunInSimulatorForResults.Loc());
 
-            if (ImGui.IsItemClicked())
+            // ⚠️ 先把點擊狀態存下來再畫 tooltip —— ImGuiEx.Tooltip 會開一個新視窗,
+            //    之後的 IsItemClicked 就不再指向上面那段文字了。
+            var hintClicked = ImGui.IsItemClicked();
+            if (showedDistribution && solverTooltip.Length > 0)
+                ImGuiEx.Tooltip(solverTooltip);
+
+            if (hintClicked)
             {
                 P.PluginUi.OpenWindow = UI.OpenWindow.Simulator;
                 P.PluginUi.IsOpen = true;
@@ -314,17 +408,24 @@ public class RecipeConfig
                     SimulatorUI.SimFood.Stats = new ConsumableStats(config.RequiredFood, config.RequiredFoodHQ);
                 }
 
-                foreach (ref var gs in RaptureGearsetModule.Instance()->Entries)
+                // Instance() 沒登入/切場景時合法回 null,直接 ->Entries 就是解參考 null
+                // (AccessViolationException,try/catch 攔不到)。取不到就不挑裝備組,
+                // SimGS 維持原值 —— 下面的使用點本來就處理 SimGS 為 null 的情況。
+                var gearsetModule = RaptureGearsetModule.Instance();
+                if (gearsetModule != null)
                 {
-                    if ((Job)gs.ClassJob == Job.CRP + recipe.CraftType.RowId)
+                    foreach (ref var gs in gearsetModule->Entries)
                     {
-                        if (SimulatorUI.SimGS is null || (Job)SimulatorUI.SimGS.Value.ClassJob != Job.CRP + recipe.CraftType.RowId)
+                        if ((Job)gs.ClassJob == (Job)((uint)Job.CRP + recipe.CraftType.RowId))
                         {
-                            SimulatorUI.SimGS = gs;
-                        }
+                            if (SimulatorUI.SimGS is null || (Job)SimulatorUI.SimGS.Value.ClassJob != (Job)((uint)Job.CRP + recipe.CraftType.RowId))
+                            {
+                                SimulatorUI.SimGS = gs;
+                            }
 
-                        if (SimulatorUI.SimGS.Value.ItemLevel < gs.ItemLevel)
-                            SimulatorUI.SimGS = gs;
+                            if (SimulatorUI.SimGS.Value.ItemLevel < gs.ItemLevel)
+                                SimulatorUI.SimGS = gs;
+                        }
                     }
                 }
 
@@ -334,7 +435,7 @@ public class RecipeConfig
 
             if (ImGui.IsItemHovered())
             {
-                ImGuiEx.Tooltip($"点击在模拟器中打开");
+                ImGuiEx.Tooltip("Click to open in simulator".Loc());
             }
 
 

@@ -1,4 +1,5 @@
 ﻿using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using System;
 using System.Collections.Generic;
 using Condition = Artisan.CraftingLogic.CraftData.Condition;
@@ -8,12 +9,12 @@ namespace Artisan.CraftingLogic.Solvers
 {
     public class StandardSolverDefinition : ISolverDefinition
     {
-        public string MouseoverDescription { get; set; } = "这是标准配方解算器。";
+        public string MouseoverDescription { get; set; } = "This is the normal recipe solver.".Loc();
 
         public IEnumerable<ISolverDefinition.Desc> Flavours(CraftState craft)
         {
             if (!craft.CraftExpert && craft.CraftHQ)
-                yield return new(this, 0, 2, "标准配方求解器");
+                yield return new(this, 0, 2, "Standard Recipe Solver".Loc());
         }
 
         public Solver Create(CraftState craft, int flavour) => new StandardSolver(flavour != 0);
@@ -32,6 +33,24 @@ namespace Artisan.CraftingLogic.Solvers
         private bool _materialMiracleUsed;
 
         private Solver? _fallback; //For Material Miracle
+
+        // 這一場製作要不要在奇蹟之材期間交給 ExpertSolver 代打(只算一次,見 ShouldDelegateDuringMiracle)。
+        private bool? _delegateDuringMiracle;
+
+        /// <summary>
+        /// 代打閘門最近一次判定的理由,給**呼叫端**記 log 用(讀走就清掉,一場製作只會印一次)。
+        /// 🔴 這裡刻意不自己呼叫 Svc.Log:同一個解算器也被配方視窗的提示取樣器拿去跑上百次模擬
+        ///    (見 <see cref="SolverHintSampler"/>),在裡面記會把 log 洗掉 —— 與
+        ///    <see cref="MaterialMiracleSolver.LastGateExplanation"/> 同一個理由與同一套接線。
+        /// </summary>
+        public string ConsumeGateExplanation()
+        {
+            var res = _gateExplanation;
+            _gateExplanation = "";
+            return res;
+        }
+
+        private string _gateExplanation = "";
 
         public StandardSolver(bool expert)
         {
@@ -59,7 +78,10 @@ namespace Artisan.CraftingLogic.Solvers
 
             }
 
-            if ((rec.Action is not Skills.MastersMend or Skills.ImmaculateMend) &&
+            // 🔴 不能寫成 `is not Skills.MastersMend or Skills.ImmaculateMend`:C# 解析成
+            //    `(not MastersMend) or (ImmaculateMend)` —— 除了 MastersMend 恆真,
+            //    比爾格祝福因此可以蓋掉剛選定的精修。意圖是「兩個修理技都不是」。
+            if ((rec.Action is not Skills.MastersMend and not Skills.ImmaculateMend) &&
                 step.Quality < craft.CraftQualityMax &&
                 Simulator.CanUseAction(craft, step, Skills.ByregotsBlessing) &&
                 step.RemainingCP - Simulator.GetCPCost(step, rec.Action) < Simulator.GetCPCost(step, Skills.ByregotsBlessing) &&
@@ -79,6 +101,69 @@ namespace Artisan.CraftingLogic.Solvers
                 rec.Action = Skills.BasicSynthesis;
 
             return rec;
+        }
+
+        private bool DelegateNow(CraftState craft, StepState step)
+        {
+            if (!step.MaterialMiracleActive)
+                return false;
+            _delegateDuringMiracle ??= ShouldDelegateDuringMiracle(craft, step);
+            return _delegateDuringMiracle.Value;
+        }
+
+        // 12 次是離線量出來的:2 次時閘門在部分配方上判錯,12 次之後沒有再更好。
+        // 成本是每場製作一次、約 0.7~1.5 ms(非專家製作,ExpertSolver 的自適應前瞻不會被觸發)。
+        private const int GateRollouts = 12;
+        private const int GateRolloutCap = 150;
+
+        /// <summary>
+        /// 「奇蹟之材生效期間交給專家解算器代打」對**這一場**製作是賺是賠,只在 buff 剛生效時算一次。
+        /// 為什麼需要:代打不是換個解算器,是把一場製作**切成兩段**由兩個策略各打一半。
+        /// 評分函式與 <see cref="ExpertSolver"/> 的前瞻模擬刻意用同一個:做得出來 ? 品質達成率 : 0。
+        /// **做不出來給 0 分**是關鍵 —— 素材做爛的代價遠大於少幾個品質點。
+        /// 🔴 **平手不代打**(要嚴格更好才換手)。平手代表「兩條路的期望收穫一樣」,而代打不是零成本的。
+        /// </summary>
+        private bool ShouldDelegateDuringMiracle(CraftState craft, StepState step)
+        {
+            double withDelegate = 0, without = 0;
+            for (var k = 0; k < GateRollouts; ++k)
+            {
+                var seed = unchecked(step.Index * 7919 + k * 104729 + step.Durability * 31 + step.RemainingCP);
+                withDelegate += PolicyValue(craft, step, true, new Random(seed));
+                without += PolicyValue(craft, step, false, new Random(seed));
+            }
+            var ok = withDelegate > without;
+            _gateExplanation = ok
+                ? $"第 {step.Index} 步起的奇蹟之材期間交給專家解算器代打:前瞻模擬 {GateRollouts} 次的期望收穫 " +
+                  $"{withDelegate / GateRollouts:F3} > 自己打的 {without / GateRollouts:F3}。"
+                : $"第 {step.Index} 步起的奇蹟之材期間**不**交給專家解算器代打:前瞻模擬 {GateRollouts} 次的期望收穫 " +
+                  $"{withDelegate / GateRollouts:F3} ≤ 自己打的 {without / GateRollouts:F3}(沒有嚴格更好就不換手:" +
+                  $"代打會在 buff 結束交還時留下收不回來的進度缺口,平手時換手只是白白多冒一次交接風險)。";
+            return ok;
+        }
+
+        /// 用指定的代打政策把剩下的製作跑完,回傳「做得出來 ? 品質達成率(0~1) : 0」。
+        private double PolicyValue(CraftState craft, StepState step, bool delegateDuringMiracle, Random rng)
+        {
+            // 🔴 一定要先把政策釘進複製品,否則 Solve 又會走進這道閘門 → 無窮遞迴。
+            var probe = (StandardSolver)Clone();
+            probe._delegateDuringMiracle = delegateDuringMiracle;
+            var cur = step;
+            for (var guard = 0; Simulator.Status(craft, cur) == Simulator.CraftStatus.InProgress; ++guard)
+            {
+                if (guard >= GateRolloutCap)
+                    return 0; // 沒收斂:當成做不出來,不要把遊戲執行緒吊死
+                var action = probe.Solve(craft, cur).Action;
+                if (action == Skills.None)
+                    return 0;
+                var (res, next) = Simulator.Execute(craft, cur, action, rng.NextSingle(), rng.NextSingle());
+                if (res == Simulator.ExecuteResult.CantUse)
+                    return 0;
+                cur = next;
+            }
+            if (cur.Progress < craft.CraftProgress || craft.CraftQualityMax <= 0)
+                return 0;
+            return Math.Min(1.0, (double)cur.Quality / craft.CraftQualityMax);
         }
 
         private static bool InTouchRotation(CraftState craft, StepState step)
@@ -153,7 +238,7 @@ namespace Artisan.CraftingLogic.Solvers
             _venereationUsed |= step.PrevComboAction == Skills.Veneration;
             _materialMiracleUsed |= step.PrevComboAction == Skills.MaterialMiracle && !P.Config.MaterialMiracleMulti;
 
-            if (step.MaterialMiracleActive)
+            if (DelegateNow(craft, step))
                 return fallbackRec;
 
             if (P.Config.UseMaterialMiracle && !_materialMiracleUsed && Simulator.CanUseAction(craft, step, Skills.MaterialMiracle))

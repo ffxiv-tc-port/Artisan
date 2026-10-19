@@ -3,8 +3,10 @@ using ECommons;
 using ECommons.DalamudServices;
 using Lumina.Excel.Sheets;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Action = Lumina.Excel.Sheets.Action;
 using Status = Lumina.Excel.Sheets.Status;
 
@@ -41,6 +43,11 @@ namespace Artisan.RawInformation
 
         public static Dictionary<uint, SpecialShop>? SpecialShopSheet;
 
+        // Item.PriceMid is populated even for items only obtainable via SpecialShop
+        // (tribal/GC scrip, item-for-item trades) that no NPC actually sells for gil.
+        // Cross-reference GilShopItem to confirm an item is really purchasable with gil.
+        public static HashSet<uint>? GilShopItemIds;
+
         public static Dictionary<uint, LogMessage>? LogMessageSheet;
 
         public static Dictionary<uint, ItemFood>? ItemFoodSheet;
@@ -59,16 +66,25 @@ namespace Artisan.RawInformation
 
         public static void Init()
         {
+            // 排序鍵與 recipeLookup 的鍵都是成品名，只取決於成品 id：每個成品只轉一次字串（一萬多道配方約一萬個相異成品）。
+            var resultNames = new Dictionary<uint, string>();
+            string ResultName(Recipe r)
+            {
+                if (!resultNames.TryGetValue(r.ItemResult.RowId, out var name))
+                    resultNames[r.ItemResult.RowId] = name = r.ItemResult.Value.Name.ToDalamudString().ToString();
+                return name;
+            }
+
             RecipeSheet = Svc.Data?.GetExcelSheet<Recipe>()?
            .Where(x => x.ItemResult.RowId > 0)
                 .DistinctBy(x => x.RowId)
                 .OrderBy(x => x.RecipeLevelTable.Value.ClassJobLevel)
-                .ThenBy(x => x.ItemResult.Value.Name.ToDalamudString().ToString())
+                .ThenBy(ResultName)
                 .ToDictionary(x => x.RowId, x => x);
 
             // Preprocess the recipe data into a lookup table (ILookup) for faster access.
             recipeLookup = LuminaSheets.RecipeSheet.Values
-                .ToLookup(x => x.ItemResult.Value.Name.ToDalamudString().ToString());
+                .ToLookup(ResultName);
 
             GatheringItemSheet = Svc.Data?.GetExcelSheet<GatheringItem>()?
                 .Where(x => x.GatheringItemLevel.Value.GatheringItemLevel > 0)
@@ -110,6 +126,11 @@ namespace Artisan.RawInformation
             SpecialShopSheet = Svc.Data?.GetExcelSheet<SpecialShop>()?
                        .ToDictionary(i => i.RowId, i => i);
 
+            GilShopItemIds = Svc.Data?.GetSubrowExcelSheet<GilShopItem>()?
+                       .SelectMany(row => row)
+                       .Select(i => i.Item.RowId)
+                       .ToHashSet();
+
             LogMessageSheet = Svc.Data?.GetExcelSheet<LogMessage>()?
                        .ToDictionary(i => i.RowId, i => i);
 
@@ -141,11 +162,31 @@ namespace Artisan.RawInformation
 
         public static void Dispose()
         {
-            var type = typeof(LuminaSheets);
-            foreach (var prop in type.GetFields(System.Reflection.BindingFlags.Static))
+            // 刻意不清空靜態表：卸載後才收尾的背景工作（例如僱員快取重建）還會讀，清空只會讓它們擲 NRE；表跟著插件組件一起回收。
+        }
+
+        // 「以成品找第一個配方」：FindFirst 要走整張 RecipeSheet（一萬多列），而 NumberCraftable 每幀每個節點都查。
+        // 只建一次成品 id → 配方的表，同一個成品保留 RecipeSheet 列舉順序裡的第一個（＝FindFirst 的答案）。
+        private sealed class RecipeByResult(Dictionary<uint, Recipe>? source, Dictionary<uint, Recipe> map)
+        {
+            public readonly Dictionary<uint, Recipe>? Source = source;
+            public readonly Dictionary<uint, Recipe> Map = map;
+        }
+
+        private static RecipeByResult? recipeByResult;
+
+        public static bool TryGetFirstRecipeByResult(uint itemId, out Recipe recipe)
+        {
+            var sheet = RecipeSheet;
+            var index = Volatile.Read(ref recipeByResult);
+            if (index == null || !ReferenceEquals(index.Source, sheet))
             {
-                prop.SetValue(null, null);
+                var map = new Dictionary<uint, Recipe>();
+                foreach (var r in sheet!.Values)
+                    map.TryAdd(r.ItemResult.RowId, r);
+                Volatile.Write(ref recipeByResult, index = new RecipeByResult(sheet, map));
             }
+            return index.Map.TryGetValue(itemId, out recipe);
         }
     }
 
@@ -199,13 +240,50 @@ namespace Artisan.RawInformation
             return LuminaSheets.ItemSheet[id].Name.ExtractText();
         }
 
+        // 清單編輯器每幀每列都在要配方名（材料表「用於製作」欄、成品庫存頁），每次都重新解析 SeString。
+        // 名字只取決於配方 id 與 RecipeSheet ⇒ 依 RecipeSheet 實例快取；Init 換了新的表就整份重來。
+        private sealed class RecipeNameCache(Dictionary<uint, Recipe>? source)
+        {
+            public readonly Dictionary<uint, Recipe>? Source = source;
+            public readonly ConcurrentDictionary<uint, string> Names = new();
+        }
+
+        private static RecipeNameCache? recipeNames;
+
         public static string NameOfRecipe(this uint id)
         {
             if (id == 0) return "";
             if (!LuminaSheets.RecipeSheet.ContainsKey(id))
                 return "";
 
-            return LuminaSheets.RecipeSheet[id].ItemResult.Value.Name.ToDalamudString().ToString();
+            return id.NameOfRecipeOrThrow();
+        }
+
+        /// <summary>
+        /// 與 <c>RecipeSheet[id].ItemResult.Value.Name.ToDalamudString().ToString()</c> 同值、同例外（id 不在表上照樣擲），只是記住結果。
+        /// </summary>
+        public static string NameOfRecipeOrThrow(this uint id)
+        {
+            var cache = Volatile.Read(ref recipeNames);
+            if (cache == null || !ReferenceEquals(cache.Source, LuminaSheets.RecipeSheet))
+                Volatile.Write(ref recipeNames, cache = new RecipeNameCache(LuminaSheets.RecipeSheet));
+            return cache.Names.GetOrAdd(id, static i => LuminaSheets.RecipeSheet![i].ItemResult.Value.Name.ToDalamudString().ToString());
+        }
+
+        /// <summary>
+        /// 有沒有任何配方的成品名等於 <paramref name="name"/>；答案與逐列比對 <c>RecipeSheet</c> 的成品名相同。
+        /// </summary>
+        /// <remarks>
+        /// <c>recipeLookup</c> 在 Init 以同一個鍵（成品名）對同一份 <c>RecipeSheet</c> 建好。
+        /// 兩者有一個不在時照原式逐列比對（含它原本會擲的例外）。繪製執行緒與背景執行緒都會呼叫。
+        /// </remarks>
+        public static bool AnyRecipeResultNamed(string name)
+        {
+            var sheet = LuminaSheets.RecipeSheet;
+            var lookup = LuminaSheets.recipeLookup;
+            if (sheet == null || lookup == null)
+                return sheet!.Any(x => x.Value.ItemResult.Value.Name.ToDalamudString().ToString() == name);
+            return lookup.Contains(name);
         }
 
         public static string NameOfQuest(this ushort id)
@@ -225,8 +303,28 @@ namespace Artisan.RawInformation
 
         }
 
-        public static bool MissionHasMaterialMiracle(this Recipe recipe)
+        public static bool MissionHasMaterialMiracle(this Recipe recipe) => recipe.MissionMaterialMiracle().Has;
+
+        // 配方設定每幀都會問；答案只取決於配方 id 與遊戲資料表（行程內不變），所以依配方 id 記住、不必作廢。
+        // 查表擲例外的那一次不記，下次照舊重查並記錯誤。繪製執行緒與背景執行緒都會呼叫。
+        private static readonly ConcurrentDictionary<uint, (bool Has, uint Charges)> materialMiracleByRecipe = new();
+
+        /// <summary>
+        /// 這個配方所屬的宇宙探索任務有沒有奇蹟之材,以及**給幾次**。
+        /// </summary>
+        /// <remarks>
+        /// 🔑 <c>Charges</c> 讀的是 <c>WKSMissionToDo.Unknown14</c>。
+        /// ⚠️ 不是 <c>Unknown15</c>:它在**完全沒有奇蹟之材**的任務上也恆為 3。
+        /// 🔴 回傳值取 <c>Max(1, …)</c> 是刻意的 fail-safe:欄位對應萬一是錯的,最壞也只是退回
+        /// 1,不會變成 0(那等於奇蹟之材在模擬器裡整個消失,而且是靜默的)。
+        /// 📌 實機那條路**不吃這個值** —— <c>Crafting.MaterialMiracleCharges()</c> 直接問
+        /// <c>DutyActionManager</c>。這裡只影響模擬器/前瞻,所以就算讀錯也不會改變實機行為。
+        /// </remarks>
+        public static (bool Has, uint Charges) MissionMaterialMiracle(this Recipe recipe)
         {
+            if (materialMiracleByRecipe.TryGetValue(recipe.RowId, out var known))
+                return known;
+
             try
             {
 
@@ -236,21 +334,26 @@ namespace Artisan.RawInformation
                 var missionRec = Svc.Data.GetExcelSheet<WKSMissionRecipe>().FirstOrDefault(missionRec => missionRec.Recipe.Any(recipe =>  recipe.RowId == id));
                 //Bail if there's no MissionRecipe (this isn't a Cosmic Craft)
                 if (missionRec.RowId == 0)
-                    return false;
-                
+                    return materialMiracleByRecipe[id] = (false, 0);
+
                 //Next, find the MissionUnit that has our MissionRecipe row
-                var missionUnit = Svc.Data.GetExcelSheet<WKSMissionUnit>().First(missionUnit => missionUnit.WKSMissionRecipe == (ushort)missionRec.RowId);
+                var missionUnit = Svc.Data.GetExcelSheet<WKSMissionUnit>().First(missionUnit => missionUnit.WKSMissionRecipe.RowId == missionRec.RowId);
 
                 //Get the MissionToDo from the MissionUnit
-                var missionToDo = Svc.Data.GetExcelSheet<WKSMissionToDo>().GetRow(missionUnit.Unknown7);
+                // Lumina's WKSMissionUnit schema exposes this as a MissionToDo row-ref collection;
+                // take the first entry.
+                var missionToDo = missionUnit.MissionToDo[0].Value;
 
                 //Svc.Log.Verbose($"{id} -> {missionRec.RowId} -> {missionUnit.RowId} -> {missionToDo.RowId} -> {missionToDo.Unknown0}");
-                return missionToDo.Unknown0 == (uint)Skills.MaterialMiracle;
+                if (missionToDo.Unknown0 != (uint)Skills.MaterialMiracle)
+                    return materialMiracleByRecipe[id] = (false, 0);
+
+                return materialMiracleByRecipe[id] = (true, Math.Max(1u, (uint)missionToDo.Unknown14));
             }
             catch (Exception e)
             {
-                Svc.Log.Error($"Error in MissionHasMaterialMiracle: {e}");
-                return false;
+                Svc.Log.Error($"Error in MissionMaterialMiracle: {e}");
+                return (false, 0);
             }
         }
     }

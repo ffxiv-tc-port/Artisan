@@ -14,15 +14,16 @@ public class IngredientHelpers
 
     public async Task<List<Ingredient>> GenerateList(NewCraftingList originList, System.Threading.CancellationTokenSource source)
     {
+        CurrentIngredient = 0;
         var materials = originList.ListMaterials();
         List<Ingredient> output = new();
-        var taskList = new List<Task>();
-        MaxIngredient = materials.Count();
+        MaxIngredient = materials.Count;
         foreach (var item in materials.OrderBy(x => x.Key))
         {
-            if (source.IsCancellationRequested) return null;
+            if (source.IsCancellationRequested) return null!;
             CurrentIngredient++;
             await Task.Run(() => output.Add(new Ingredient(item.Key, item.Value, originList, materials, this)));
+            if (source.IsCancellationRequested) return null!;
         }
 
         HelperList = output;

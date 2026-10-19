@@ -10,7 +10,10 @@ using ECommons;
 using ECommons.Automation;
 using ECommons.DalamudServices;
 using ECommons.ExcelServices;
+using ECommons.LanguageHelpers;
 using ECommons.Logging;
+using ECommons.UIHelpers;
+using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -20,6 +23,7 @@ using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
 using static ECommons.GenericHelpers;
+using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 
 namespace Artisan.GameInterop;
 
@@ -34,13 +38,15 @@ public unsafe static class PreCrafting
     private static long NextTaskAt = 0;
 
     private delegate void ClickSynthesisButton(void* thisPtr, AtkEventType eventType, int eventParam, AtkEvent* atkEvent, AtkEventData* atkEventData);
-    private static Hook<ClickSynthesisButton> _clickButton;
+    // 三個 hook 各自獨立：null＝特徵碼對不上、沒掛上（只少對應的那一項）；只在靜態建構子指派一次。
+    private static Hook<ClickSynthesisButton>? _clickButton;
 
     private delegate void* FireCallbackDelegate(AtkUnitBase* atkUnitBase, int valueCount, AtkValue* atkValues, byte updateVisibility);
-    private static Hook<FireCallbackDelegate> _gearsetCallback;
+    private static Hook<FireCallbackDelegate>? _gearsetCallback;
+    private static readonly GearsetPromptWatch _gearsetPrompt = new();
 
     delegate nint AddonWKSRecipeNote_ReceiveEventDelegate(nint a1, ushort a2, uint a3, nint a4, nint a5);
-    private static Hook<AddonWKSRecipeNote_ReceiveEventDelegate> _cosmicCallback;
+    private static Hook<AddonWKSRecipeNote_ReceiveEventDelegate>? _cosmicCallback;
 
     public enum TaskResult { Done, Retry, Abort }
     public static List<(Func<TaskResult> task, TimeSpan retryDelay)> Tasks = new();
@@ -48,12 +54,18 @@ public unsafe static class PreCrafting
 
     static PreCrafting()
     {
-        _clickButton = Svc.Hook.HookFromSignature<ClickSynthesisButton>("40 55 53 56 57 41 56 48 8D 6C 24 D1 48 81 EC C0 00 00 00", ClickSynthButtons);
+        _clickButton = SigHooks.TryHookFromSignature<ClickSynthesisButton>(
+            "ClickSynthesisButton", "40 55 53 56 57 41 56 48 8D 6C 24 D1 48 81 EC C0 00 00 00", ClickSynthButtons,
+            "手動按製作手帳的「製作／簡易製作／製作練習」時不會先自動換職業、換裝、用食物藥水，按鈕照遊戲原本的行為；耐力模式與製作清單不受影響。");
         _clickButton?.Enable();
 
-        _gearsetCallback = Svc.Hook.HookFromSignature<FireCallbackDelegate>("E8 ?? ?? ?? ?? 0F B6 E8 8B 44 24 20", CallbackDetour);
+        _gearsetCallback = SigHooks.TryHookFromSignature<FireCallbackDelegate>(
+            "FireCallback", "E8 ?? ?? ?? ?? 0F B6 E8 8B 44 24 20", CallbackDetour,
+            "換套裝跳出確認框（套裝缺主手）時按「否」不會當下停下耐力模式／製作清單，要等確認框消失約 3 秒、職業仍沒換過去才停。");
 
-        _cosmicCallback = Svc.Hook.HookFromSignature<AddonWKSRecipeNote_ReceiveEventDelegate>("4C 8B DC 49 89 6B 20 41 56 48 83 EC 60", ClickCosmicButton);
+        _cosmicCallback = SigHooks.TryHookFromSignature<AddonWKSRecipeNote_ReceiveEventDelegate>(
+            "AddonWKSRecipeNote_ReceiveEvent", "4C 8B DC 49 89 6B 20 41 56 48 83 EC 60", ClickCosmicButton,
+            "手動按宇宙製作筆記的「製作」時不會先自動換裝、用食物藥水，按鈕照遊戲原本的行為；其他插件經 IPC 代為製作不受影響。");
         _cosmicCallback?.Enable();
     }
 
@@ -71,30 +83,140 @@ public unsafe static class PreCrafting
         {
             ex.Log();
         }
-        return _cosmicCallback.Original(a1, a2, a3, a4, a5);
+        // detour 只可能經由自己的 hook 被呼叫，所以此處一定非 null（下面 CallbackDetour 同理）。
+        return _cosmicCallback!.OriginalDisposeSafe(a1, a2, a3, a4, a5);
+    }
+
+    // 這支 detour 內部例外/異常參數的節流計時器(Environment.TickCount64 的絕對值)。
+    // ⚠️ 刻意**不用** Artisan.Autocraft.Throttler —— 那是全外掛共用的單一節流窗,
+    //    拿它記 log 會把製作動作的節流窗一起吃掉。
+    private static long _nextDetourErrorLogTick;
+
+    /// <summary>
+    /// detour 內部出狀況時的節流記錄(Information:要使用者回報的診斷)。
+    /// </summary>
+    private static void LogDetourIssue(string message, Exception? ex = null)
+    {
+        if (Environment.TickCount64 < _nextDetourErrorLogTick)
+            return;
+        _nextDetourErrorLogTick = Environment.TickCount64 + 10000;
+        Svc.Log.Information(ex, $"[Artisan] {message}(10 秒內不重複記錄)");
     }
 
     private static void* CallbackDetour(AtkUnitBase* atkUnitBase, int valueCount, AtkValue* atkValues, byte updateVisibility)
     {
-        var name = atkUnitBase->NameString.TrimEnd();
-        if (name.Length >= 11 && name.Substring(0, 11) == "SelectYesno")
+        // fail-closed:我們自己的判讀全部包進 try。無論成功或擲例外,
+        // **一定照樣呼叫 Original 並回傳它的結果** —— 這是掛在全域 FireCallback 上的 hook,
+        // 吞掉 Original 等於讓遊戲裡**每一個視窗**的回呼都失效。
+        // ⚠️ 這裡攔得到的是**受管理例外**(NRE、特徵碼未解析的 InvalidOperationException 等)。
+        // 懸空指標造成的 AccessViolationException 是 corrupted-state exception,**攔不到**。
+        try
         {
-            var result = atkValues[0];
-            if (result.Int == 1)
+            // 🔴 這支 detour 掛的是**全域** FireCallback:遊戲裡任何視窗的任何回呼都會經過這裡,
+            //    參數完全由呼叫端決定,不能假設它一定是我們在等的那個換裝確認框。
+            if (atkUnitBase != null)
             {
-                Svc.Log.Debug($"Select no, clearing tasks");
-                Endurance.ToggleEndurance(false);
-                if (CraftingListUI.Processing)
+                var name = atkUnitBase->NameString.TrimEnd();
+                if (name.Length >= 11 && name.Substring(0, 11) == "SelectYesno")
                 {
-                    CraftingListFunctions.Paused = true;
+                    // 🔴 valueCount 是 atkValues 唯一的上界來源,而且**邊界檢查不等於判空** ——
+                    //    越界讀到的是堆積上的垃圾(可能是任何值),不會是 null,判空完全擋不住。
+                    if (valueCount > 0 && atkValues != null)
+                    {
+                        var result = atkValues[0];
+                        if (result.Int == 1)
+                        {
+                            if (_gearsetPrompt.IsAwaiting(Environment.TickCount64))
+                            {
+                                Svc.Log.Debug($"Select no, clearing tasks");
+                                StopForDeclinedGearset("換套裝的確認框（套裝缺主手）按了「否」");
+                            }
+                            else
+                            {
+                                // 換職業任務已經不在輪詢＝這不是我們叫出來的確認框，不停任何東西。
+                                Svc.Log.Information("[Artisan] 換套裝的 hook 還掛著時，有別的確認框按了「否」；不是 Artisan 叫出來的那一個，不處理。");
+                            }
+                        }
+                        else if (result.Int == 0)
+                        {
+                            // 按「是」之後不再旁觀：職業還沒換過去時照原本的流程走。
+                            _gearsetPrompt.Reset();
+                        }
+                    }
+                    else
+                    {
+                        // 沒有可讀的回呼值就**不猜**使用者按了哪一邊 —— 寧可少做一次「取消」的判定,
+                        // 也不拿越界讀到的垃圾當按鈕結果。
+                        LogDetourIssue($"SelectYesno 回呼沒有可讀的值(valueCount={valueCount}、atkValues={(nint)atkValues:X}),這次不判定按鈕結果");
+                    }
+
+                    DisarmGearsetHook();
                 }
-                Tasks.Clear();
             }
-
-            _gearsetCallback.Disable();
-
         }
-        return _gearsetCallback.Original(atkUnitBase, valueCount, atkValues, updateVisibility);
+        catch (Exception ex)
+        {
+            LogDetourIssue("PreCrafting.CallbackDetour 內部發生例外,已略過這一次判讀,遊戲回呼照常轉交", ex);
+        }
+
+        return _gearsetCallback!.OriginalDisposeSafe(atkUnitBase, valueCount, atkValues, updateVisibility);
+    }
+
+    // 換套裝這一步走不下去時的共用收尾：關耐力模式、暫停清單、清掉佇列。
+    // 回傳說明用的結尾；什麼都沒在跑（沒有東西被停下）回 null。停下前的狀態要先讀（結尾看它）。
+    private static string? StopCraftingForGearset()
+    {
+        var listRunning = CraftingListUI.Processing && !CraftingListFunctions.Paused;
+        var enduranceRunning = Endurance.Enable;
+        var hadTasks = Tasks.Count > 0;
+
+        _gearsetPrompt.Reset();
+        _classChangeBudget.Reset();
+        Endurance.ToggleEndurance(false);
+        if (CraftingListUI.Processing)
+            CraftingListFunctions.Paused = true;
+        Tasks.Clear();
+
+        if (!listRunning && !enduranceRunning && !hadTasks)
+            return null;
+
+        return listRunning ? "已暫停製作清單（換好套裝後按「繼續」）。"
+            : enduranceRunning ? "已關閉耐力模式。"
+            : "已中止這次製作。";
+    }
+
+    // 使用者沒答應用缺主手的套裝換職業：說明一次。刻意不響錯誤提示音：這是使用者自己按的，人就在畫面前。
+    private static void StopForDeclinedGearset(string cause)
+    {
+        if (StopCraftingForGearset() is { } outcome)
+            DuoLog.Warning($"Artisan：{cause}，{outcome}");
+    }
+
+    // 換不了套裝：再排一次也是同樣結果，所以停下並說明一次，不讓耐力模式／清單下一幀重排。
+    // 提示要排在停下之前（它讀停下前的狀態）。
+    private static TaskResult AbortClassChange(string cause)
+    {
+        Endurance.NotifyForcedStopIfRunning("換不了套裝");
+        var outcome = StopCraftingForGearset() ?? "已中止這次製作。";
+        DuoLog.Error($"Artisan：{cause}，{outcome}");
+        return TaskResult.Abort;
+    }
+
+    // FireCallback 是全域 hook：只在等自己叫出來的確認框時掛著。只在框架執行緒讀寫。
+    private static bool _gearsetHookArmed;
+
+    private static void ArmGearsetHook()
+    {
+        if (_gearsetCallback == null)
+            return;
+        _gearsetCallback.Enable();
+        _gearsetHookArmed = true;
+    }
+
+    private static void DisarmGearsetHook()
+    {
+        _gearsetHookArmed = false;
+        _gearsetCallback?.Disable();
     }
 
     public static void Dispose()
@@ -106,6 +228,10 @@ public unsafe static class PreCrafting
 
     public static void Update()
     {
+        // 換職業任務不再輪詢（做完、中止、佇列被清掉）就把 hook 收掉，不讓它留著攔之後每一個確認框。
+        if (_gearsetHookArmed && !_gearsetPrompt.IsAwaiting(Environment.TickCount64))
+            DisarmGearsetHook();
+
         if (DateTime.Now < _nextRetry)
             return;
 
@@ -132,8 +258,10 @@ public unsafe static class PreCrafting
         {
             Svc.Log.Debug($"Starting {type} crafting: {recipe.RowId} '{recipe.ItemResult.Value.Name.ToDalamudString()}'");
 
-            var requiredClass = Job.CRP + recipe.CraftType.RowId;
-            var config = P.Config.RecipeConfigs.GetValueOrDefault(recipe.RowId) ?? new();
+            var requiredClass = (Job)((uint)Job.CRP + recipe.CraftType.RowId);
+            // 清單項的專用覆寫優先；沒有覆寫（含不在跑清單時）就是既有的全域設定。
+            var config = CraftingListFunctions.ActiveListItemOverride(recipe.RowId)
+                ?? P.Config.RecipeConfigs.GetValueOrDefault(recipe.RowId) ?? new();
 
             bool hasIngredients = GetNumberCraftable(recipe) > 0;
             bool needClassChange = requiredClass != CharacterInfo.JobID;
@@ -156,6 +284,10 @@ public unsafe static class PreCrafting
             {
                 MissingConsumablesMessage(recipe, config);
                 return;
+            }
+            else if (needConsumables && !hasConsumables)
+            {
+                NotifyMissingConsumables(recipe, config);
             }
 
             bool needExitCraft = Crafting.CurState == Crafting.State.IdleBetween && (needClassChange || needEquipItem || needConsumables);
@@ -210,6 +342,42 @@ public unsafe static class PreCrafting
         List<string> missingConsumables = MissingConsumables(config);
 
         DuoLog.Error($"Can't craft {recipe.ItemResult.Value.Name.ToDalamudString()}: required consumables not up and missing {string.Join(", ", missingConsumables)}");
+    }
+
+    /// <summary>已經提示過的「配方＋缺了哪些」；同一組不重複提示。</summary>
+    private static readonly HashSet<string> NotifiedMissing = new(StringComparer.Ordinal);
+
+    /// <summary>提示表的上限，避免內容意外發散時無限成長。</summary>
+    private const int MaxNotifiedMissing = 128;
+
+    /// <summary>開始一輪耐久／製作清單時呼叫，讓提示可以重新出現。</summary>
+    internal static void ResetMissingConsumablesNotice() => NotifiedMissing.Clear();
+
+    /// <summary>
+    /// 設了消耗品但背包沒有：提示一次就好，<b>照樣製作</b>。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 中止是 <c>AbortIfNoFoodPot</c> 的事，兩條路徑互斥 —— 呼叫端用 else if 串。
+    /// 📌 只提示、不代買：自動上市場採買是紅線。
+    /// ⚠️ 每幀都會走到（耐久與清單的閘門在 Update 迴圈裡），所以一定要先去重再輸出。
+    /// </remarks>
+    internal static void NotifyMissingConsumables(Recipe recipe, RecipeConfig? config)
+    {
+        if (!P.Config.WarnIfNoFoodPot || config == null)
+            return;
+
+        var missing = MissingConsumables(config);
+        if (missing.Count == 0)
+            return;
+
+        if (NotifiedMissing.Count >= MaxNotifiedMissing)
+            NotifiedMissing.Clear();
+
+        if (!NotifiedMissing.Add($"{recipe.RowId}|{string.Join(",", missing)}"))
+            return;
+
+        DuoLog.Warning("Missing consumables for ??: ??. Crafting without them anyway (turn on [Enforce Consumables] if you would rather stop)."
+            .Loc(recipe.ItemResult.Value.Name.ToDalamudString().ToString(), string.Join(", ", missing)));
     }
 
     internal static bool NeedsConsumablesCheck(CraftType type, RecipeConfig? config)
@@ -279,9 +447,15 @@ public unsafe static class PreCrafting
             if (int.TryParse(addon->SelectedRecipeQuantityCraftableFromMaterialsInInventory->NodeText.ToString(), out int output))
                 return output;
         }
-        if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmic) && cosmic->UldManager.NodeList[24] != null)
+        // 少了 NodeListCount 上界檢查就是越界讀原生陣列，而 AVE 是攔不到的。
+        // 節點型別也要驗：GetAsAtkTextNode() 對非文字節點會回 null。
+        const int CraftableQuantityNodeId = 24;
+        if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmic)
+            && cosmic->UldManager.NodeListCount > CraftableQuantityNodeId)
         {
-            if (int.TryParse(cosmic->UldManager.NodeList[24]->GetAsAtkTextNode()->NodeText.ToString(), out int output))
+            var node = cosmic->UldManager.NodeList[CraftableQuantityNodeId];
+            var textNode = node == null ? null : node->GetAsAtkTextNode();
+            if (textNode != null && int.TryParse(textNode->NodeText.ToString(), out int output))
                 return output;
         }
         return -1;
@@ -299,14 +473,20 @@ public unsafe static class PreCrafting
             case Crafting.State.IdleNormal:
                 return TaskResult.Done;
             case Crafting.State.IdleBetween:
-                var addon = (AddonRecipeNote*)Svc.GameGui.GetAddonByName("RecipeNote");
-                if (addon != null && addon->AtkUnitBase.IsVisible)
+                // 🔴 這個任務回 Retry,而 retryDelay 在 StartCrafting 那條路徑是 default(=0,下一幀就重跑):
+                // 只看 IsVisible 的話,Fire(-1) 之後視窗關閉中的每一幀都會再 Fire(-1) 一次(IsVisible 在那幾幀仍為真)。
+                // 守衛記位址,同一扇窗只送一次關閉,之後的 Retry 輪只等狀態機離開 IdleBetween;
+                // 90 幀仍在才補送一次(寫 Information)。
+                var addon = (AddonRecipeNote*)Svc.GameGui.GetAddonByName("RecipeNote").Address;
+                if (addon != null && addon->AtkUnitBase.IsVisible
+                    && AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, AddonPressGuard.ClosePressKey))
                 {
                     Svc.Log.Debug("Closing recipe menu to exit crafting state");
                     Callback.Fire(&addon->AtkUnitBase, true, -1);
                 }
-                var addon2 = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook");
-                if (addon2 != null && addon2->IsVisible)
+                var addon2 = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook").Address;
+                if (addon2 != null && addon2->IsVisible
+                    && AddonPressGuard.TryBeginPress("WKSRecipeNotebook", addon2, AddonPressGuard.ClosePressKey))
                 {
                     Svc.Log.Debug("Closing recipe menu to exit crafting state");
                     Callback.Fire(addon2, true, -1);
@@ -317,51 +497,96 @@ public unsafe static class PreCrafting
         return TaskResult.Retry;
     }
 
+    // 職業沒換過去時照常重試（遊戲回負值也一樣），由時間預算決定幾時放棄。
+    // 刻意不用次數、也不在第一次負值就停：伺服器慢一兩秒就停，會讓沒人看著的清單白白中斷。
+    private static readonly ClassChangeBudget _classChangeBudget = new();
+
+    private static TaskResult AbortClassChangeOverBudget(Job job)
+        => AbortClassChange($"換不了 {job} 的套裝（等了約 {ClassChangeBudget.BudgetMs / 1000} 秒職業都沒換過去，試了 {_classChangeBudget.Attempts} 次，遊戲最後一次回傳 {_classChangeBudget.LastResult}）");
+
     public static TaskResult TaskClassChange(Job job)
     {
         if (job == CharacterInfo.JobID)
+        {
+            _gearsetPrompt.Reset();
+            _classChangeBudget.Reset();
             return TaskResult.Done;
+        }
+
+        // 排這個任務的三個地方都先把 equipGearsetLoops 歸零：還是 0＝這一輪還沒送出過，上一輪的預算不沿用。
+        if (equipGearsetLoops == 0)
+            _classChangeBudget.Reset();
 
         if (Svc.Condition[ConditionFlag.PreparingToCraft])
             return TaskResult.Retry;
 
-        if (equipGearsetLoops >= 5)
+        var now = Environment.TickCount64;
+
+        // RaptureGearsetModule.Instance() 是 UIModule 的轉手,FFXIVClientStructs 裡它是手寫的
+        // 「uiModule == null ? null : ...」——沒登入、切場景、登出過程中都會合法回 null。
+        // 沒判就 ->Entries 是解參考 null,那是 AccessViolationException:corrupted-state
+        // exception,try/catch 攔不到,整個遊戲會當場結束。
+        var gearsets = RaptureGearsetModule.Instance();
+        if (gearsets == null)
         {
-            DuoLog.Error("Unable to switch gearsets.");
+            DuoLog.Error("Gearset module is not available right now - aborting class change.");
             return TaskResult.Abort;
         }
 
-        var gearsets = RaptureGearsetModule.Instance();
         foreach (ref var gs in gearsets->Entries)
         {
-            if (!RaptureGearsetModule.Instance()->IsValidGearset(gs.Id)) continue;
+            if (!gearsets->IsValidGearset(gs.Id)) continue;
             if ((Job)gs.ClassJob == job)
             {
                 if (gs.Flags.HasFlag(RaptureGearsetModule.GearsetFlag.MainHandMissing))
                 {
-                    if (TryGetAddonByName<AddonSelectYesno>("SelectYesno", out var selectyesno))
+                    var promptExists = TryGetAddonByName<AddonSelectYesno>("SelectYesno", out var selectyesno);
+                    var promptVisible = promptExists && selectyesno->AtkUnitBase.IsVisible;
+                    // 不靠 hook 的判斷：確認框消失而職業沒換＝沒答應。hook 沒掛上、或確認框不是用按鈕關掉時也停得下來，不會重跳。
+                    switch (_gearsetPrompt.Poll(now, (uint)job, promptVisible))
                     {
-                        if (selectyesno->AtkUnitBase.IsVisible)
+                        case GearsetPromptWatch.Verdict.Waiting:
+                            _classChangeBudget.Hold(now);
                             return TaskResult.Retry;
+                        case GearsetPromptWatch.Verdict.Declined:
+                            DisarmGearsetHook();
+                            StopForDeclinedGearset("換套裝的確認框（套裝缺主手）關掉之後職業沒有換過去（按了「否」或取消）");
+                            return TaskResult.Abort;
+                    }
+
+                    if (promptExists)
+                    {
+                        if (promptVisible)
+                        {
+                            _classChangeBudget.Hold(now);
+                            return TaskResult.Retry;
+                        }
                     }
                     else
                     {
+                        if (_classChangeBudget.Expired(now, (uint)job))
+                            return AbortClassChangeOverBudget(job);
+
                         equipGearsetLoops++;
-                        _gearsetCallback?.Enable();
-                        var r = gearsets->EquipGearset(gs.Id);
-                        return r < 0 ? TaskResult.Abort : TaskResult.Retry;
+                        ArmGearsetHook();
+                        _gearsetPrompt.Arm(now, (uint)job);
+                        _classChangeBudget.NoteAttempt(now, (uint)job, gearsets->EquipGearset(gs.Id));
+                        return TaskResult.Retry;
                     }
                 }
 
+                if (_classChangeBudget.Expired(now, (uint)job))
+                    return AbortClassChangeOverBudget(job);
+
                 var result = gearsets->EquipGearset(gs.Id);
                 equipGearsetLoops++;
+                _classChangeBudget.NoteAttempt(now, (uint)job, result);
                 Svc.Log.Debug($"Tried to equip gearset {gs.Id} for {job}, result={result}, flags={gs.Flags}");
-                return result < 0 ? TaskResult.Abort : TaskResult.Retry;
+                return TaskResult.Retry;
             }
         }
 
-        DuoLog.Error($"Failed to find gearset for {job}");
-        return TaskResult.Abort;
+        return AbortClassChange($"找不到 {job} 的套裝");
     }
 
     public static TaskResult TaskEquipItem(uint ItemId)
@@ -373,6 +598,8 @@ public unsafe static class PreCrafting
         if (pos == null)
         {
             DuoLog.Error($"Failed to find item {LuminaSheets.ItemSheet[ItemId].Name} (ID: {ItemId}) in inventory");
+            // 使用者自己按「製作」走到這裡時耐力與清單都沒在跑，不響。
+            Endurance.NotifyForcedStopIfRunning("背包裡找不到配方要求的道具");
             Endurance.ToggleEndurance(false);
             if (CraftingListUI.Processing)
                 CraftingListFunctions.Paused = true;
@@ -381,23 +608,85 @@ public unsafe static class PreCrafting
         }
 
         var agentId = pos.Value.inv is InventoryType.ArmoryMainHand or InventoryType.ArmoryHands ? AgentId.ArmouryBoard : AgentId.Inventory;
-        var addonId = AgentModule.Instance()->GetAgentByInternalId(agentId)->GetAddonId();
-        var ctx = AgentInventoryContext.Instance();
-        ctx->OpenForItemSlot(pos.Value.inv, pos.Value.slot, addonId);
 
-        var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu");
+        // 三層都可以合法回 null:AgentModule.Instance() 是 UIModule 的轉手(手寫判空);
+        // GetAgentByInternalId 查的是 FixedSizeArray484<Pointer<AgentInterface>>,還沒建立的
+        // agent 那一格就是 null;AgentInventoryContext.Instance() 是產生器產出的
+        // 「agentModule == null ? null : GetAgentByInternalId(...)」,同樣會回 null。
+        // 任何一層沒判就往下解參考 = AccessViolationException(攔不到,遊戲直接結束)。
+        var agentModule = AgentModule.Instance();
+        var ownerAgent = agentModule == null ? null : agentModule->GetAgentByInternalId(agentId);
+        var ctx = AgentInventoryContext.Instance();
+        if (ownerAgent == null || ctx == null)
+        {
+            DuoLog.Error($"Inventory agent is not available right now - cannot equip item {ItemId}.");
+            return TaskResult.Abort;
+        }
+
+        // 選單第一項在 AtkValues 的哪一格由 ECommons 從遊戲碼推導；推不出來就不開選單、不按
+        // （寫死會點到隔壁選項）。聊天提示由 ECommons 在登入後印一次，這裡不重複。
+        if (!ContextMenuLayout.TryGetFirstEntryIndex(out var firstEntry))
+        {
+            Svc.Log.Warning($"[TaskEquipItem] 推不出右鍵選單版面，不自動裝備 {ItemId}，停止製作。");
+            Endurance.NotifyForcedStopIfRunning("推不出右鍵選單版面，無法自動裝備配方要求的道具");
+            Endurance.ToggleEndurance(false);
+            if (CraftingListUI.Processing)
+                CraftingListFunctions.Paused = true;
+            return TaskResult.Abort;
+        }
+
+        var addonId = ownerAgent->GetAddonId();
+        ctx->OpenForItemSlot(pos.Value.inv, pos.Value.slot, 0, addonId);
+
+        var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu").Address;
+        // 上一趟才對這扇選單送過裝備或關閉(ContextMenu 是單答終結窗,兩者都會關它),它還在 ＝ 正在關閉中(StartCrafting 那條路徑的 retryDelay
+        // 是 default=0,下一幀就會回到這裡)。這一趟當「選單還沒開好」處理:不按、也不算一次嘗試,與 contextMenu == null
+        // 走同一條既有路徑。ContextMenu 是常駐窗,紀錄由「連續隱藏」解除(見下一段),逃生口到了也會放行。
+        if (contextMenu != null && AddonPressGuard.IsClosing("ContextMenu", contextMenu))
+            return TaskResult.Retry;
+        // 🔴 ContextMenu 是「常駐窗」(顯示/隱藏,不是建立/銷毀),守衛對它的解除條件是「連續隱藏 N 幀」,
+        //    而放行條件是「可見」—— 兩者互為反面才構成防護(理由見 AddonPressGuard.HiddenReleaseFrames)。
+        //    守衛自己也會做這道檢查,這裡多擋一次是為了**不要把等待燒進 equipAttemptLoops**:
+        //    選單不可見時下面那整段會一發都送不出去,卻照樣 equipAttemptLoops++,五幀就會誤報 Abort。
+        //    回 Retry 與上面 IsClosing 那條、以及 contextMenu == null 走的是同一條既有路徑。
+        if (contextMenu != null && !IsAddonReady(contextMenu))
+            return TaskResult.Retry;
         if (contextMenu != null)
         {
-            for (int i = 0; i < contextMenu->AtkValuesCount; i++)
+            // AtkValuesCount 是 ContextMenu 這個 addon 的 AtkValues 陣列長度,跟 agent 的
+            // _eventIds(FixedSizeArray84<byte>,84 格)是兩個不相干的長度。拿前者當後者的
+            // 迴圈上界,只要選單的 AtkValuesCount 超過 84 就會丟 IndexOutOfRangeException
+            // (產生器產出的是 Span<byte>,有邊界檢查,所以不會 AVE,但整段裝備流程會靜默失效)。
+            // 取兩者較小值,索引的上下界都要驗。
+            int entryCount = Math.Min(contextMenu->AtkValuesCount, ctx->EventIds.Length);
+
+            // 🔴 「送過就再也不碰它」:下面那發裝備 callback 的第二個參數 true 就是原生 AtkUnitBase::FireCallback 的 close,
+            //    原生端可能在回到這裡之前就把這扇窗 Hide／Close ⇒ 送過一發之後再送第二發就是對關閉中的窗解參考。
+            // 🔴 「重新 GetAddonByName 取址」擋不住:剛被關掉的窗照樣查得到、位址還一樣,
+            //    IsVisible / IsReady 三關同樣擋不住。唯一不依賴假設的做法就是不再碰。
+            var pressedThisPass = false;
+            for (int i = firstEntry; i < entryCount; i++)
             {
-                var firstEntryIsEquip = ctx->EventIds[i] == 25; // i'th entry will fire eventid 7+i; eventid 25 is 'equip'
-                if (firstEntryIsEquip)
+                var firstEntryIsEquip = ctx->EventIds[i] == 25; // i'th entry will fire eventid firstEntry+i; eventid 25 is 'equip'
+                if (firstEntryIsEquip
+                    && AddonPressGuard.TryBeginPress("ContextMenu", contextMenu, $"T|0|{i - firstEntry}|0|0|0", AddonPressGuard.RoutineRePressEscapeFrames))
                 {
                     Svc.Log.Debug($"Equipping item #{ItemId} from {pos.Value.inv} @ {pos.Value.slot}, index {i}");
-                    Callback.Fire(contextMenu, true, 0, i - 7, 0, 0, 0); // p2=-1 is close, p2=0 is exec first command
+                    Callback.Fire(contextMenu, true, 0, i - firstEntry, 0, 0, 0); // p2=-1 is close, p2=0 is exec first command
+                    pressedThisPass = true;
+                    // 迴圈上界是選單的 AtkValuesCount 而不是真正的列數,EventIds 裡碰巧還有第二格
+                    // 是 25 的話,第二發就會落在已經被第一發關掉的選單上(守衛也會擋:單答終結窗併 key)。
+                    break;
                 }
             }
-            Callback.Fire(contextMenu, true, 0, -1, 0, 0, 0);
+            // 🔴 關閉這一發只在本趟一發都沒送過時才送:裝備那一發就會關窗,守衛也會擋同一扇單答窗的第二發。
+            // ⚠️ 代價:原生端若沒替我們關窗,選單會多留在畫面上幾幀,不會崩。
+            // 裝備那一發的紀錄就是下一趟 IsClosing 的依據,equipAttemptLoops 不會在等待期間被灌到 5 而誤報 Abort。
+            if (pressedThisPass)
+                // 要使用者回報的診斷:選單真的留在畫面上時,log 裡有這一行對得上。
+                Svc.Log.Information("[TaskEquipItem] 這一趟已經送過裝備 callback(close:true),不再對同一扇 ContextMenu 送關閉。");
+            else if (AddonPressGuard.TryBeginPress("ContextMenu", contextMenu, AddonPressGuard.ClosePressKey, AddonPressGuard.RoutineRePressEscapeFrames))
+                Callback.Fire(contextMenu, true, 0, -1, 0, 0, 0);
             equipAttemptLoops++;
 
             if (equipAttemptLoops >= 5)
@@ -482,44 +771,471 @@ public unsafe static class PreCrafting
         return TaskResult.Done;
     }
 
+    // Diagnostic state for ReportRecipeOpenAttempt: the select task only finishes through its
+    // Done check, which depends on Operations.GetSelectedRecipeEntry() -> RecipeNoteRecipeData.Ptr().
+    // If that struct read does not resolve on this client the task keeps retrying, so repeated
+    // open attempts for the same recipe are counted and reported.
+    private static uint _lastOpenedRecipe;
+    private static DateTime _lastOpenAttempt = DateTime.MinValue;
+    private static int _openAttempts;
+
+    private static void ReportRecipeOpenAttempt(uint recipeId)
+    {
+        // Reporting only - it must NOT gate the open call.
+        var now = DateTime.Now;
+        if (_lastOpenedRecipe != recipeId)
+        {
+            _lastOpenedRecipe = recipeId;
+            _openAttempts = 0;
+        }
+        _lastOpenAttempt = now;
+        _openAttempts++;
+
+        // Information on purpose (a diagnostic users are asked to report); fires a few times, only
+        // when something is actually wrong. Every value below is either a pointer CS already
+        // handed us or a Dalamud-managed addon lookup - nothing is probed.
+        if (_openAttempts is 5 or 10 or 20)
+        {
+            var instance = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
+            var rd = RecipeNoteRecipeData.Ptr();
+            var addonPtr = Svc.GameGui.GetAddonByName("RecipeNote", 1).Address;
+            var addonOpen = addonPtr != nint.Zero;
+            var addonVisible = addonOpen && ((AtkUnitBase*)addonPtr)->IsVisible;
+            var agent = AgentRecipeNote.Instance();
+
+            Svc.Log.Information(
+                $"Artisan: recipe {recipeId} still not selected after {_openAttempts} open attempts. "
+                + $"addon RecipeNote={(addonOpen ? $"0x{addonPtr:X} visible={addonVisible}" : "NOT OPEN")}, "
+                + $"agent active={(agent != null && agent->AgentInterface.IsAgentActive())}, "
+                + $"RecipeNote.Instance()={(nint)instance:X}, "
+                + $"RecipeList={(nint)rd:X}"
+                + (rd == null ? "" : $" (Recipes={(nint)rd->Recipes:X} count={rd->RecipesCount} sel={rd->SelectedIndex})")
+                + $", CurState={Crafting.CurState}.");
+        }
+    }
+
+    private static bool _searchFallbackLogged;
+    private static DateTime _lastMismatchAction = DateTime.MinValue;
+
+    // 呼叫端可用比這更短的重試間隔輪詢選取結果；重送開窗仍維持約 500ms 一次（開窗途中重送的行為沒驗過）。
+    // 取 450 而不是 500：以 500ms 重試的呼叫端每次重試都要照舊能重送（TickCount64 精度約 16ms）。
+    private const long OpenReissueIntervalMs = 450;
+    private static long _lastOpenCallTick;
+
+    // 一般配方的選取放棄計時（比照宇宙筆記的放棄）：同一個配方連續重試這麼久仍沒選中就中止，不讓清單永遠停在選取。
+    // 兩次呼叫隔超過 2 秒＝上一輪已被打斷（暫停、取消、IPC 逾時清掉佇列）或換了呼叫端，重新起算。
+    private const int NormalSelectGiveUpSeconds = 30;
+    private static readonly SelectGiveUpTimer _normalSelectTimer = new(NormalSelectGiveUpSeconds * 1000L, 2000);
+
+    // 回 Abort（PreCrafting.Update 會清掉佇列），清單暫停、耐力模式關閉：兩者原本都會在下一幀重排選取、永遠重試下去。
+    // 停下前的狀態要先讀（NotifyForcedStopIfRunning 與訊息都看它）。
+    private static TaskResult GiveUpNormalSelect(Recipe recipe, nint recipeNoteAddr, RecipeNoteRecipeEntry* re)
+    {
+        var listRunning = CraftingListUI.Processing && !CraftingListFunctions.Paused;
+        var enduranceRunning = Endurance.Enable;
+        var name = recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? "?";
+        Svc.Log.Information(
+            $"Artisan: gave up selecting recipe {recipe.RowId} after {NormalSelectGiveUpSeconds} s. "
+            + $"RecipeNote={(recipeNoteAddr == nint.Zero ? "NOT OPEN" : "open")}, "
+            + $"selected={(re == null ? "none" : re->RecipeId.ToString())}, open attempts={_openAttempts}, "
+            + $"CurState={Crafting.CurState}, list running={listRunning}, endurance={enduranceRunning}.");
+
+        Endurance.NotifyForcedStopIfRunning("製作筆記選不到配方");
+        Endurance.ToggleEndurance(false);
+        if (CraftingListUI.Processing)
+            CraftingListFunctions.Paused = true;
+
+        var outcome = listRunning ? "已暫停清單；在製作筆記選好這個配方後按「繼續」即可接著做。"
+            : enduranceRunning ? "已關閉耐力模式。"
+            : "已中止這次製作。";
+        DuoLog.Error($"Artisan：等了 {NormalSelectGiveUpSeconds} 秒仍無法在製作筆記選中「{name}」（配方 {recipe.RowId}），{outcome}");
+        return TaskResult.Abort;
+    }
+
+    // Fallback for the primary open call doing nothing: SearchRecipeByItemId opens the crafting
+    // log via the item-search route. Only fires after repeated failures while the window is
+    // still closed, so a healthy client never takes this path.
+    private static void TryOpenViaSearchFallback(Recipe recipe)
+    {
+        if (_openAttempts < 3)
+            return;
+        if (Svc.GameGui.GetAddonByName("RecipeNote", 1).Address != nint.Zero)
+            return;
+        var itemId = recipe.ItemResult.RowId;
+        if (itemId == 0)
+            return;
+
+        if (!_searchFallbackLogged)
+        {
+            _searchFallbackLogged = true;
+            Svc.Log.Information(
+                $"Artisan: OpenRecipeByRecipeId has had no effect after {_openAttempts} attempts - "
+                + $"falling back to SearchRecipeByItemId({itemId}). If the crafting log opens now, "
+                + "the primary open function resolves to the wrong code on this client.");
+        }
+        // 🔴 AgentRecipeNote.Instance() 是產生器產出的取得子,本體即
+        //    「agentModule == null ? null : GetAgentByInternalId(...)」,兩層都能合法回 null。
+        //    裸解參考 = AccessViolationException,corrupted-state exception,try/catch 攔不到。
+        // fail-closed:取不到就不送這次備援開窗。這條路徑本來就只在重複失敗後才會走到,
+        //    再等一輪重試是既有行為。
+        var agent = AgentRecipeNote.Instance();
+        if (agent == null)
+            return;
+        agent->SearchRecipeByItemId(itemId);
+    }
+
+    // 🔴 宇宙筆記關掉之後怎麼開回來：OpenRecipeByRecipeId / SearchRecipeByItemId 是「一般製作手帳」的入口，
+    // 宇宙配方不在裡面 ⇒ 走玩家自己會走的路：任務資訊面板上的「宇宙製作筆記」按鈕
+    // （WKSMissionInfomation 的 button 27）。點的是真的 UI 按鈕。
+    // ⚠️ 不要改成自己拼一個原生入口 —— CS 目前沒有 AgentWKSRecipeNotebook
+    // （只有 WKSHud / WKSMission / WKSMissionInfomation / WKSAnnounce）。
+    private static DateTime _cosmicWaitSince = DateTime.MinValue;
+    private static DateTime _lastCosmicReopen = DateTime.MinValue;
+    // 點按鈕之間留時間讓視窗真的開起來，不要用重試節奏猛點。
+    private const int CosmicReopenIntervalSeconds = 2;
+    // 等不到就中止，把控制權還給呼叫端（ICE 有自己的任務流程會重新處理），
+    // 而不是留在這裡空轉直到錯誤上限把製作模式關掉。
+    private const int CosmicReopenGiveUpSeconds = 30;
+
+    private static TaskResult ReopenCosmicNotebook(Recipe recipe)
+    {
+        var now = DateTime.Now;
+        if (_cosmicWaitSince == DateTime.MinValue)
+            _cosmicWaitSince = now;
+
+        if (now - _cosmicWaitSince > TimeSpan.FromSeconds(CosmicReopenGiveUpSeconds))
+        {
+            _cosmicWaitSince = DateTime.MinValue;
+            DuoLog.Error(
+                $"Artisan：宇宙筆記已關閉，等了 {CosmicReopenGiveUpSeconds} 秒仍開不回來，"
+                + $"無法選取宇宙配方 {recipe.RowId}。已中止這次製作。");
+            return TaskResult.Abort;
+        }
+
+        if (now - _lastCosmicReopen < TimeSpan.FromSeconds(CosmicReopenIntervalSeconds))
+            return TaskResult.Retry;
+
+        if (TryGetAddonMaster<AddonMaster.WKSMissionInfomation>("WKSMissionInfomation", out var mission)
+            && mission.IsAddonReady
+            // 任務面板按下「宇宙製作筆記」不會關(它開的是筆記),多次互動窗的 15 幀逃生口;被擋就當這輪面板還沒 ready。
+            && AddonPressGuard.TryBeginPress("WKSMissionInfomation", mission.Base, "CosmoCraftingLog", AddonPressGuard.RoutineRePressEscapeFrames))
+        {
+            _lastCosmicReopen = now;
+            Svc.Log.Information(
+                $"Artisan：宇宙筆記已關閉（多半是剛才為了使用消耗品而離開製作），"
+                + $"點任務資訊面板的「宇宙製作筆記」按鈕重新開啟以選取配方 {recipe.RowId}。");
+            mission.CosmoCraftingLog();
+        }
+
+        return TaskResult.Retry;
+    }
+
+    private static bool _cosmicStateDumped = false;
+
+    // ── WKSRecipeNotebook 的 AtkValues 佈局 ─────────────────────────────────────
+    //   * addon->AtkValuesCount == 96
+    //   * 🔑 索引 >= 實際項目數的欄位型別必定是 Undefined(0)：整組每次重填、不會殘留上一次的值
+    //     ⇒「型別不是 Undefined」就是「這一項真的存在」的證明。
+    // ⚠️ 上限 5 是遊戲寫死的容量：整數區 8..32（每項 5 格）與字串區 35..44（每項 2 格）之間只塞得下 5 項。
+    private const int CosmicEntryItemIdBase = 9;
+    private const int CosmicEntryItemIdStride = 5;
+    private const int CosmicEntryNameBase = 35;
+    private const int CosmicEntryNameStride = 2;
+    private const int CosmicMaxRecipeEntries = 5;
+    private const int CosmicSelectedItemIdValue = 45;
+    private const int CosmicSelectedItemNameValue = 46;
+    private const uint CollectableItemIdOffset = 500000;
+
+    // 選取階段的節流與放棄計時（不要用每幀猛送 callback 的節奏）
+    private static DateTime _cosmicSelectSince = DateTime.MinValue;
+    private static DateTime _lastCosmicSelect = DateTime.MinValue;
+    private const double CosmicSelectIntervalSeconds = 0.5;
+    private const int CosmicSelectGiveUpSeconds = 15;
+
+    private static void ResetCosmicSelectState()
+    {
+        _cosmicSelectSince = DateTime.MinValue;
+        _lastCosmicSelect = DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// 在宇宙筆記的清單裡找出目標配方所在的項目索引；找不到回 -1。
+    ///
+    /// 🔴 呼叫端收到 -1 時必須「什麼都不送」。
+    /// 送出清單長度以外的索引不是無害的。
+    /// ⚠️ 那是原生層的存取違規，受管理端的 try/catch 與 HookSafety 一律攔不到。
+    /// </summary>
+    private static unsafe int FindCosmicRecipeEntry(AtkUnitBase* addon, uint targetItemId, string targetItemName)
+    {
+        int valueCount = addon->AtkValuesCount;
+
+        // 先用成品 id 對。型別是 Undefined 代表這一格這次重新整理沒被填過 => 該項不存在。
+        for (var i = 0; i < CosmicMaxRecipeEntries; i++)
+        {
+            var idx = CosmicEntryItemIdBase + i * CosmicEntryItemIdStride;
+            if (idx >= valueCount)
+                break;
+
+            var v = &addon->AtkValues[idx];
+            if (v->Type is not (AtkValueType.UInt or AtkValueType.Int))
+                continue;
+
+            var id = v->UInt;
+            if (id != 0 && (id == targetItemId || id == targetItemId + CollectableItemIdOffset))
+                return i;
+        }
+
+        // id 對不上才退而用名稱對（同樣只認這次真的被填過的格子）。
+        if (targetItemName.Length == 0)
+            return -1;
+
+        for (var i = 0; i < CosmicMaxRecipeEntries; i++)
+        {
+            var idx = CosmicEntryNameBase + i * CosmicEntryNameStride;
+            if (idx >= valueCount)
+                break;
+
+            var v = &addon->AtkValues[idx];
+            if (v->Type is not (AtkValueType.String or AtkValueType.ManagedString))
+                continue;
+
+            if (v->String.ExtractText() == targetItemName)
+                return i;
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// 把 WKSRecipeNotebook 的 AtkValues 與節點文字傾印一次。
+    /// 實機證實 GetSelectedRecipeEntry()（讀 RecipeNote.RecipeList）反映不了宇宙筆記的
+    /// 選取狀態，所以要另找可判定的來源。AtkValues 比節點索引可靠：它有 AtkValuesCount
+    /// 可以做邊界、而且是型別化的，不必猜 UI 佈局。
+    /// </summary>
+    private static unsafe void DumpCosmicStateOnce(AtkUnitBase* addon, Recipe recipe)
+    {
+        if (_cosmicStateDumped || addon == null)
+            return;
+        _cosmicStateDumped = true;
+
+        var itemId = recipe.ItemResult.RowId;
+        var itemName = recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? "?";
+        Svc.Log.Information(
+            $"Artisan: 宇宙筆記狀態傾印 — 目標 recipe={recipe.RowId} item={itemId} \"{itemName}\"");
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"Artisan: AtkValues (count={addon->AtkValuesCount}):");
+        // 🔴 AtkValuesCount 是遊戲寫入的欄位，AtkValues 是與它成對的**指標**——
+        //    Count > 0 並不保證陣列已經配置好。上界之外還要判指標，否則是 AVE。
+        for (var i = 0; addon->AtkValues != null && i < addon->AtkValuesCount; i++)
+        {
+            var v = &addon->AtkValues[i];
+            switch (v->Type)
+            {
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int:
+                    sb.Append($" [{i}]i={v->Int}"); break;
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.UInt:
+                    sb.Append($" [{i}]u={v->UInt}"); break;
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Bool:
+                    sb.Append($" [{i}]b={v->Byte != 0}"); break;
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String:
+                case FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString:
+                    sb.Append($" [{i}]s=\"{v->String.ExtractText()}\""); break;
+                default:
+                    sb.Append($" [{i}]{v->Type}"); break;
+            }
+        }
+        Svc.Log.Information(sb.ToString());
+
+        var nb = new System.Text.StringBuilder();
+        nb.Append($"Artisan: 節點文字 (NodeListCount={addon->UldManager.NodeListCount}):");
+        // 🔴 同理：NodeListCount 非 0 不保證 NodeList 已配置（元件還在載入時就是 null）。
+        for (var i = 0; addon->UldManager.NodeList != null && i < addon->UldManager.NodeListCount; i++)
+        {
+            var n = addon->UldManager.NodeList[i];
+            if (n == null || n->Type != NodeType.Text)
+                continue;
+            var t = n->GetAsAtkTextNode();
+            if (t == null)
+                continue;
+            var text = t->NodeText.ExtractText();
+            if (!string.IsNullOrWhiteSpace(text))
+                nb.Append($" [{i}]=\"{text}\"");
+        }
+        Svc.Log.Information(nb.ToString());
+    }
+
     public static TaskResult TaskSelectRecipe(Recipe recipe)
     {
+        // 🔴 宇宙配方(Number == 0)絕對不能用 GetSelectedRecipeEntry() 當「已經選好了」的判據:
+        // 它讀的是一般製作手帳的清單(只有 OpenRecipeByRecipeId 會填),宇宙筆記的選取不會更新它,
+        // 拿到的是**上一次一般製作留下的陳舊值**;一旦剛好等於這次要的 recipe,宇宙選取流程就被跳過,
+        // 接著 TaskStartCraft 對 WKSRecipeNotebook 送 callback 6,製作的是**宇宙筆記當下選著的**配方。
+        var isCosmic = recipe.Number == 0;
         var re = Operations.GetSelectedRecipeEntry();
-        if ((re != null && re->RecipeId == recipe.RowId) || (Crafting.CurState is not Crafting.State.IdleBetween and not Crafting.State.IdleNormal))
+        if ((!isCosmic && re != null && re->RecipeId == recipe.RowId)
+            || (Crafting.CurState is not Crafting.State.IdleBetween and not Crafting.State.IdleNormal))
+        {
+            // 這個早退是每次製作實際結束的那一次呼叫，選取階段的計時器要在這裡歸零，
+            // 否則下一次製作會帶著上一次的舊時間戳進來、一進選取階段就立刻逾時中止。
+            ResetCosmicSelectState();
+            _normalSelectTimer.Reset();
+            // 開窗次數只算「這一輪選取」的；跨輪累加會讓備援在每次重開時與開窗同幀誤觸發。
+            _openAttempts = 0;
             return TaskResult.Done;
+        }
 
-        if (recipe.Number == 0)
+        if (isCosmic)
         {
             var addon = Crafting.GetCosmicAddon();
 
             if (addon == null)
+                return ReopenCosmicNotebook(recipe);
+
+            _cosmicWaitSince = DateTime.MinValue;
+
+            // 宇宙筆記的選取判定：用 addon 自己的 AtkValues，不要用 GetSelectedRecipeEntry()。
+            // 🔴 不可「從 0 一路遞增送索引直到選中」：清單只有 2～3 項，索引 3 以後全部越界，
+            //    而遊戲對這個索引完全不做邊界檢查（見 FindCosmicRecipeEntry 的註解）。
+            //    先從 AtkValues 認出目標在第幾項，只送那一個；認不出來就不送。
+            if (addon->AtkValuesCount <= CosmicSelectedItemNameValue)
             {
-                AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+                // 佈局與取樣時不同，不要瞎猜；留下紀錄讓下次能重新取樣。
+                DumpCosmicStateOnce(addon, recipe);
                 return TaskResult.Retry;
             }
 
-            var rd = RecipeNoteRecipeData.Ptr();
-            if (rd == null)
+            var targetItemId = recipe.ItemResult.RowId;
+            var targetItemName = recipe.ItemResult.ValueNullable?.Name.ExtractText() ?? string.Empty;
+
+            var selectedId = addon->AtkValues[CosmicSelectedItemIdValue].UInt;
+            var selectedName = addon->AtkValues[CosmicSelectedItemNameValue].Type
+                is AtkValueType.String or AtkValueType.ManagedString
+                ? addon->AtkValues[CosmicSelectedItemNameValue].String.ExtractText()
+                : string.Empty;
+
+            var idMatches = selectedId == targetItemId || selectedId == targetItemId + CollectableItemIdOffset;
+            var nameMatches = targetItemName.Length > 0 && selectedName == targetItemName;
+
+            if (idMatches || nameMatches)
+            {
+                Svc.Log.Information($"Artisan: 宇宙配方 {recipe.RowId}（{targetItemName}）已選中");
+                ResetCosmicSelectState();
+                return TaskResult.Done;
+            }
+
+            // 還沒選中：先認出目標在清單的第幾項，只送那一個索引。
+            var now = DateTime.Now;
+            if (_cosmicSelectSince == DateTime.MinValue)
+                _cosmicSelectSince = now;
+
+            var entry = FindCosmicRecipeEntry(addon, targetItemId, targetItemName);
+            if (entry < 0)
+            {
+                // 🔴 認不出來就什麼都不送。清單可能還在填，先等；等過頭就中止。
+                // 絕對不要退回「猜一個索引送送看」——那是攔不到的存取違規。
+                if (now - _cosmicSelectSince > TimeSpan.FromSeconds(CosmicSelectGiveUpSeconds))
+                {
+                    DumpCosmicStateOnce(addon, recipe);
+                    ResetCosmicSelectState();
+                    DuoLog.Error(
+                        $"Artisan：宇宙筆記的配方清單裡找不到配方 {recipe.RowId}"
+                        + $"（{targetItemName}，item {targetItemId}），等了 {CosmicSelectGiveUpSeconds} 秒。"
+                        + $"已中止這次製作（沒有送出任何選取指令）。");
+                    return TaskResult.Abort;
+                }
+                return TaskResult.Retry;
+            }
+
+            if (now - _cosmicSelectSince > TimeSpan.FromSeconds(CosmicSelectGiveUpSeconds))
+            {
+                DumpCosmicStateOnce(addon, recipe);
+                ResetCosmicSelectState();
+                DuoLog.Error(
+                    $"Artisan：宇宙筆記第 {entry} 項就是配方 {recipe.RowId}（{targetItemName}），"
+                    + $"但送出選取後等了 {CosmicSelectGiveUpSeconds} 秒仍未生效。已中止這次製作。");
+                return TaskResult.Abort;
+            }
+
+            if (now - _lastCosmicSelect < TimeSpan.FromSeconds(CosmicSelectIntervalSeconds))
                 return TaskResult.Retry;
 
-            for (int i = 0; i < rd->RecipesCount; i++)
-            {
-                try
-                {
-                    Callback.Fire(addon, false, 0, i);
-                    re = Operations.GetSelectedRecipeEntry();
-                    if (re != null && re->RecipeId == recipe.RowId)
-                        return TaskResult.Done;
-                }
-                catch (Exception ex)
-                {
-                    return TaskResult.Done;
-                }
-            }
+            // 選取不會關筆記(多次互動窗,15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、
+            // 它還在關閉中的那幾幀。被擋就不記 _lastCosmicSelect,下一輪再來。
+            if (!AddonPressGuard.TryBeginPress("WKSRecipeNotebook", addon, $"F|0|{entry}", AddonPressGuard.RoutineRePressEscapeFrames))
+                return TaskResult.Retry;
+
+            _lastCosmicSelect = now;
+            Svc.Log.Information(
+                $"Artisan: 宇宙配方 {recipe.RowId}（{targetItemName}）在清單第 {entry} 項，送出選取。");
+            Callback.Fire(addon, false, 0, entry);
+            return TaskResult.Retry;
         }
         else
         {
-            AgentRecipeNote.Instance()->OpenRecipeByRecipeId(recipe.RowId);
+            // 🔴 TC: re-issuing OpenRecipeByRecipeId while the window is already open CLOSES AND
+            // RECREATES it, so the window never lives long enough to populate RecipeList and the
+            // selection check above never passes (on global the repeat call is an idempotent re-select).
+            // So: call it only while the addon is absent, and otherwise WAIT for the list to populate.
+            // Re-issue only if it populated with the wrong recipe.
+            var recipeNoteAddr = Svc.GameGui.GetAddonByName("RecipeNote", 1).Address;
+            var nowTick = Environment.TickCount64;
+            if (_normalSelectTimer.Expired(recipe.RowId, nowTick))
+                return GiveUpNormalSelect(recipe, recipeNoteAddr, re);
+            if (recipeNoteAddr == nint.Zero)
+            {
+                if (nowTick - _lastOpenCallTick < OpenReissueIntervalMs)
+                    return TaskResult.Retry;
+                _lastOpenCallTick = nowTick;
+                ReportRecipeOpenAttempt(recipe.RowId);
+                // 🔴 AgentRecipeNote.Instance() 合法回 null,裸解參考是攔不到的 AVE。
+                // fail-closed:取不到就這一輪不開,下一次重試(500ms)會再試。
+                var openAgent = AgentRecipeNote.Instance();
+                if (openAgent != null)
+                    openAgent->OpenRecipeByRecipeId(recipe.RowId);
+                TryOpenViaSearchFallback(recipe);
+            }
+            else if (re != null && re->RecipeId != recipe.RowId)
+            {
+                // Populated with the WRONG recipe. Do NOT call OpenRecipeByRecipeId again here: on TC
+                // that closes and recreates the window. Use the item-search entry point instead - that is
+                // the call whose actual job is selecting a recipe - and rate-limit it so a failure cannot
+                // spin at the retry cadence.
+                // 剛由我們開的窗還沒載完就先等；最多等 OpenReissueIntervalMs，之後不論就緒與否照舊動作。
+                var openedByUs = nowTick - _lastOpenCallTick < OpenReissueIntervalMs;
+                if (openedByUs && !IsAddonReady((AtkUnitBase*)recipeNoteAddr))
+                    return TaskResult.Retry;
+                if ((DateTime.Now - _lastMismatchAction).TotalSeconds >= 2)
+                {
+                    _lastMismatchAction = DateTime.Now;
+                    var itemId = recipe.ItemResult.RowId;
+                    Svc.Log.Information(
+                        $"Artisan: RecipeNote is open but has recipe {re->RecipeId} selected, "
+                        + $"wanted {recipe.RowId}. "
+                        + (nowTick - _lastOpenCallTick < 5000
+                            ? "OpenRecipeByRecipeId did not select it; "
+                            : "The window was already open on another recipe; ")
+                        + $"trying SearchRecipeByItemId({itemId}).");
+                    // 🔴 Instance() 可能回 null(下面判空)。_lastMismatchAction 已經在上面更新過了,所以即使這次取不到
+                    //    agent 也不會變成不受節流的重試迴圈 —— 2 秒後才會再進來一次。
+                    if (itemId != 0)
+                    {
+                        var searchAgent = AgentRecipeNote.Instance();
+                        if (searchAgent != null)
+                            searchAgent->SearchRecipeByItemId(itemId);
+                    }
+                }
+            }
+            else if ((DateTime.Now - _lastOpenAttempt).TotalSeconds >= 5)
+            {
+                // Window open, list still populating - waiting is correct, but say
+                // so occasionally: ReportRecipeOpenAttempt only fires on OPEN calls,
+                // so a silent permanent wait would otherwise be invisible in logs.
+                _lastOpenAttempt = DateTime.Now;
+                Svc.Log.Information(
+                    $"Artisan: RecipeNote is open, waiting for its recipe list to populate "
+                    + $"(recipe {recipe.RowId}, RecipeList={(nint)RecipeNoteRecipeData.Ptr():X})");
+            }
         }
         return TaskResult.Retry;
     }
@@ -531,6 +1247,11 @@ public unsafe static class PreCrafting
             if (cosmicAddon == null)
                 return TaskResult.Retry;
 
+            // 結構上這個任務只會 Fire 一次(Fire 完就 Done);守衛只是讓它與 TaskExitCraft 的關閉紀錄共用同一把鎖,
+            // 被擋時走與「addon 還沒出現」相同的 Retry 路徑。
+            if (!AddonPressGuard.TryBeginPress("WKSRecipeNotebook", cosmicAddon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
+                return TaskResult.Retry;
+
             Svc.Log.Debug($"Starting actual cosmic craft");
             Callback.Fire(cosmicAddon, true, 6);
 
@@ -538,8 +1259,11 @@ public unsafe static class PreCrafting
 
         }
 
-        var addon = (AddonRecipeNote*)Svc.GameGui.GetAddonByName("RecipeNote");
+        var addon = (AddonRecipeNote*)Svc.GameGui.GetAddonByName("RecipeNote").Address;
         if (addon == null)
+            return TaskResult.Retry;
+
+        if (!AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, $"T|{8 + (int)type}", AddonPressGuard.RoutineRePressEscapeFrames))
             return TaskResult.Retry;
 
         Svc.Log.Debug($"Starting {type} craft");
@@ -554,9 +1278,16 @@ public unsafe static class PreCrafting
         foreach (var inv in inventories)
         {
             var cont = InventoryManager.Instance()->GetInventoryContainer(inv);
+            // 讀不到的容器直接跳過，當成「這一頁裡沒有」。刻意不整個中止：
+            // 其他頁讀得到的話還是能找到道具，而找不到時呼叫端 TaskEquipItem 會做破壞性動作
+            // （關持久模式＋暫停清單），能少走一次就少走一次。
+            // 反方向（拿假指標算出 slot）會讓 OpenForItemSlot 對錯的格子操作而裝上別的道具。
+            if (cont == null || cont->Items == null)
+                continue;
             for (int i = 0; i < cont->Size; ++i)
             {
-                if (cont->GetInventorySlot(i)->ItemId == ItemId)
+                var slot = cont->GetInventorySlot(i);
+                if (slot != null && slot->ItemId == ItemId)
                 {
                     return (inv, i);
                 }
@@ -599,5 +1330,34 @@ public unsafe static class PreCrafting
             StartCrafting(recipe.Value, eventParam is 14 ? CraftType.Normal : eventParam is 15 ? CraftType.Quick : CraftType.Trial);
         else
             DuoLog.Error($"Somehow recipe is null. Please report this on the Discord.");
+    }
+}
+
+/// <summary>
+/// 選取的放棄計時：同一個目標連續重試超過 <paramref name="giveUpMs"/> 就到期。兩次呼叫間隔超過
+/// <paramref name="roundGapMs"/>、換了目標、或 <see cref="Reset"/> 之後都重新起算。只在框架執行緒使用。
+/// </summary>
+internal sealed class SelectGiveUpTimer(long giveUpMs, long roundGapMs)
+{
+    private bool active;
+    private uint target;
+    private long sinceTick, lastTick;
+
+    public void Reset() => active = false;
+
+    /// <summary>記一次重試；這一輪超過上限就回 true，並重置（下一次呼叫是新的一輪）。</summary>
+    public bool Expired(uint targetId, long nowTick)
+    {
+        if (!active || targetId != target || nowTick - lastTick > roundGapMs)
+        {
+            active = true;
+            target = targetId;
+            sinceTick = nowTick;
+        }
+        lastTick = nowTick;
+        if (nowTick - sinceTick <= giveUpMs)
+            return false;
+        active = false;
+        return true;
     }
 }

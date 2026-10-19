@@ -1,8 +1,11 @@
-﻿using Artisan.CraftingLists;
+﻿using Artisan;
+using Artisan.CraftingLists;
+using Artisan.IPC;
 using Artisan.RawInformation;
 using ECommons.DalamudServices;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,19 +22,20 @@ internal static class CraftingListHelpers
 
             if (selectedList != null)
             {
+                var effectiveQuantity = GetEffectiveCraftQuantity(recipe.Value, selectedList);
                 foreach (var ing in recipe.Value.Ingredients().Where(x => x.Amount > 0 && x.Item.RowId != 0))
                 {
                     if (ingredientList.ContainsKey(ing.Item.RowId))
                     {
-                        ingredientList[ing.Item.RowId] += ing.Amount * selectedList.Recipes.First(x => x.ID == recipe.Value.RowId).Quantity;
+                        ingredientList[ing.Item.RowId] += ing.Amount * effectiveQuantity;
                     }
                     else
                     {
-                        ingredientList.TryAdd(ing.Item.RowId, ing.Amount * selectedList.Recipes.First(x => x.ID == recipe.Value.RowId).Quantity);
+                        ingredientList.TryAdd(ing.Item.RowId, ing.Amount * effectiveQuantity);
                     }
 
                     var name = LuminaSheets.ItemSheet[ing.Item.RowId].Name.ToString();
-                    SelectedRecipesCraftable[ing.Item.RowId] = LuminaSheets.RecipeSheet!.Any(x => x.Value.ItemResult.Value.Name.ToDalamudString().ToString() == name);
+                    SelectedRecipesCraftable[ing.Item.RowId] = SheetExtensions.AnyRecipeResultNamed(name);
 
                     if (GetIngredientRecipe(ing.Item.RowId) != null && addSublist)
                     {
@@ -54,7 +58,7 @@ internal static class CraftingListHelpers
                     }
 
                     var name = LuminaSheets.ItemSheet[ing.Item.RowId].Name.ToString();
-                    SelectedRecipesCraftable[ing.Item.RowId] = LuminaSheets.RecipeSheet!.Any(x => x.Value.ItemResult.Value.Name.ToDalamudString().ToString() == name);
+                    SelectedRecipesCraftable[ing.Item.RowId] = SheetExtensions.AnyRecipeResultNamed(name);
 
                     if (GetIngredientRecipe(ing.Item.RowId) != null && addSublist)
                     {
@@ -69,9 +73,23 @@ internal static class CraftingListHelpers
         }
     }
 
+    public static int GetEffectiveCraftQuantity(Recipe recipe, NewCraftingList selectedList)
+    {
+        var quantity = selectedList.Recipes.First(x => x.ID == recipe.RowId).Quantity;
+
+        if (P.Config.SubtractOwnedFinishedProductFromIngredientTable)
+        {
+            var owned = CraftingListUI.NumberOfIngredient(recipe.ItemResult.RowId) + RetainerInfo.GetRetainerItemCount(recipe.ItemResult.RowId);
+            var ownedCrafts = (int)Math.Floor((double)owned / recipe.AmountResult);
+            quantity = Math.Max(0, quantity - ownedCrafts);
+        }
+
+        return quantity;
+    }
+
     public static Recipe? GetIngredientRecipe(uint ingredient)
     {
-        if (LuminaSheets.RecipeSheet.Values.FindFirst(x => x.ItemResult.Value.RowId == ingredient, out var result))
+        if (LuminaSheets.TryGetFirstRecipeByResult(ingredient, out var result))
             return result;
 
         return null;

@@ -39,6 +39,9 @@ public record class CraftState
     public bool IsCosmic;
     public ConditionFlags ConditionFlags;
     public bool MissionHasMaterialMiracle;
+    // 這個宇宙任務給幾次奇蹟之材(來源與校準見 LuminaSheets.MissionMaterialMiracle)。
+    // ⚠️ **只有模擬器用**:實機的次數由 Crafting.MaterialMiracleCharges() 向 DutyActionManager 取。
+    public uint MissionMaterialMiracleCharges;
     public int InitialQuality;
 
     public uint ItemId;
@@ -81,6 +84,11 @@ public record class StepState
     public Skills PrevComboAction;
     public uint MaterialMiracleCharges;
     public bool MaterialMiracleActive;
+    // 奇蹟之材是**實時**(45 秒)而不是回合數的 buff。
+    // 前瞻模擬沒有時鐘,只能用「還剩幾個動作」當代理,見 Simulator.MaterialMiracleDurationSteps。
+    // 🔑 實機有時鐘:這個欄位由 Crafting 用 Environment.TickCount64 換算後覆蓋掉模擬器的估計值,
+    //    而「有沒有」一律以遊戲狀態列為準(見 Crafting.MaterialMiracleStepsLeftFromClock)。
+    public int MaterialMiracleStepsLeft;
     public int ObserveCounter;
 
     public override string ToString() => $"#{Index} {Condition}: {Progress}/{Quality}/{Durability}/{RemainingCP}; {BuffsString()}; Prev={PrevComboAction}{(PrevActionFailed ? " (failed)" : "")}";
@@ -104,7 +112,7 @@ public record class StepState
             sb.Append($", FA={FinalAppraisalLeft}");
         sb.Append($", CO={CarefulObservationLeft}, HS={(HeartAndSoulActive ? "active" : HeartAndSoulAvailable ? "avail" : "none")}");
         sb.Append($", QuickInno:{QuickInnoAvailable}/{QuickInnoLeft}/{InnovationLeft}");
-        sb.Append($", MaterialMiracleActive:{MaterialMiracleActive} / {MaterialMiracleCharges}");
+        sb.Append($", MaterialMiracleActive:{MaterialMiracleActive}({MaterialMiracleStepsLeft}) / {MaterialMiracleCharges}");
         return sb.ToString();
     }
 }

@@ -1,14 +1,16 @@
 ﻿using Artisan.CraftingLists;
 using Artisan.RawInformation;
 using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using System;
 using System.Linq;
 using OtterGui;
+using OtterGui.Extensions;
 using Artisan.IPC;
 using Artisan.Autocraft;
 using Artisan.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Gui.ContextMenu;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using System.Collections.Generic;
@@ -27,8 +29,6 @@ internal static class CraftingListContextMenu
     public const int RecipeNoteContextItemId = 0x398;
     public const int AgentItemContextItemId = 0x28;
     public const int GatheringNoteContextItemId = 0xA0;
-    public const int ItemSearchContextItemId = 0x17D0;
-    public const int ChatLogContextItemId = 0x948;
 
     public const int SubmarinePartsMenuContextItemId = 0x54;
     public const int ShopExchangeItemContextItemId = 0x54;
@@ -59,7 +59,7 @@ internal static class CraftingListContextMenu
 
         var recipeId = LuminaSheets.RecipeSheet.Values.First(x => x.ItemResult.RowId == ItemId).RowId;
 
-        if (ImGui.Selectable($"Open Recipe Log"))
+        if (ImGui.Selectable("Open Recipe Log".Loc()))
         {
             CraftingListFunctions.OpenRecipeByID(recipeId);
         }
@@ -74,13 +74,16 @@ internal static class CraftingListContextMenu
 
     private unsafe static void AddMenu(IMenuOpenedArgs args)
     {
-        Svc.Log.Debug($"{args.AddonName}");
+        // 前綴不可省：AddonName 對非 addon 的選單是空字串，裸插值會印出一行純空白，
+        // 在實機 log 裡認不出是誰印的，也搜不到。
+        var addonName = string.IsNullOrEmpty(args.AddonName) ? "(none)" : args.AddonName;
+        Svc.Log.Verbose($"Artisan context menu: addon={addonName}");
         if (P.Config.HideContextMenus) return;
         if (args.AddonName != "RecipeNote")
         {
             uint? itemId;
             itemId = GetGameObjectItemId(args);
-            Svc.Log.Debug($"{itemId}");
+            Svc.Log.Verbose($"Artisan context menu: addon={addonName} itemId={itemId?.ToString() ?? "(none)"}");
             if (!LuminaSheets.RecipeSheet.Values.Any(x => x.ItemResult.RowId == itemId)) return;
 
             var recipeId = LuminaSheets.RecipeSheet.Values.First(x => x.ItemResult.RowId == itemId).RowId;
@@ -110,7 +113,10 @@ internal static class CraftingListContextMenu
 
         if (args.AddonName == "RecipeNote")
         {
+            // FindAgentInterface 找不到回 0——0+0x398 的解參考是攔不到的 AVE,所以先判。
             IntPtr recipeNoteAgent = Svc.GameGui.FindAgentInterface(args.AddonName);
+            if (recipeNoteAgent == IntPtr.Zero)
+                return;
             var ItemId = *(uint*)(recipeNoteAgent + 0x398);
             var craftTypeIndex = *(uint*)(recipeNoteAgent + 944);
 
@@ -144,26 +150,6 @@ internal static class CraftingListContextMenu
             subMenu.OnClicked += args => OpenArtisanCraftingListSubmenu(args, ItemId, craftTypeIndex, ingredientsSubCraft);
 
             args.AddMenuItem(subMenu);
-        }
-
-        if (args.AddonName == "ChatLog")
-        {
-            var ItemId = GetObjectItemId("ChatLog", 0x948);
-            if (ItemId > 500_000)
-                ItemId -= 500_000;
-
-            if (!LuminaSheets.RecipeSheet.Values.Any(x => x.ItemResult.RowId == ItemId)) return;
-
-            var recipeId = LuminaSheets.RecipeSheet.Values.First(x => x.ItemResult.RowId == ItemId).RowId;
-
-            var menuItem = new MenuItem();
-            menuItem.Name = "Open Recipe Log";
-            menuItem.PrefixChar = 'A';
-            menuItem.PrefixColor = 706;
-            menuItem.OnClicked += clickedArgs => CraftingListFunctions.OpenRecipeByID(recipeId, true);
-
-            args.AddMenuItem(menuItem);
-
         }
     }
 
@@ -231,8 +217,8 @@ internal static class CraftingListContextMenu
             "RecipeMaterialList" => GetObjectItemId(AgentById(AgentId.RecipeItemContext), AgentItemContextItemId),
             "RecipeProductList" => GetObjectItemId(AgentById(AgentId.RecipeItemContext), AgentItemContextItemId),
             "GatheringNote" => GetObjectItemId("GatheringNote", GatheringNoteContextItemId),
-            "ItemSearch" => GetObjectItemId(args.AgentPtr, ItemSearchContextItemId),
-            "ChatLog" => GetObjectItemId("ChatLog", ChatLogContextItemId),
+            "ItemSearch" => GetItemSearchContextItemId(args),
+            "ChatLog" => GetChatLogContextItemId(args),
             _ => null,
         };
         if (item == null)
@@ -247,8 +233,19 @@ internal static class CraftingListContextMenu
 
     private static unsafe IntPtr AgentById(AgentId id)
     {
-        var uiModule = (UIModule*)Svc.GameGui.GetUIModule();
-        var agents = uiModule->GetAgentModule();
+        // 🔴 三跳都要各自判空。`Svc.GameGui.GetUIModule()` 是 Dalamud 的服務包裝（UIModulePtr），
+        // 它包的是 `(nint)UIModule.Instance()` —— **`.Address` 合法為 0**；把 0 轉型成 UIModule* 再
+        // `->GetAgentModule()` 就是 AccessViolationException，try/catch 一律攔不到。
+        // 呼叫端一律走 `GetObjectItemId(IntPtr, int)`，它已經檢查 `agent != IntPtr.Zero`，
+        // 因此回 IntPtr.Zero 就是正確的 fail-closed 值（選單項目不出現）。
+        var uiModuleAddress = Svc.GameGui.GetUIModule().Address;
+        if (uiModuleAddress == nint.Zero)
+            return IntPtr.Zero;
+
+        var agents = ((UIModule*)uiModuleAddress)->GetAgentModule();
+        if (agents == null)
+            return IntPtr.Zero;
+
         var agent = agents->GetAgentByInternalId(id);
         return (IntPtr)agent;
     }
@@ -289,6 +286,34 @@ internal static class CraftingListContextMenu
         return itemId;
     }
 
+    // 只有 Default 型選單的 AgentPtr 是 AgentContext；道具 id 在 UpdateCheckerParam。
+    private static unsafe uint? GetItemSearchContextItemId(IMenuOpenedArgs args)
+        => args.MenuType == ContextMenuType.Default && args.AgentPtr != IntPtr.Zero
+            ? GetObjectItemId((uint)((AgentContext*)args.AgentPtr)->UpdateCheckerParam)
+            : null;
+
+    // AgentChatLog 開道具連結選單時一定加一項 handler＝自己、參數 0x10003 的項目。
+    private const long ChatLogItemLinkMenuParam = 0x10003;
+
+    // ContextItemId 只有道具連結選單會寫，別的選單會留著上一次的值 ⇒ 先確認這次開的就是道具連結選單。
+    private static unsafe uint? GetChatLogContextItemId(IMenuOpenedArgs args)
+    {
+        if (args.MenuType != ContextMenuType.Default || args.AgentPtr == IntPtr.Zero)
+            return null;
+        nint agent = Svc.GameGui.FindAgentInterface("ChatLog");
+        var menu = ((AgentContext*)args.AgentPtr)->CurrentContextMenu;
+        if (agent == IntPtr.Zero || menu == null)
+            return null;
+
+        var count = Math.Clamp((int)menu->CurrentEventIndex, 0, menu->EventHandlers.Length);
+        for (var i = 0; i < count; ++i)
+        {
+            if ((nint)menu->EventHandlers[i].Value == agent && menu->EventHandlerParams[i] == ChatLogItemLinkMenuParam)
+                return GetObjectItemId(((AgentChatLog*)agent)->ContextItemId);
+        }
+        return null;
+    }
+
     private unsafe static uint? GetObjectItemId(IntPtr agent, int offset)
         => agent != IntPtr.Zero ? GetObjectItemId(*(uint*)(agent + offset)) : null;
 
@@ -327,13 +352,14 @@ internal static class CraftingListContextMenu
         }
 
         CraftingListHelpers.TidyUpList(CraftingListUI.selectedList);
-        foreach (var w in P.ws.Windows)
+        // Select the editor by type and id, not by the window title "List Editor###<id>": the caption is
+        // localised, and casting every window with `as` would NRE on a non-ListEditor match.
+        foreach (var editor in P.ws.Windows
+                     .OfType<ListEditor>()
+                     .Where(x => x.SelectedList.ID == CraftingListUI.selectedList.ID))
         {
-            if (w.WindowName == $"List Editor###{CraftingListUI.selectedList.ID}")
-            {
-                (w as ListEditor).RecipeSelector.Items = CraftingListUI.selectedList.Recipes.ToList();
-                (w as ListEditor).RefreshTable(null, true);
-            }
+            editor.RecipeSelector.ReplaceItems(CraftingListUI.selectedList.Recipes);
+            editor.RefreshTable(null, true);
         }
 
         P.Config.Save();

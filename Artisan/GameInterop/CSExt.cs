@@ -28,7 +28,9 @@ public unsafe struct RecipeNoteIngredientEntry
         NumAssignedHQ = assigning;
         NumAssignedNQ = (byte)Math.Min(NumAssignedNQ, NumTotal - assigning);
 
-        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon))
+        // 重新整理不會關手帳(15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、它還在關閉中的那幾幀。
+        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon)
+            && AddonPressGuard.TryBeginPress("RecipeNote", addon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
         {
             Callback.Fire(addon, true, 6);
         }
@@ -40,7 +42,9 @@ public unsafe struct RecipeNoteIngredientEntry
         NumAssignedNQ = assigning;
         NumAssignedHQ = (byte)Math.Min(NumAvailableHQ, NumTotal - assigning);
 
-        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon))
+        // 重新整理不會關手帳(15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、它還在關閉中的那幾幀。
+        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon)
+            && AddonPressGuard.TryBeginPress("RecipeNote", addon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
         {
             Callback.Fire(addon, true, 6);
         }
@@ -50,7 +54,7 @@ public unsafe struct RecipeNoteIngredientEntry
     {
         if (NumAvailableNQ + NumAvailableHQ < NumTotal)
         {
-            DuoLog.Error("由于材料不足，无法正确设置指定的材料。");
+            DuoLog.Error("由於材料不足，無法正確設定指定的材料。");
             return;
         }
 
@@ -61,7 +65,9 @@ public unsafe struct RecipeNoteIngredientEntry
         if (NumAssignedNQ != NumTotal)
             NumAssignedHQ = (byte)Math.Min(NumTotal, Math.Min(NumAvailableHQ, hq));
 
-        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon))
+        // 重新整理不會關手帳(15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、它還在關閉中的那幾幀。
+        if (updateUI && GenericHelpers.TryGetAddonByName<AtkUnitBase>("RecipeNote", out var addon)
+            && AddonPressGuard.TryBeginPress("RecipeNote", addon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))
         {
             Callback.Fire(addon, true, 6);
         }
@@ -87,14 +93,21 @@ public unsafe struct RecipeNoteRecipeEntry
     }
 }
 
-[StructLayout(LayoutKind.Explicit, Size = 0x3B0)]
+// CS RecipeNote.RecipeData 的檢視：欄位一律轉讀 CS，偏移跟著 CS 走、不手抄。
+[StructLayout(LayoutKind.Explicit)]
 public unsafe struct RecipeNoteRecipeData
 {
+    // ⚠️ DO NOT probe this struct by scanning for "plausible" pointers when Ptr() returns null:
+    // there is no safe way to validate an arbitrary address from managed code (reading a field
+    // through a value that merely looks like a pointer is an uncatchable AccessViolationException).
+    // A null return is always better than a crash.
     public static RecipeNoteRecipeData* Ptr() => (RecipeNoteRecipeData*)RecipeNote.Instance()->RecipeList; // note: can be null
 
-    [FieldOffset(0x000)] public RecipeNoteRecipeEntry* Recipes; // note: can be null
-    [FieldOffset(0x008)] public int RecipesCount;
-    [FieldOffset(0x438)] public ushort SelectedIndex;
+    [FieldOffset(0x000)] public RecipeNote.RecipeData Cs;
+
+    public RecipeNoteRecipeEntry* Recipes => (RecipeNoteRecipeEntry*)Cs.Recipes; // note: can be null
+    public int RecipesCount => Cs.RecipeCount;
+    public ushort SelectedIndex => Cs.SelectedIndex;
 
     public RecipeNoteRecipeEntry* FindRecipeById(uint id)
     {
@@ -115,19 +128,20 @@ public unsafe struct CraftingEventHandler
 {
     [FieldOffset(0x000)] public EventHandler EventHandler;
     [FieldOffset(0x000)] public void** VTable;
+    // 刻意不鏡像實例欄位：插件只讀 payload；要讀實例狀態就改用 CS CraftEventHandler。
 
-    [FieldOffset(0x44C)] public StepFlags SynthStepFlags;
-    [FieldOffset(0x450)] public int SynthStartingQuality;
-    [FieldOffset(0x454)] public ushort CurRecipeId; // both for usual and quick synth
-    [FieldOffset(0x456)] public ushort SynthStep;
-    [FieldOffset(0x458)] public int SynthCollectibilityBreakpoint1;
-    [FieldOffset(0x45C)] public int SynthCollectibilityBreakpoint2;
-    [FieldOffset(0x460)] public int SynthCollectibilityBreakpoint3;
-    [FieldOffset(0x464)] public byte QuickSynthMax;
-    [FieldOffset(0x465)] public byte QuickSynthCur;
-    [FieldOffset(0x467)] public byte ConditionPlus1; // Condition enum + 1
-
-    public static CraftingEventHandler* Instance() => (CraftingEventHandler*)EventFramework.Instance()->GetEventHandlerById(0x000A0001);
+    /// <summary>目前的製作事件處理器。<b>會回 null</b>,呼叫端必須自己判。</summary>
+    /// <remarks>
+    /// EventFramework.Instance() 的宣告是 [StaticAddress(..., isPointer: true)] —— 讀的是一個
+    /// **指標變數**,遊戲還沒把事件框架建起來時它就是 null;解參考 null 是 try/catch 攔不到的 AVE。
+    /// 沒在製作時 GetEventHandlerById 本來也回 null。
+    /// </remarks>
+    public static CraftingEventHandler* Instance()
+    {
+        var eventFramework = EventFramework.Instance();
+        if (eventFramework == null) return null;
+        return (CraftingEventHandler*)eventFramework->GetEventHandlerById(0x000A0001);
+    }
 
     public enum OperationId
     {

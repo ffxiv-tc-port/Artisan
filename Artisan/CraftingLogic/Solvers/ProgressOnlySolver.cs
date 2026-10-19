@@ -1,4 +1,5 @@
 ﻿using Artisan.RawInformation.Character;
+using ECommons.LanguageHelpers;
 using System.Collections.Generic;
 
 namespace Artisan.CraftingLogic.Solvers
@@ -10,7 +11,7 @@ namespace Artisan.CraftingLogic.Solvers
         public IEnumerable<ISolverDefinition.Desc> Flavours(CraftState craft)
         {
             if (!craft.CraftExpert && !craft.CraftCollectible)
-            yield return new(this, 0, 1, "仅进展解算器");
+            yield return new(this, 0, 1, "Progress Only Solver".Loc());
         }
     }
 

@@ -59,13 +59,16 @@ namespace Artisan.IPC
 
         public void Disable()
         {
+            // 先退訂：ChatTwo 已經不在時 Unregister 會擲例外，不能讓兩個訂閱因此留在 CallGate 上釘住舊版本。
+            Available.Unsubscribe(RegisterIpc);
+            Invoke.Unsubscribe(Integration);
+
             if (!string.IsNullOrEmpty(_id))
             {
-                Unregister.InvokeAction(_id);
+                try { Unregister.InvokeAction(_id); }
+                catch (Dalamud.Plugin.Ipc.Exceptions.IpcNotReadyError) { Svc.Log.Debug("Chat2 is not available"); }
                 _id = null;
             }
-
-            Invoke.Unsubscribe(Integration);
         }
 
         private void Integration(string id, PlayerPayload? sender, ulong contentId, Payload? payload, SeString? senderString, SeString? content)

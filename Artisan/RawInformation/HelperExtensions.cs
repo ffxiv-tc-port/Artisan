@@ -75,55 +75,6 @@ namespace Artisan.RawInformation
             public required int SetQuantity { get;init; }
         }
 
-        internal record BaseParamExtension()
-        {
-            public required BaseParam BaseParam { get; init; }
-            public required short BaseParamValue { get; init; } 
-        }
-
-        internal record BaseParamSpecialExtension()
-        {
-            public required BaseParam BaseParamSpecial { get; init; }
-            public required short BaseParamValueSpecial { get; init; }
-
-        }
-
-        public static IEnumerable<BaseParamSpecialExtension> BaseParamSpecials(this Item baseParam)
-        {
-            var output = new List<BaseParamSpecialExtension>();
-            for (int i = 0; i < baseParam.BaseParamSpecial.Count; i++)
-            {
-                try
-                {
-                    var item = baseParam.BaseParamSpecial[i].Value;
-                    var val = baseParam.BaseParamValueSpecial[i];
-
-                    output.Add(new BaseParamSpecialExtension() { BaseParamSpecial = item, BaseParamValueSpecial = val });
-                }
-                catch { }
-            }
-
-            return output;
-        }
-
-        public static IEnumerable<BaseParamExtension> BaseParams(this Item baseParam)
-        {
-            var output = new List<BaseParamExtension>();
-            for (int i = 0; i < baseParam.BaseParam.Count; i++)
-            {
-                try
-                {
-                    var item = baseParam.BaseParam[i].Value;
-                    var val = baseParam.BaseParamValue[i];
-
-                    output.Add(new BaseParamExtension() { BaseParam = item, BaseParamValue = val });
-                }
-                catch { }
-            }
-
-            return output;
-        }
-
         public static IEnumerable<SupplyItemExtension> SupplyItems(this CompanyCraftProcess companyCraftProcess)
         {
             var output = new List<SupplyItemExtension>();
@@ -146,7 +97,9 @@ namespace Artisan.RawInformation
             {
                 try
                 {
-                    var item = recipe.Ingredient[i].Value;
+                    // 沒用到的格子(道具編號 -1)查不到道具:略過。不用 .Value 是因為它對查不到的列擲例外。
+                    if (recipe.Ingredient[i].ValueNullable is not { } item)
+                        continue;
                     var amount = recipe.AmountIngredient[i];
 
                     output.Add(new IngredientExtension() { Item = item, Amount = amount });

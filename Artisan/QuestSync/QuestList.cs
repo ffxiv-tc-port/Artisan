@@ -318,12 +318,12 @@ namespace Artisan.QuestSync
         {
             if (EmoteQuests.TryGetValue(questId, out var data))
             {
-                if (Svc.Objects.Any(x => x.DataId == data.NPCDataId))
+                if (Svc.Objects.Any(x => x.BaseId == data.NPCDataId))
                 {
-                    var npc = Svc.Objects.First(x => x.DataId == data.NPCDataId);
+                    var npc = Svc.Objects.First(x => x.BaseId == data.NPCDataId);
                     Svc.Targets.Target = npc;
                 }
-                if (Svc.Targets.Target != null && Svc.Targets.Target.DataId == data.NPCDataId)
+                if (Svc.Targets.Target != null && Svc.Targets.Target.BaseId == data.NPCDataId)
                 {
                     CommandProcessor.ExecuteThrottled(data.Emote!);
                 }
@@ -348,6 +348,11 @@ namespace Artisan.QuestSync
                         return "Kupo-Nüsse für alle Helfer!";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "クポの実あるよ";
+                    // 台服(繁中)台詞取自 TC 7.20 EXD 任務文本(SAYTODO/SYSTEM 條目)。
+                    // ClientLanguage 用數值比較:5＝ChineseTraditional、7＝TraditionalChinese,兩個都當繁中。
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "有咕波果哦";
                 }
 
             }
@@ -362,6 +367,9 @@ namespace Artisan.QuestSync
                         return "Holladrio";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "ラリホー";
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "啦哩吼";
                 }
             }
             if (questId == 4700)
@@ -376,6 +384,9 @@ namespace Artisan.QuestSync
                         return "Traummaschine";
                     case Dalamud.Game.ClientLanguage.French:
                         return "rêves à gogo";
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "夢想加倍";
                 }
             }
             if (questId == 1497)
@@ -390,6 +401,9 @@ namespace Artisan.QuestSync
                         return "Sei eins mit dem Wind!";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "風のごとく！";
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "乘風而起";
                 }
             }
             if (questId == 3104)
@@ -404,6 +418,12 @@ namespace Artisan.QuestSync
                         return "Große Flosse";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "おおなまずのまにまに";
+                    // 台服(繁中)暗號取自 TC sqpack quest/031/BanNam302_03104
+                    // 的 TEXT_BANNAM302_03104_SAYTODO_000_050 條目。
+                    // ClientLanguage 用數值比較:5＝ChineseTraditional、7＝TraditionalChinese,兩個都當繁中。
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "大鯰魚保佑";
                 }
             }
             if (questId == 1515)
@@ -418,6 +438,9 @@ namespace Artisan.QuestSync
                         return "Ab durch die Wolken!";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "天を翔ける！";
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "翱翔天際";
                 }
             }
             if (questId == 1507)
@@ -432,6 +455,9 @@ namespace Artisan.QuestSync
                         return "Hoch hinaus!";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "もっと高く！";
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "展翅高飛";
                 }
             }
             if (questId == 1501)
@@ -446,6 +472,9 @@ namespace Artisan.QuestSync
                         return "Mögen deine Schwingen nie brechen!";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "折れぬ翼を！";
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "不屈之翼";
                 }
             }
             if (questId == 1568)
@@ -460,6 +489,9 @@ namespace Artisan.QuestSync
                         return "Der unerfüllte Traum der Ixal!";
                     case Dalamud.Game.ClientLanguage.Japanese:
                         return "果てぬ夢を！";
+                    case (Dalamud.Game.ClientLanguage)5:
+                    case (Dalamud.Game.ClientLanguage)7:
+                        return "追夢無限";
                 }
             }
 

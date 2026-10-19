@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System;
-using ImGuiNET;
+using ECommons.LanguageHelpers;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility.Raii;
 using System.Linq;
 
@@ -62,7 +63,7 @@ public class ScriptSolverSettings
 
     public bool Draw()
     {
-        ImGui.TextWrapped($"这是一个非常进阶的功能，面向希望使用C#创建自己的动态解算器的用户。请访问GitHub源代码并查看Demoscript文件夹以获取示例。对于如何学习C#来做到这一点，我们不会提供任何支持。");
+        ImGui.TextWrapped("This is a very advanced feature, aimed at users wishing to create their own dynamic solvers using C#. Please visit the github source code and view the Demoscripts folder for an example. No support will be given as to learning C# to do this.".Loc());
         ImGui.Separator();
         Script? toDel = null;
         foreach (var s in Scripts)
@@ -74,26 +75,26 @@ public class ScriptSolverSettings
             using (ImRaii.Disabled(state == CompilationState.InProgress))
             {
                 // TODO: show icon depending on state...
-                if (ImGui.Button($"Recompile: {state}", new(100, 0)))
+                if (ImGui.Button("Recompile: ??".Loc(state), new(100, 0)))
                     _compiler.Recompile(s);
                 if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
                     ImGui.BeginTooltip();
-                    ImGui.TextUnformatted($"Compilation output:\n{s.CompilationOutput()}");
+                    ImGui.TextUnformatted("Compilation output:\n??".Loc(s.CompilationOutput()));
                     ImGui.EndTooltip();
                 }
             }
 
             ImGui.SameLine();
-            if (ImGui.Button("删除"))
+            if (ImGui.Button("Delete".Loc()))
                 toDel = s;
             ImGui.SameLine();
             ImGui.TextUnformatted($"[{s.ID}] {s.SourcePath}");
         }
 
-        ImGui.InputText("新脚本路径", ref _newPath, 256);
+        ImGui.InputText("New script path".Loc(), ref _newPath, 256);
         ImGui.SameLine();
-        if (ImGui.Button("添加") && _newPath.Length > 0 && !Scripts.Any(s => s.SourcePath == _newPath))
+        if (ImGui.Button("Add".Loc()) && _newPath.Length > 0 && !Scripts.Any(s => s.SourcePath == _newPath))
         {
             AddNewScript(new(_newPath));
             _newPath = "";
@@ -102,7 +103,7 @@ public class ScriptSolverSettings
 
         if (toDel != null)
         {
-            toDel.UpdateCompilation(CompilationState.Deleted, "正在删除", null);
+            toDel.UpdateCompilation(CompilationState.Deleted, "Deletion in progress", null);
             Scripts.Remove(toDel);
             return true;
         }

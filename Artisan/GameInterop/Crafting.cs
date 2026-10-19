@@ -13,6 +13,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using OtterGui;
+using OtterGui.Extensions;
 using System;
 using System.Linq;
 using Condition = Artisan.CraftingLogic.CraftData.Condition;
@@ -68,18 +69,57 @@ public static unsafe class Crafting
     private static StepState? _predictedNextStep; // set when receiving Advance*Action messages
     private static DateTime _predictionDeadline;
 
+    // 奇蹟之材是 45 秒的**實時** buff,不是回合制的。模擬器沒有時鐘,只能用
+    // Simulator.MaterialMiracleDurationSteps 估;實機有時鐘,所以實機一律用時鐘,不用估的。
+    // Environment.TickCount64 的絕對值,0 = 目前沒有在跑。
+    private static long _materialMiracleExpiryTick;
+
     private delegate void CraftingEventHandlerUpdateDelegate(CraftingEventHandler* self, nint a2, nint a3, CraftingEventHandler.OperationId* payload);
-    private static Hook<CraftingEventHandlerUpdateDelegate> _craftingEventHandlerUpdateHook;
+    // null＝特徵碼對不上、沒掛上；只在靜態建構子指派一次。
+    private static Hook<CraftingEventHandlerUpdateDelegate>? _craftingEventHandlerUpdateHook;
+
+    /// <summary>
+    /// false＝收不到遊戲的製作事件：<see cref="CurRecipe"/> 與預測步驟永遠不會有，
+    /// 狀態機在一般製作中只會停在 <see cref="State.InvalidState"/>（簡易製作不受影響）。
+    /// </summary>
+    public static bool EventHookAvailable => _craftingEventHandlerUpdateHook != null;
 
     static Crafting()
     {
-        _craftingEventHandlerUpdateHook = Svc.Hook.HookFromSignature<CraftingEventHandlerUpdateDelegate>("48 89 5C 24 ?? 48 89 7C 24 ?? 41 56 48 83 EC 30 80 A1", CraftingEventHandlerUpdateDetour);
-        _craftingEventHandlerUpdateHook.Enable();
+        _craftingEventHandlerUpdateHook = SigHooks.TryHookFromSignature<CraftingEventHandlerUpdateDelegate>(
+            "CraftingEventHandlerUpdate", "48 89 5C 24 ?? 48 89 7C 24 ?? 41 56 48 83 EC 30 80 A1", CraftingEventHandlerUpdateDetour,
+            "讀不到製作進度：不會建議或自動下製作技能，耐力模式、製作清單與其他插件代為製作一律拒絕開始；手動製作不受影響。");
+        _craftingEventHandlerUpdateHook?.Enable();
     }
 
     public static void Dispose()
     {
-        _craftingEventHandlerUpdateHook.Dispose();
+        _craftingEventHandlerUpdateHook?.Dispose();
+    }
+
+    private static long _nextEventHookNoticeTick;
+
+    /// <summary>
+    /// 收不到製作事件時在聊天視窗說明一次（10 秒內不重複）。只在框架執行緒呼叫。
+    /// </summary>
+    private static void NotifyEventHookMissing(string consequence)
+    {
+        if (Environment.TickCount64 < _nextEventHookNoticeTick)
+            return;
+        _nextEventHookNoticeTick = Environment.TickCount64 + 10000;
+        ECommons.Logging.DuoLog.Error($"Artisan：遊戲改版後讀不到製作進度（特徵碼對不上），{consequence}。請等插件更新。");
+    }
+
+    /// <summary>
+    /// 自動製作的入口共用：收不到製作事件就回 true（呼叫端不要開始）並說明原因。
+    /// 開始了也只會停在製作畫面沒人下技能，所以在開始前就擋。
+    /// </summary>
+    public static bool RefuseAutoCraftIfNoEventHook(string what)
+    {
+        if (EventHookAvailable)
+            return false;
+        NotifyEventHookMissing($"無法開始{what}（手動製作不受影響）");
+        return true;
     }
 
     // note: this uses current character stats & equipped gear
@@ -87,6 +127,9 @@ public static unsafe class Crafting
     {
         stats.Level = stats.Level == default ? CharacterInfo.JobLevel(job) : stats.Level;
         var lt = recipe.Number == 0 && stats.Level < 100 ? Svc.Data.GetExcelSheet<RecipeLevelTable>().First(x => x.ClassJobLevel == stats.Level) : recipe.RecipeLevelTable.Value;
+        // 一次查完「有沒有奇蹟之材」與「給幾次」—— 兩者走的是同一串任務資料表,
+        // 分兩次呼叫等於把整段掃描做兩遍(AllValidCrafts 會對整個職業的配方逐一建 CraftState)。
+        var miracle = recipe.MissionMaterialMiracle();
         var res = new CraftState()
         {
             ItemId = recipe.ItemResult.RowId,
@@ -115,7 +158,8 @@ public static unsafe class Crafting
             CollectableMetadataKey = recipe.CollectableMetadataKey,
             IsCosmic = recipe.Number == 0,
             ConditionFlags = (ConditionFlags)lt.ConditionsFlag,
-            MissionHasMaterialMiracle = recipe.MissionHasMaterialMiracle(),
+            MissionHasMaterialMiracle = miracle.Has,
+            MissionMaterialMiracleCharges = miracle.Charges,
             LevelTable = lt
         };
 
@@ -177,9 +221,14 @@ public static unsafe class Crafting
                     }
                     break;
                 case 7:
-                    res.CraftQualityMin1 = res.CraftQualityMax;
-                    res.CraftQualityMin2 = res.CraftQualityMax;
-                    res.CraftQualityMin3 = res.CraftQualityMax;
+                    var wksRow = ECommons.GenericHelpers.FindRow<WKSMissionToDoEvalutionRefin>(x => x.RowId == recipe.CollectableMetadata.RowId);
+                    if (wksRow != null)
+                    {
+                        var scale = res.LevelTable.Quality * ((double)res.Recipe.QualityFactor / 100) / 1000;
+                        res.CraftQualityMin1 = (int)Math.Floor(wksRow.Value.Unknown0 * scale) * 10;
+                        res.CraftQualityMin2 = (int)Math.Floor(wksRow.Value.Unknown1 * scale) * 10;
+                        res.CraftQualityMin3 = (int)Math.Floor(wksRow.Value.Unknown2 * scale) * 10;
+                    }
                     break;
                 // Check for any other Generic Collectable
                 default:
@@ -261,11 +310,16 @@ public static unsafe class Crafting
         if (Svc.Condition[ConditionFlag.NormalConditions])
             return State.IdleNormal;
 
+        if (CurCraft != null && CurRecipe != null && CurStep != null)
+        {
+            CraftFinished?.Invoke(CurRecipe.Value, CurCraft, CurStep, true);
+        }
+
         if (CurCraft != null)
         {
-            CraftFinished?.Invoke(CurRecipe!.Value, CurCraft, CurStep!, true);
             _predictedNextStep = null;
             _predictionDeadline = default;
+            _materialMiracleExpiryTick = 0;
             CurRecipe = null;
             CurCraft = null;
             CurStep = null;
@@ -351,7 +405,11 @@ public static unsafe class Crafting
         }
 
         if (CurRecipe == null)
+        {
+            if (!EventHookAvailable)
+                NotifyEventHookMissing("這次製作不會有技能建議、也不會自動下技能，請手動完成");
             return State.InvalidState; // failed to find recipe, bail out...
+        }
 
         var canHQ = CurRecipe.Value.CanHq;
         CurCraft = BuildCraftStateForRecipe(CharacterStats.GetCurrentStats(), CharacterInfo.JobID, CurRecipe!.Value);
@@ -431,6 +489,7 @@ public static unsafe class Crafting
         Svc.Log.Debug($"Resetting");
         _predictedNextStep = null;
         _predictionDeadline = default;
+        _materialMiracleExpiryTick = 0;
         CurRecipe = null;
         P.TM.DelayNext(200);
         P.TM.Enqueue(() => CurCraft = null);
@@ -458,7 +517,7 @@ public static unsafe class Crafting
 
     private static AddonSynthesis* GetAddon()
     {
-        var synthWindow = (AddonSynthesis*)Svc.GameGui.GetAddonByName("Synthesis");
+        var synthWindow = (AddonSynthesis*)Svc.GameGui.GetAddonByName("Synthesis").Address;
         if (synthWindow == null)
             return null; // not ready
 
@@ -473,7 +532,7 @@ public static unsafe class Crafting
 
     public static AtkUnitBase* GetCosmicAddon()
     {
-        var cosmicAddon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook");
+        var cosmicAddon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("WKSRecipeNotebook").Address;
         if (cosmicAddon == null || !cosmicAddon->IsVisible || !cosmicAddon->IsReady)
             return null; // not ready
 
@@ -482,7 +541,7 @@ public static unsafe class Crafting
 
     private static AtkUnitBase* GetQuickSynthAddon()
     {
-        var addon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("SynthesisSimple");
+        var addon = (AtkUnitBase*)Svc.GameGui.GetAddonByName("SynthesisSimple").Address;
         if (addon == null)
             return null;
 
@@ -575,20 +634,97 @@ public static unsafe class Crafting
         ret.TrainedPerfectionAvailable = ActionManagerEx.CanUseSkill(Skills.TrainedPerfection);
         ret.QuickInnoAvailable = ActionManagerEx.CanUseSkill(Skills.QuickInnovation);
         ret.QuickInnoLeft = !craft.Specialist ? 0 : ActionManagerEx.CanUseSkill(Skills.QuickInnovation) ? 1 : predictedStep?.QuickInnoLeft ?? 0;
-        ret.ExpedienceLeft = GetStatus(Buffs.Expedience)?.Param ?? 0;
+        // Expedience is a one-use proc; the only consumer treats ExpedienceLeft as a
+        // >0 / ==0 binary check. On the TC client the status's Param can read back 0
+        // while the buff is still present, so presence of the status (not its Param)
+        // is the reliable signal here.
+        ret.ExpedienceLeft = GetStatus(Buffs.Expedience) != null ? 1 : 0;
         ret.PrevActionFailed = predictedStep?.PrevActionFailed ?? false;
         ret.PrevComboAction = predictedStep?.PrevComboAction ?? Skills.None;
         ret.MaterialMiracleCharges = MaterialMiracleCharges();
+        // 🔑 buff 在不在,一律以遊戲的狀態列為準,時鐘只負責「還剩多少」。
         ret.MaterialMiracleActive = GetStatus(Buffs.MaterialMiracle) != null;
+        // 遊戲只告訴我們 buff 在不在,不告訴「還剩幾步」⇒ 沿用預測值(預測那邊已是真時鐘算的),沒有預測才自己換算。
+        // 🔑 StepState 是 record,`step != _predictedNextStep` 會逐欄比對:這裡自己算一份不同的數字會製造「狀態不合」誤報。
+        // ⚠️ **刻意不清 _materialMiracleExpiryTick**:剛用掉奇蹟之材的那幾幀狀態列還沒更新(要等下一個 StatusEffectList),
+        //    Active 是暫時的 false,清掉就把剛設好的 45 秒丟了;時鐘活過頭不會誤判:算剩餘步數的兩處都先過 Active 這一關。
+        ret.MaterialMiracleStepsLeft = predictedStep is { MaterialMiracleStepsLeft: > 0 } p && ret.MaterialMiracleActive
+            ? p.MaterialMiracleStepsLeft
+            : MaterialMiracleStepsLeftFromClock(ret.MaterialMiracleActive);
         ret.ObserveCounter = predictedStep?.ObserveCounter ?? 0;
 
         return ret;
     }
 
-    private static Dalamud.Game.ClientState.Statuses.Status? GetStatus(uint statusID) => Svc.ClientState.LocalPlayer?.StatusList.FirstOrDefault(s => s.StatusId == statusID);
+    /// <summary>
+    /// 奇蹟之材還剩幾個「模擬步數」—— 實機用 <c>Environment.TickCount64</c> 的真時鐘換算,
+    /// 而不是 <see cref="Simulator.MaterialMiracleDurationSteps"/> 那個步數估計值。
+    /// </summary>
+    /// <param name="buffActive">
+    /// 遊戲狀態列現在有沒有這個 buff。**它決定「有沒有」,時鐘只決定「還剩多少」**:
+    /// 遊戲說沒了就回 0;遊戲說還在就至少回 1(即使我們的時鐘已經跑完,或是根本沒有時鐘 ——
+    /// 例如製作到一半才載入外掛,buff 已經在身上了)。
+    /// </param>
+    private static int MaterialMiracleStepsLeftFromClock(bool buffActive)
+    {
+        if (!buffActive)
+            return 0;
+        if (_materialMiracleExpiryTick == 0)
+            return 1; // 沒有起算點:只知道還在,不知道剩多久 —— 給最保守的 1 步
+        var remainingMs = _materialMiracleExpiryTick - Environment.TickCount64;
+        if (remainingMs <= 0)
+            return 1; // 時鐘跑完了但遊戲說還在 —— 以遊戲為準
+        return Math.Max(1, (int)Math.Ceiling(remainingMs / 1000.0 / Simulator.MaterialMiracleSecondsPerStep));
+    }
+
+    private static Dalamud.Game.ClientState.Statuses.Status? GetStatus(uint statusID) => Svc.Objects.LocalPlayer?.StatusList.FirstOrDefault(s => s.StatusId == statusID);
+
+    // 這支 detour 內部例外的節流計時器(Environment.TickCount64 的絕對值)。
+    // ⚠️ 刻意**不用** Artisan.Autocraft.Throttler —— 那是全外掛共用的單一節流窗,
+    //    拿它記 log 會把製作動作的節流窗一起吃掉。
+    private static long _nextDetourErrorLogTick;
+
+    /// <summary>
+    /// detour 內部出受管理例外時的節流記錄(Information:要使用者回報的診斷)。
+    /// </summary>
+    private static void LogDetourException(string what, Exception ex)
+    {
+        if (Environment.TickCount64 < _nextDetourErrorLogTick)
+            return;
+        _nextDetourErrorLogTick = Environment.TickCount64 + 10000;
+        Svc.Log.Information(ex, $"[Artisan] {what} detour 內部發生例外,已略過這一次的狀態解讀,遊戲流程照常轉交(10 秒內不重複記錄)");
+    }
 
     private static void CraftingEventHandlerUpdateDetour(CraftingEventHandler* self, nint a2, nint a3, CraftingEventHandler.OperationId* payload)
     {
+        // fail-closed:我們自己的解讀邏輯全部包進 try。無論成功或擲例外,
+        // **一定照樣呼叫 Original 並讓遊戲流程繼續** —— 吞掉 Original 等於把製作流程整個弄斷。
+        // ⚠️ 這裡攔得到的是**受管理例外**(Lumina 查表失敗擲的 ArgumentOutOfRangeException、
+        //    NullReferenceException、特徵碼未解析的 InvalidOperationException 等)。
+        //    懸空指標造成的 AccessViolationException 是 corrupted-state exception,**攔不到**。
+        try
+        {
+            HandleCraftingEvent(payload);
+        }
+        catch (Exception ex)
+        {
+            LogDetourException("CraftingEventHandlerUpdate", ex);
+        }
+
+        // 這支 detour 只可能經由這個 hook 被呼叫，所以此處一定非 null。
+        _craftingEventHandlerUpdateHook!.OriginalDisposeSafe(self, a2, a3, payload);
+        Svc.Log.Verbose("CEH hook exit");
+    }
+
+    /// <summary>
+    /// CEH 訊息的解讀邏輯。**這裡不呼叫 Original** —— 呼叫者負責,所以本函式的任何提早 return
+    /// 或擲出的例外都不會讓遊戲少收到一次原函式。
+    /// </summary>
+    private static void HandleCraftingEvent(CraftingEventHandler.OperationId* payload)
+    {
+        if (payload == null)
+            return;
+
         Svc.Log.Verbose($"CEH hook: {*payload}");
         switch (*payload)
         {
@@ -608,7 +744,10 @@ public static unsafe class Crafting
                 Svc.Log.Debug($"Starting craft: recipe #{startPayload->RecipeId}, initial quality {startPayload->StartingQuality}, u8={startPayload->u8}");
                 if (CurRecipe != null)
                     Svc.Log.Error($"Unexpected non-null recipe when receiving {*payload} message");
-                CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRow(startPayload->RecipeId);
+                // 🔴 一定要用 GetRowOrDefault:Lumina 的 GetRow(uint) 對不存在的列**擲
+                //    ArgumentOutOfRangeException,永遠不回 null**(`?.` 只擋 sheet 為 null)。
+                //    用 GetRow 的話下面那個 null 檢查對「列不存在」是死碼。
+                CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRowOrDefault(startPayload->RecipeId);
                 if (CurRecipe == null)
                     Svc.Log.Error($"Failed to find recipe #{startPayload->RecipeId}");
 
@@ -648,10 +787,12 @@ public static unsafe class Crafting
                 // transition (ExecutingCraftingAction) will be cleared in a few frames, if this action did not complete the craft
                 // if there are any status changes (e.g. remaining step updates) and if craft is not complete, these will be updated by the next StatusEffectList packet, which might arrive with a delay
                 // because of that, we wait until statuses match prediction (or too much time passes) before transitioning to InProgress
-                if (CurState is not State.WaitAction or State.InProgress)
+                // 🔴 必須寫成 `not WaitAction and not InProgress`:`is not State.WaitAction or State.InProgress` 會被 C# 解析成
+                //    `(not WaitAction) or InProgress`,等價於 `!= WaitAction`,InProgress 會落進下面的錯誤路徑並跳過預測邏輯。
+                if (CurState is not State.WaitAction and not State.InProgress)
                 {
                     Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message"); //Probably an invalid state, so most data will not be set causing CTD
-                    _craftingEventHandlerUpdateHook.Original(self, a2, a3, payload);
+                    // 只跳過我們的解讀;Original 由呼叫端統一呼叫。
                     return;
                 }
                 if (_predictedNextStep != null)
@@ -662,11 +803,22 @@ public static unsafe class Crafting
                 var advancePayload = (CraftingEventHandler.AdvanceStep*)payload;
                 bool complete = advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.CompleteSuccess) || advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.CompleteFail);
                 Svc.Log.Debug($"AdvanceActionComplete: {complete}");
-                _predictedNextStep = Simulator.Execute(CurCraft!, CurStep!, advancePayload->LastActionId == (uint)Skills.MaterialMiracle ? Skills.MaterialMiracle : SkillActionMap.ActionToSkill(advancePayload->LastActionId), advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.LastActionSucceeded) ? 0 : 1, 1).Item2;
+                var usedMaterialMiracle = advancePayload->LastActionId == (uint)Skills.MaterialMiracle;
+                _predictedNextStep = Simulator.Execute(CurCraft!, CurStep!, usedMaterialMiracle ? Skills.MaterialMiracle : SkillActionMap.ActionToSkill(advancePayload->LastActionId), advancePayload->Flags.HasFlag(CraftingEventHandler.StepFlags.LastActionSucceeded) ? 0 : 1, 1).Item2;
                 _predictedNextStep.Condition = (Condition)(advancePayload->ConditionPlus1 - 1);
                 // fix up predicted state to match what game sends
                 if (complete)
                     _predictedNextStep.Index = CurStep.Index; // step is not advanced for final actions
+                // 奇蹟之材:模擬器剛剛用「步數估計」算了一份,這裡用真時鐘覆蓋掉。
+                // ⚠️ 起算點是 Advance 訊息抵達的瞬間,比伺服器真正套用 buff 晚 ⇒ 我們的時鐘一定「比遊戲晚收」,
+                //    所以 mmActive 一律先問狀態列:遊戲說沒了就是沒了。
+                // ⚠️ 唯一的例外是剛用掉的那一步:狀態列要等下一個 StatusEffectList 才更新,
+                //    所以「這一步就是奇蹟之材」本身要當成 active。
+                if (usedMaterialMiracle)
+                    _materialMiracleExpiryTick = Environment.TickCount64 + (long)(Simulator.MaterialMiracleDurationSeconds * 1000);
+                var mmActive = usedMaterialMiracle || GetStatus(Buffs.MaterialMiracle) != null;
+                _predictedNextStep.MaterialMiracleStepsLeft = MaterialMiracleStepsLeftFromClock(mmActive);
+                _predictedNextStep.MaterialMiracleActive = _predictedNextStep.MaterialMiracleStepsLeft > 0;
                 _predictedNextStep.Progress = Math.Min(_predictedNextStep.Progress, CurCraft.CraftProgress);
                 _predictedNextStep.Quality = Math.Min(_predictedNextStep.Quality, CurCraft.CraftQualityMax);
                 _predictedNextStep.Durability = Math.Max(_predictedNextStep.Durability, 0);
@@ -701,7 +853,8 @@ public static unsafe class Crafting
                 Svc.Log.Debug($"Starting quicksynth: recipe #{quickSynthPayload->RecipeId}, count {quickSynthPayload->MaxCount}");
                 if (CurRecipe != null)
                     Svc.Log.Error($"Unexpected non-null recipe when receiving {*payload} message");
-                CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRow(quickSynthPayload->RecipeId);
+                // 🔴 用 GetRowOrDefault:GetRow 對不存在的列擲例外、不回 null。
+                CurRecipe = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()?.GetRowOrDefault(quickSynthPayload->RecipeId);
                 if (CurRecipe == null)
                     Svc.Log.Error($"Failed to find recipe #{quickSynthPayload->RecipeId}");
                 break;
@@ -711,7 +864,5 @@ public static unsafe class Crafting
                     Svc.Log.Error($"Unexpected state {CurState} when receiving {*payload} message");
                 break;
         }
-        _craftingEventHandlerUpdateHook.Original(self, a2, a3, payload);
-        Svc.Log.Verbose("CEH hook exit");
     }
 }

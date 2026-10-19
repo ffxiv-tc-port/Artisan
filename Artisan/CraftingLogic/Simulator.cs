@@ -4,36 +4,106 @@ using Artisan.GameInterop.CSExt;
 using Artisan.RawInformation.Character;
 using Dalamud.Interface.Colors;
 using ECommons.DalamudServices;
+using ECommons.LanguageHelpers;
 using Lumina.Excel.Sheets;
 using System;
 using System.ComponentModel;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using Condition = Artisan.CraftingLogic.CraftData.Condition;
 
 namespace Artisan.CraftingLogic;
 
 public static class Simulator
 {
+    /// <summary>
+    /// 奇蹟之材(Action #41269)的持續時間,單位秒。
+    /// 硬編的理由:**技能時長不在 `Action` 表的欄位裡,在 `ActionTransient.Description` 的文字裡。**
+    /// 全外掛只有這一處硬編,底下兩個值都由它推導。
+    /// </summary>
+    public const float MaterialMiracleDurationSeconds = 45f;
+
+    /// <summary>
+    /// 一個製作步驟平均花幾秒。實機量到的平均值約 2.19 秒
+    /// (Artisan 自己的耗時模型是「長動畫 2.5 秒、短動畫 1.25 秒」,再加使用者設定的
+    /// AutoDelay + RecommendationDelay)。
+    /// ⚠️ 這個值會隨機器效能、網路延遲與使用者的延遲設定漂移 —— 所以**實機不用它**:
+    /// 實機在 <see cref="GameInterop.Crafting"/> 記 <c>Environment.TickCount64</c> 走真時鐘,
+    /// 這裡的換算只給「沒有時鐘」的前瞻模擬用。
+    /// </summary>
+    public const float MaterialMiracleSecondsPerStep = 2.19f;
+
+    /// <summary>
+    /// 奇蹟之材換算成「幾個動作」——**只給前瞻模擬用**,實機走真時鐘。
+    /// = ceil(45 秒 / 2.19 秒) = 21 步。
+    /// 估太長 = buff 到期那一步會對不上狀態;估太短 = 提早以為 buff 沒了。
+    /// 兩種都只造成「一次」狀態不合(之後 BuildStepState 會重新對齊),不會累積。
+    /// 🔴 這個常數只在使用者主動開啟奇蹟之材時才有作用(兩個相關設定預設都是關的)。
+    /// </summary>
+    public static readonly int MaterialMiracleDurationSteps =
+        (int)Math.Ceiling(MaterialMiracleDurationSeconds / MaterialMiracleSecondsPerStep);
+
+    /// <summary>
+    /// 奇蹟之材(Action #41269)生效期間的製作狀態池 —— **全外掛唯一的一份**。
+    /// 奇蹟之材是把狀態池**整個換掉**,不是在配方原本的池子上做過濾
+    ///   (連配方 `ConditionsFlag` 根本沒有「安定」的非專家配方也照樣擲得出來)。
+    /// ⚠️ **池內的機率是假設,不是查證**。
+    ///    這裡採**池內均勻分布(各 1/6)**。
+    ///    🔑 要推翻這個假設,需要的是**更多不同場次的實機樣本**,不是再讀一次資料表。
+    /// </summary>
+    public static readonly Condition[] MaterialMiracleConditionPool =
+    [
+        Condition.Good,     // 高品質:品質 ×1.5(宇宙配方 ×1.75)
+        Condition.Sturdy,   // 結實:耐久消耗減半
+        Condition.Centered, // 安定:成功率 +25%
+        Condition.Pliant,   // 高效:CP 消耗減半
+        Condition.Primed,   // 長持續:新掛上的回合制 buff +2 回合
+        Condition.Malleable,// 大進展:進度 ×1.5
+    ];
+
+    /// <summary>
+    /// 「不擲骰」的前瞻模擬(慣例是 <c>Execute(craft, step, action, 0, 1)</c>:動作必成功、
+    /// 狀態擲骰餵 1)在奇蹟之材生效期間要落在哪個狀態。
+    /// 「安定」是唯一一個**對進度/品質/耐久/CP/buff 時長全都是恆等變換**的成員。
+    /// ⚠️ 唯一還是會變的是「**依狀態名稱分支**」的解算器邏輯(例如 ExpertSolver 把
+    ///    通常/高品質/予兆/長持續 視為「可以觀察」的那一組;安定不在裡面)。這是刻意的:
+    ///    那些分支本來就該看到實機真的會出現的狀態。
+    /// </summary>
+    public const Condition MaterialMiracleDeterministicCondition = Condition.Centered;
+
+    /// <summary>
+    /// 奇蹟之材生效期間的狀態轉移:忽略配方自己的狀態表,改從
+    /// <see cref="MaterialMiracleConditionPool"/> 均勻抽一個(機率是假設,見該欄位註解)。
+    /// </summary>
+    public static Condition MaterialMiracleTransition(float roll)
+    {
+        var idx = (int)(roll * MaterialMiracleConditionPool.Length);
+        // (uint) 轉型同時擋住 roll >= 1(決定性慣例)與理論上的負值,不用兩個比較。
+        return (uint)idx < (uint)MaterialMiracleConditionPool.Length
+            ? MaterialMiracleConditionPool[idx]
+            : MaterialMiracleDeterministicCondition;
+    }
+
     public enum CraftStatus
     {
-        [Description("制作进行中")]
+        [Description("製作進行中")]
         InProgress,
-        [Description("因耐久不足导致制作失败")]
+        [Description("因耐久不足導致製作失敗")]
         FailedDurability,
-        [Description("因未达到最低品质导致制作失败")]
+        [Description("因未達到最低品質導致製作失敗")]
         FailedMinQuality,
-        [Description("已完成第一个品质突破点")]
+        [Description("已完成第一個品質突破點")]
         SucceededQ1,
-        [Description("已完成第二个品质突破点")]
+        [Description("已完成第二個品質突破點")]
         SucceededQ2,
-        [Description("已完成第三个品质突破点")]
+        [Description("已完成第三個品質突破點")]
         SucceededQ3,
-        [Description("已完成最高品质")]
+        [Description("已完成最高品質")]
         SucceededMaxQuality,
-        [Description("已完成，但未达到最高品质")]
+        [Description("已完成，但未達到最高品質")]
         SucceededSomeQuality,
-        [Description("已完成，不需要品质")]
+        [Description("已完成，不需要品質")]
         SucceededNoQualityReq,
 
         Count
@@ -63,7 +133,10 @@ public static class Simulator
             QuickInnoLeft = craft.Specialist ? 1 : 0,
             TrainedPerfectionAvailable = craft.StatLevel >= MinLevel(Skills.TrainedPerfection),
             Condition = Condition.Normal,
-            MaterialMiracleCharges = (uint)(craft.MissionHasMaterialMiracle ? 1 : 0),
+            // 任務可以給到不只 1 次(觀測過 3 次);寫死 1 會讓「一場製作可用多次」那個設定在模擬器裡**永遠無效而且靜默**:
+            // 勾了沒反應,因為 CanUseAction 卡在 Charges > 0。
+            // 🔴 MissionMaterialMiracleCharges 自帶 Max(1,…) 的 fail-safe,所以這裡的下界是 1。
+            MaterialMiracleCharges = craft.MissionHasMaterialMiracle ? Math.Max(1u, craft.MissionMaterialMiracleCharges) : 0,
         };
 
     public static CraftStatus Status(CraftState craft, StepState step)
@@ -106,49 +179,112 @@ public static class Simulator
         }
     }
 
-    public unsafe static string SimulatorResult(Recipe recipe, RecipeConfig config, CraftState craft, out Vector4 hintColor, bool assumeMaxStartingQuality = false)
+    /// <summary>
+    /// 配方頁的「這個配方做得起來嗎」提示。
+    ///
+    /// 🔑 結論(完成率／品質中位數)寫在列上,明細(樣本數、分位數、突破點分布、
+    /// 舊的單次決定性模擬)進 <paramref name="tooltip"/>。取樣還沒跑完時列上寫 <c>?</c> ——
+    /// 「不知道」本身要看得見,不能畫成 0。
+    /// </summary>
+    public unsafe static string SimulatorResult(Recipe recipe, RecipeConfig config, CraftState craft, out Vector4 hintColor, out string tooltip, bool assumeMaxStartingQuality = false)
     {
         hintColor = ImGuiColors.DalamudWhite;
-        var solver = CraftingProcessor.GetSolverForRecipe(config, craft).CreateSolver(craft);
-        if (solver == null) return "没有找到有效的解算器";
+        tooltip = "";
+        var solverDesc = CraftingProcessor.GetSolverForRecipe(config, craft);
+        var solver = solverDesc.CreateSolver(craft);
+        if (solver == null) return "沒有找到有效的解算器";
         var startingQuality = GetStartingQuality(recipe, assumeMaxStartingQuality, craft.StatLevel);
         var time = SolverUtils.EstimateCraftTime(solver, craft, startingQuality);
         var result = SolverUtils.SimulateSolverExecution(solver, craft, startingQuality);
         var status = result != null ? Status(craft, result) : CraftStatus.InProgress;
         var hq = result != null ? Calculations.GetHQChance((float)result.Quality / craft.CraftQualityMax * 100) : 0;
 
-        string solverHint = status switch
+        string deterministicHint = status switch
         {
-            CraftStatus.InProgress => "制作未完成（解算器在完成之前未返回任何步骤）。",
-            CraftStatus.FailedDurability => $"因耐久度不足导致制作失败。(进展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品质：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
-            CraftStatus.FailedMinQuality => $"制作完成并达到满品质，耗时（进展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品质：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
-            CraftStatus.SucceededQ1 => $"制作完成并达到第一个品质门槛，耗时 {time.TotalSeconds:f0} 秒。",
-            CraftStatus.SucceededQ2 => $"制作完成并达到第二个品质门槛，耗时 {time.TotalSeconds:f0} 秒。",
-            CraftStatus.SucceededQ3 => $"制作完成并达到第三个品质门槛，耗时 {time.TotalSeconds:f0} 秒！",
-            CraftStatus.SucceededMaxQuality => $"制作完成并达到满品质，耗时 {time.TotalSeconds:f0} 秒！",
-            CraftStatus.SucceededSomeQuality => $"制作完成但未达到最大品质（{hq}%），耗时 {time.TotalSeconds:f0} 秒。",
-            CraftStatus.SucceededNoQualityReq => $"制作完成，无需品质，耗时 {time.TotalSeconds:f0} 秒！",
-            CraftStatus.Count => "你不应该看到这个，请报告问题。",
-            _ => "你不应该看到这个，请报告问题。",
+            CraftStatus.InProgress => "製作未完成（解算器在完成之前未返回任何步驟）。",
+            CraftStatus.FailedDurability => $"因耐久度不足導致製作失敗。(進展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品質：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
+            CraftStatus.FailedMinQuality => $"製作完成並達到滿品質，耗時（進展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品質：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
+            CraftStatus.SucceededQ1 => $"製作完成並達到第一個品質門檻，耗時 {time.TotalSeconds:f0} 秒。",
+            CraftStatus.SucceededQ2 => $"製作完成並達到第二個品質門檻，耗時 {time.TotalSeconds:f0} 秒。",
+            CraftStatus.SucceededQ3 => $"製作完成並達到第三個品質門檻，耗時 {time.TotalSeconds:f0} 秒！",
+            CraftStatus.SucceededMaxQuality => $"製作完成並達到滿品質，耗時 {time.TotalSeconds:f0} 秒！",
+            CraftStatus.SucceededSomeQuality => $"製作完成但未達到最大品質（{hq}%），耗時 {time.TotalSeconds:f0} 秒。",
+            CraftStatus.SucceededNoQualityReq => $"製作完成，無需品質，耗時 {time.TotalSeconds:f0} 秒！",
+            CraftStatus.Count => "你不應該看到這個，請報告問題。",
+            _ => "你不應該看到這個，請報告問題。",
         };
 
+        // 🔴 上面那句是**單次決定性模擬**的結論:擲骰寫死成 (0, 1) = 動作必成功、狀態永遠回到「通常」,
+        //    同時吃到一個樂觀假設與一個悲觀假設,對專家配方偏差很大。所以它只當 tooltip 裡的參考值,列上用真的跑 N 次的分布。
+        // 📌 把這句話塞進快取鍵是刻意的:它每一幀都重算,而且內含解算器實際跑出來的
+        //    進度/品質/耗時 —— 使用者改了巨集之類「不在鍵裡的東西」時,它會跟著變,
+        //    等於免費得到一個失效偵測。
+        var qualityMatters = craft.CraftQualityMax > 0 && (craft.CraftHQ || craft.CraftCollectible || craft.CraftExpert);
+        // 專家/收藏品的變異大,樣本要多一點;一般配方少一點就夠,免得白花時間。
+        var target = craft.CraftExpert || craft.CraftCollectible ? 200 : 60;
+        var key = $"{recipe.RowId}|{solverDesc.Def?.GetType().FullName}|{solverDesc.Flavour}|{solverDesc.Name}|" +
+                  $"{craft.StatCraftsmanship}/{craft.StatControl}/{craft.StatCP}/{craft.StatLevel}|" +
+                  $"{craft.Specialist}{craft.UnlockedManipulation}|{startingQuality}|{deterministicHint}";
+        var dist = SolverHintSampler.Sample(key, solver, craft, startingQuality, target);
 
-        hintColor = status switch
+        var medianQuality = dist.QualityQuantile(0.5);
+        string solverHint;
+        if (!dist.Done)
         {
-            CraftStatus.InProgress => ImGuiColors.DalamudWhite,
-            CraftStatus.FailedDurability => ImGuiColors.DalamudRed,
-            CraftStatus.FailedMinQuality => ImGuiColors.DalamudRed,
-            CraftStatus.SucceededQ1 => new Vector4(0.7f, 0.5f, 0.5f, 1f),
-            CraftStatus.SucceededQ2 => new Vector4(0.5f, 0.5f, 0.7f, 1f),
-            CraftStatus.SucceededQ3 => new Vector4(0.5f, 1f, 0.5f, 1f),
-            CraftStatus.SucceededMaxQuality => ImGuiColors.ParsedGreen,
-            CraftStatus.SucceededSomeQuality => new Vector4(1 - (hq / 100f), 0 + (hq / 100f), 1 - (hq / 100f), 255),
-            CraftStatus.SucceededNoQualityReq => ImGuiColors.ParsedGreen,
-            CraftStatus.Count => ImGuiColors.DalamudWhite,
-            _ => ImGuiColors.DalamudWhite,
-        };
+            // ⚠️ 取樣還沒完的時候不要把未知畫成 0 —— 用 ? 標明「還不知道」。
+            solverHint = $"完成率 ?　品質中位 ?　（取樣中 {dist.Samples}/{dist.Target}，預估耗時 {time.TotalSeconds:f0} 秒）";
+        }
+        else if (dist.Completed == 0)
+        {
+            solverHint = $"完成率 0%　做不完（{dist.Samples} 次模擬全部失敗）";
+        }
+        else if (qualityMatters)
+        {
+            solverHint = $"完成率 {dist.CompletionPct:f0}%　品質中位 {medianQuality:f0}%　預估耗時 {time.TotalSeconds:f0} 秒";
+        }
+        else
+        {
+            solverHint = $"完成率 {dist.CompletionPct:f0}%　（此配方不看品質）　預估耗時 {time.TotalSeconds:f0} 秒";
+        }
 
+        var medianHQ = medianQuality >= 0 ? Calculations.GetHQChance((float)medianQuality) : 0;
+        hintColor = !dist.Done ? ImGuiColors.DalamudGrey
+            : dist.CompletionPct < 50 ? ImGuiColors.DalamudRed
+            : dist.CompletionPct < 95 ? ImGuiColors.DalamudOrange
+            : !qualityMatters || medianQuality >= 99.5 ? ImGuiColors.ParsedGreen
+            : new Vector4(1 - (medianHQ / 100f), 0 + (medianHQ / 100f), 1 - (medianHQ / 100f), 1f);
+
+        tooltip = BuildHintTooltip(craft, dist, deterministicHint, qualityMatters);
         return solverHint;
+    }
+
+    private static string BuildHintTooltip(CraftState craft, SolverHintSampler.Result dist, string deterministicHint, bool qualityMatters)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"隨機模擬 {dist.Samples} 次（動作成敗與製作狀態都照機率擲骰）");
+        if (!dist.Done)
+            sb.AppendLine($"目標 {dist.Target} 次，還在取樣中……");
+        sb.AppendLine($"完成率：{dist.CompletionPct:f1}%（{dist.Samples} 次裡有 {dist.Completed} 次做完）");
+
+        if (dist.Completed > 0 && qualityMatters)
+        {
+            sb.AppendLine();
+            sb.AppendLine("品質達成率分布（只計做完的那幾次）：");
+            sb.AppendLine($"　最差 10%：{dist.QualityQuantile(0.1):f0}%");
+            sb.AppendLine($"　中位數：　{dist.QualityQuantile(0.5):f0}%");
+            sb.AppendLine($"　最好 10%：{dist.QualityQuantile(0.9):f0}%");
+        }
+
+        if ((craft.CraftCollectible || craft.CraftExpert) && craft.CraftQualityMin1 > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"打到第幾個突破點：第一 {dist.TierPct(1):f0}%／第二 {dist.TierPct(2):f0}%／第三 {dist.TierPct(3):f0}%");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("單次決定性模擬（舊版提示；假設動作必成功、狀態永遠是「通常」，兩邊都不準）：");
+        sb.Append($"　{deterministicHint}");
+        return sb.ToString();
     }
 
     public unsafe static int GetStartingQuality(Recipe recipe, bool assumeMaxStartingQuality, int characterLevel)
@@ -214,7 +350,15 @@ public static class Simulator
         next.TrainedPerfectionActive = action == Skills.TrainedPerfection || (step.TrainedPerfectionActive && !HasDurabilityCost(action));
         next.TrainedPerfectionAvailable = step.TrainedPerfectionAvailable && action != Skills.TrainedPerfection;
         next.MaterialMiracleCharges = action == Skills.MaterialMiracle ? step.MaterialMiracleCharges - 1 : step.MaterialMiracleCharges;
-        next.MaterialMiracleActive = step.MaterialMiracleActive; //This is a timed buff, can't really use this in the simulator, just copy the real result
+        // 奇蹟之材是實時 45 秒的 buff,要計時:直接把舊值抄過來的話,用掉的那一步預測仍是 false 而遊戲已經給了 buff
+        // (每次使用都對不上狀態,Crafting.Update 會等到 _predictionDeadline 才認賠),前瞻模擬裡也永遠是 false;
+        // 直接設成 true 則會永遠擋住再次使用。
+        // 📌 這裡是**前瞻模擬**的路,沒有時鐘只能用步數估。實機那條路(Crafting.BuildStepState 與
+        //    CraftingEventHandlerUpdateDetour)會用 Environment.TickCount64 的真時鐘覆蓋掉這個估計值。
+        next.MaterialMiracleStepsLeft = action == Skills.MaterialMiracle
+            ? MaterialMiracleDurationSteps
+            : Math.Max(0, step.MaterialMiracleStepsLeft - 1); // 實時 buff:連不佔回合的自由動作也照樣耗掉時間
+        next.MaterialMiracleActive = next.MaterialMiracleStepsLeft > 0;
         next.ObserveCounter = action == Skills.Observe ? step.ObserveCounter + 1 : 0;
 
         if (step.FinalAppraisalLeft > 0 && next.Progress >= craft.CraftProgress)
@@ -238,7 +382,11 @@ public static class Simulator
             next.Durability = Math.Min(craft.CraftDurability, next.Durability + repair);
         }
 
-        next.Condition = action is Skills.FinalAppraisal or Skills.HeartAndSoul ? step.Condition : GetNextCondition(craft, step, nextStateRoll);
+        // free actions do not advance the turn, so the condition does not re-roll either
+        // (careful observation is the exception - re-rolling the condition is its entire purpose)
+        // 🔑 狀態池要看**轉移後**的 next.MaterialMiracleActive,不是轉移前的 step。
+        //  ⇒ 兩個方向都是「該步顯示的狀態,對應該步的 buff 狀態」,這是自洽的那一個選擇。
+        next.Condition = action is Skills.FinalAppraisal or Skills.HeartAndSoul or Skills.QuickInnovation ? step.Condition : GetNextCondition(craft, step, nextStateRoll, next.MaterialMiracleActive);
 
         return (success ? ExecuteResult.Succeeded : ExecuteResult.Failed, next);
     }
@@ -298,21 +446,33 @@ public static class Simulator
     {
         if (!CanUseAction(craft, step, action))
         {
+            // Externalised through the normal .Loc() path (LanguageChineseTraditional.ini). Action names to keep straight:
+            //   TrainedPerfection is 工匠的絕技 (CraftAction #100475); 工匠的神技 is TrainedFinesse (#100435).
+            //   HastyTouch is 倉促 (#100355), not 倉促製作.
+            //   MaterialMiracle is 奇蹟之材 (Action #41269), not 素材奇蹟.
             reason = action switch
             {
-                Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade => "当前状态不是良好/绝佳，或未激活专心致志",
-                Skills.PrudentSynthesis or Skills.PrudentTouch => "你拥有俭约状态",
-                Skills.MuscleMemory or Skills.Reflect => "你不在制作的第一步",
-                Skills.TrainedFinesse => "你的内静层数不足10层",
-                Skills.ByregotsBlessing => "你的内静层数为0",
-                Skills.TrainedEye => craft.CraftExpert ? "该配方为专家配方" : step.Index != 1 ? "你不在制作的第一步" : "配方等级未比你当前等级低10级或以上",
-                Skills.Manipulation => "你尚未解锁掌握",
-                Skills.CarefulObservation => craft.Specialist ? Crafting.DelineationCount() == 0 ? "你的能工巧匠图纸已用尽。" : $"你已使用设计变动3次" : "你不是专家",
-                Skills.HeartAndSoul => craft.Specialist ? Crafting.DelineationCount() == 0 ? "你的能工巧匠图纸已用尽。" : "本次制作已无法再次使用专心致志" : "你不是专家",
-                Skills.TrainedPerfection => "你已使用过工匠的神技",
-                Skills.DaringTouch => "仓促制作未成功",
-                Skills.QuickInnovation => !craft.Specialist ? "你不是专家" : Crafting.DelineationCount() == 0 ? "你的能工巧匠图纸已用尽。" : step.QuickInnoLeft == 0 ? "本次制作已无法再次使用快速改革" : step.InnovationLeft > 0 ? "你已有改革状态" : "",
-                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "本次制作无法使用素材奇迹" : step.MaterialMiracleActive ? "你已激活素材奇迹" : step.MaterialMiracleCharges == 0 ? "你已没有剩余的素材奇迹次数" : ""
+                Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade => "Condition is not Good/Excellent or Heart and Soul is not active".Loc(),
+                Skills.PrudentSynthesis or Skills.PrudentTouch => "You have a Waste Not buff".Loc(),
+                Skills.MuscleMemory or Skills.Reflect => SharedText.NotOnFirstStep.Loc(),
+                Skills.TrainedFinesse => "You have less than 10 Inner Quiet stacks".Loc(),
+                Skills.ByregotsBlessing => "You have 0 Inner Quiet stacks".Loc(),
+                Skills.TrainedEye => craft.CraftExpert ? "Craft is expert".Loc() : step.Index != 1 ? SharedText.NotOnFirstStep.Loc() : "Craft is not 10 or more levels lower than your current level".Loc(),
+                Skills.Manipulation => "You haven't unlocked Manipulation".Loc(),
+                Skills.CarefulObservation => craft.Specialist ? Crafting.DelineationCount() == 0 ? "You have run out of Delineations.".Loc() : "You already used Careful Observation 3 times".Loc() : "You are not a specialist".Loc(),
+                Skills.HeartAndSoul => craft.Specialist ? Crafting.DelineationCount() == 0 ? "You have run out of Delineations.".Loc() : "You don't have Heart & Soul available anymore for this craft".Loc() : "You are not a specialist".Loc(),
+                Skills.TrainedPerfection => "You have already used Trained Perfection".Loc(),
+                Skills.DaringTouch => "Hasty Touch did not succeed".Loc(),
+                Skills.QuickInnovation => !craft.Specialist ? "You are not a specialist".Loc() : Crafting.DelineationCount() == 0 ? "You have run out of Delineations.".Loc() : step.QuickInnoLeft == 0 ? "You don't have Quick Innovation available anymore for this craft".Loc() : step.InnovationLeft > 0 ? "You have an Innovation buff".Loc() : "",
+                Skills.MaterialMiracle => !craft.MissionHasMaterialMiracle ? "This craft cannot use Material Miracle".Loc() : step.MaterialMiracleActive ? "You already have Material Miracle active".Loc() : step.MaterialMiracleCharges == 0 ? "You have no more Material Miracle charges".Loc() : "",
+                // CanUseAction also returns false for "level too low" and "not enough CP", which can happen for
+                // ANY action, not just the ones enumerated above. Without this arm the switch expression throws
+                // SwitchExpressionException out of the OnCraftStarted/OnCraftAdvanced event handlers.
+                _ => step.RemainingCP < GetCPCost(step, action)
+                        ? "You have not enough CP.".Loc()
+                        : craft.StatLevel < MinLevel(action)
+                            ? "Your level is too low for this action".Loc()
+                            : "",
             };
 
             return true;
@@ -321,7 +481,12 @@ public static class Simulator
         return false;
     }
 
-    public static bool SkipUpdates(Skills action) => action is Skills.CarefulObservation or Skills.FinalAppraisal or Skills.HeartAndSoul or Skills.MaterialMiracle;
+    // "free" actions: using them does not consume a craft step, so the step index does not advance,
+    // no turn-based buff ticks down, and manipulation does not repair.
+    // Verified against the game's own action descriptions (CraftAction sheet, "使用本技能不會消耗一次作業時間"):
+    // the only in-craft actions carrying that clause are 設計變動 (CarefulObservation), 專心致志 (HeartAndSoul),
+    // 快速改革 (QuickInnovation) and 最終確認 (FinalAppraisal, Action sheet #19012).
+    public static bool SkipUpdates(Skills action) => action is Skills.CarefulObservation or Skills.FinalAppraisal or Skills.HeartAndSoul or Skills.MaterialMiracle or Skills.QuickInnovation;
     public static bool ConsumeHeartAndSoul(Skills action) => action is Skills.IntensiveSynthesis or Skills.PreciseTouch or Skills.TricksOfTrade;
 
     public static double GetSuccessRate(StepState step, Skills action)
@@ -449,7 +614,6 @@ public static class Simulator
             return 0;
 
         float buffMod = (1 + (step.GreatStridesLeft > 0 ? 1 : 0) + (step.InnovationLeft > 0 ? 0.5f : 0)) * (100 + 10 * step.IQStacks) / 100;
-        float effPotency = potency * buffMod;
 
         float condMod = step.Condition switch
         {
@@ -458,7 +622,11 @@ public static class Simulator
             Condition.Poor => 0.5f,
             _ => 1
         };
-        return (int)(BaseQuality(craft) * condMod * effPotency / 100);
+        // note: the multiplication order matters. buffMod is not exactly representable as a float for most
+        // inner quiet stacks (e.g. IQ=3 yields 1.29999995 rather than 1.3), and folding potency in first
+        // (potency * buffMod) rounds that deficit away, producing an off-by-one against the game.
+        // applying buffMod to the base quality first reproduces the game exactly.
+        return (int)(BaseQuality(craft) * buffMod * condMod * potency / 100);
     }
 
     public static bool WillFinishCraft(CraftState craft, StepState step, Skills action) => step.FinalAppraisalLeft == 0 && step.Progress + CalculateProgress(craft, step, action) >= craft.CraftProgress;
@@ -476,15 +644,36 @@ public static class Simulator
         return Skills.BasicTouch;
     }
 
-    public static Condition GetNextCondition(CraftState craft, StepState step, float roll) => step.Condition switch
+    /// <param name="step">**轉移前**的那一步(讀的是它的 <see cref="StepState.Condition"/>)。</param>
+    /// <remarks>
+    /// 這個多載用 <paramref name="step"/> 自己的奇蹟之材狀態。
+    /// <see cref="Execute"/> 走的是四參數版,傳的是**轉移後**那一步的狀態 —— 差別見該處註解。
+    /// </remarks>
+    public static Condition GetNextCondition(CraftState craft, StepState step, float roll)
+        => GetNextCondition(craft, step, roll, step.MaterialMiracleActive);
+
+    /// <summary>
+    /// 下一步的製作狀態。
+    /// 🔴 <paramref name="materialMiracleActive"/> 為真時,配方自己的狀態表**整個不算數** ——
+    /// 奇蹟之材期間只會出現 <see cref="MaterialMiracleConditionPool"/> 那六種。
+    /// ⚠️ 這個分支**壓過**下面那組強制轉移,包括「最高品質 → 低品質」與
+    ///    「非專家配方的 高品質 → 通常」。
+    /// </summary>
+    public static Condition GetNextCondition(CraftState craft, StepState step, float roll, bool materialMiracleActive)
     {
-        Condition.Normal => GetTransitionByRoll(craft, step, roll),
-        Condition.Good => craft.CraftExpert ? GetTransitionByRoll(craft, step, roll) : Condition.Normal,
-        Condition.Excellent => Condition.Poor,
-        Condition.Poor => Condition.Normal,
-        Condition.GoodOmen => Condition.Good,
-        _ => GetTransitionByRoll(craft, step, roll)
-    };
+        if (materialMiracleActive)
+            return MaterialMiracleTransition(roll);
+
+        return step.Condition switch
+        {
+            Condition.Normal => GetTransitionByRoll(craft, step, roll),
+            Condition.Good => craft.CraftExpert ? GetTransitionByRoll(craft, step, roll) : Condition.Normal,
+            Condition.Excellent => Condition.Poor,
+            Condition.Poor => Condition.Normal,
+            Condition.GoodOmen => Condition.Good,
+            _ => GetTransitionByRoll(craft, step, roll)
+        };
+    }
 
     public static Condition GetTransitionByRoll(CraftState craft, StepState step, float roll)
     {

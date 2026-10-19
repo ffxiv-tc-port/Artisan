@@ -15,15 +15,45 @@ namespace Artisan.RawInformation.Character
     {
         public static unsafe void UpdateCharaStats()
         {
-            if (Svc.ClientState.LocalPlayer is null) return;
+            // 部隊加成的包裝指著本機角色的狀態表：角色不在（登出、換區）就放掉，不留指向舊角色的包裝；其餘欄位照舊保留上一次的值。
+            if (Svc.Objects.LocalPlayer is null)
+            {
+                FCCraftsmanshipbuff = null;
+                return;
+            }
 
-            JobID = (Job)(Svc.ClientState.LocalPlayer?.ClassJob.Value.RowId ?? 0);
-            CharacterLevel = Svc.ClientState.LocalPlayer?.Level;
-            CurrentCP = Svc.ClientState.LocalPlayer.CurrentCp;
-            MaxCP = Svc.ClientState.LocalPlayer.MaxCp;
+            JobID = (Job)(Svc.Objects.LocalPlayer?.ClassJob.Value.RowId ?? 0);
+            CharacterLevel = Svc.Objects.LocalPlayer?.Level;
+            CurrentCP = Svc.Objects.LocalPlayer.CurrentCp;
+            MaxCP = Svc.Objects.LocalPlayer.MaxCp;
             Craftsmanship = PlayerState.Instance()->Attributes[70];
             Control = PlayerState.Instance()->Attributes[71];
-            FCCraftsmanshipbuff = Svc.ClientState.LocalPlayer?.StatusList.FirstOrDefault(x => x.StatusId == 356);
+            FCCraftsmanshipbuff = FindFcCraftsmanshipBuff(Svc.Objects.LocalPlayer);
+        }
+
+        /// <summary>
+        /// 部隊「作業精度提高」(狀態 356)。與 <c>player.StatusList.FirstOrDefault(x =&gt; x.StatusId == 356)</c> 同一個答案:
+        /// 有效格數內第一個 356,沒有就 null。
+        /// </summary>
+        /// <remarks>
+        /// 每幀路徑:只有符合的那一格才建包裝,不建 StatusList、列舉器與其餘各格的包裝。
+        /// 位址是本幀剛從物件表拿到的,取狀態表走的是 Dalamud <c>BattleChara.StatusList</c> 內部同一個呼叫;不跨幀保存。
+        /// </remarks>
+        private static unsafe Dalamud.Game.ClientState.Statuses.Status? FindFcCraftsmanshipBuff(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter? player)
+        {
+            if (player is null || player.Address == nint.Zero) return null;
+
+            var statuses = ((FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address)->GetStatusManager();
+            if (statuses == null) return null;
+
+            var slots = statuses->Status;
+            for (var i = 0; i < statuses->NumValidStatuses; i++)
+            {
+                if (slots[i].StatusId == 356)
+                    return StatusList.CreateStatusReference((nint)System.Runtime.CompilerServices.Unsafe.AsPointer(ref slots[i]));
+            }
+
+            return null;
         }
 
         public static byte? CharacterLevel;
@@ -40,7 +70,58 @@ namespace Artisan.RawInformation.Character
 
         public static unsafe Dalamud.Game.ClientState.Statuses.Status? FCCraftsmanshipbuff;
 
-        public static unsafe int JobLevel(Job job) => PlayerState.Instance()->ClassJobLevels[Svc.Data.GetExcelSheet<ClassJob>()?.GetRow((uint)job).ExpArrayIndex ?? 0];
+        /// <summary>
+        /// 取得指定職業的等級。查無此列、或該職業沒有經驗值欄位時回 0(未知)。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 <c>ExpArrayIndex</c> 是 <c>sbyte</c>,而<b>第 0 列(冒險者/ADV)是 -1</b>;
+        /// <c>ClassJobLevels</c> 是 <c>FixedSizeArray35</c>,索引 -1 會擲
+        /// <see cref="IndexOutOfRangeException"/>。
+        /// 🔴 退路回 0 而不是索引 0:第 0 格是格鬥士/武僧(PGL/MNK)的等級,
+        /// 拿它當未知職業的等級是<b>安靜的錯答案</b>。
+        /// 取不到時回 <c>0</c> —— 與本方法本來的「未知 ⇒ 0」契約同值。
+        /// </remarks>
+        public static int JobLevel(Job job)
+            => global::Artisan.IPC.IpcFrameworkGate.Get("CharacterInfo.JobLevel", job, static j => JobLevelCore(j), 0);
+
+        /// <summary><b>只能在遊戲主執行緒上呼叫</b>,由 <see cref="JobLevel"/> 那一層的閘門保證。</summary>
+        private static unsafe int JobLevelCore(Job job)
+        {
+            int expArrayIndex = Svc.Data.GetExcelSheet<ClassJob>()?.GetRowOrDefault((uint)job)?.ExpArrayIndex ?? -1;
+
+            var levels = PlayerState.Instance()->ClassJobLevels;
+            if (expArrayIndex < 0 || expArrayIndex >= levels.Length)
+            {
+                LogBadExpArrayIndexOnce(job, expArrayIndex, levels.Length);
+                return 0;
+            }
+
+            return levels[expArrayIndex];
+        }
+
+        private static readonly HashSet<Job> LoggedBadExpArrayIndex = new();
+
+        /// <summary>
+        /// 同一個 <see cref="Job"/> 只寫一行 <c>Information</c>,之後靜默。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 用鎖而不是裸 <see cref="HashSet{T}"/>:<see cref="JobLevel"/> 的呼叫點同時有
+        /// framework 路徑(<c>Crafting</c> 狀態機)與 <c>RepairManager</c>,並行插入的失敗形式
+        /// 是集合本身壞掉,不是「拿到舊值」。只有失敗路徑會進到這裡,鎖是無競爭的。
+        /// 🔴 <c>Svc.Log</c> 的呼叫刻意放在鎖外(鎖內不做 I/O);
+        /// 用 <c>Information</c> 而不是 <c>DuoLog</c>:後者每個等級都會無條件洗使用者的聊天視窗。
+        /// </remarks>
+        private static void LogBadExpArrayIndexOnce(Job job, int expArrayIndex, int arrayLength)
+        {
+            lock (LoggedBadExpArrayIndex)
+            {
+                if (!LoggedBadExpArrayIndex.Add(job))
+                    return;
+            }
+
+            Svc.Log.Information($"[CharacterInfo] ClassJob {(uint)job} ({job}) 的 ExpArrayIndex 是 {expArrayIndex}," +
+                                $"不在 0..{arrayLength - 1} 內(冒險者/ADV 是 -1);等級以 0 回報。");
+        }
 
         internal static bool IsManipulationUnlocked(Job job) =>  job switch
         {
@@ -112,8 +193,9 @@ namespace Artisan.RawInformation.Character
     internal unsafe class RecipeInformation : IDisposable
     {
         delegate byte HasItemBeenCraftedDelegate(uint recipe);
-        [Signature("40 53 48 83 EC 20 8B D9 81 F9")]
-        HasItemBeenCraftedDelegate GetIsGatheringItemGathered = null!;
+        // 明寫 Fallible：對不上時欄位留 null、插件照常載入（預設是不可空欄位＝整個插件載入失敗）。
+        [Signature("40 53 48 83 EC 20 8B D9 81 F9", Fallibility = Fallibility.Fallible)]
+        HasItemBeenCraftedDelegate? GetIsGatheringItemGathered = null;
 
         private List<uint> Uncompletables = new List<uint>()
         {
@@ -140,7 +222,8 @@ namespace Artisan.RawInformation.Character
             if (!LuminaSheets.RecipeSheet.ContainsKey(recipe)) return false;
             if (LuminaSheets.RecipeSheet[recipe].SecretRecipeBook.RowId > 0) return true;
 
-            return GetIsGatheringItemGathered(recipe) != 0;
+            // 查不到就當「沒做過」：自動製作只拿 true 來改走簡易製作，false 是照常一般製作。
+            return GetIsGatheringItemGathered is { } isCrafted && isCrafted(recipe) != 0;
         }
 
         public void Dispose()
@@ -152,6 +235,8 @@ namespace Artisan.RawInformation.Character
         {
             Svc.Hook.InitializeFromAttributes(this);
 
+            if (GetIsGatheringItemGathered == null)
+                Svc.Log.Warning("[Artisan] 特徵碼對不上（多半是遊戲改版）：HasItemBeenCrafted（40 53 48 83 EC 20 8B D9 81 F9）。查不到「這個配方做過沒」，一律當成沒做過：耐力模式與清單的簡易製作改走一般製作，清單產生器的「已製作／未製作」篩選不準。");
         }
     }
 }

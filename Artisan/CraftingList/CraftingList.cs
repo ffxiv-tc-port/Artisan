@@ -1,6 +1,8 @@
 ﻿using Artisan.Autocraft;
+using Artisan.CraftingLogic;
 using Artisan.GameInterop;
 using Artisan.GameInterop.CSExt;
+using Artisan.IPC;
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using Dalamud.Game.ClientState.Conditions;
@@ -19,6 +21,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -85,7 +88,16 @@ namespace Artisan.CraftingLists
     public class ListItemOptions
     {
         public bool NQOnly { get; set; }
-        // TODO: custom RecipeConfig?
+
+        // 這一份清單裡這一項專用的消耗品設定。null ＝ 沿用全域 P.Config.RecipeConfigs[配方]。
+        // 🔴 契約：只有食物／藥品／筆記這類消耗品欄位會被讀，解算器一律仍走全域設定
+        //    （CraftingProcessor.GetSolverForRecipe 自己去 RecipeConfigs 取，不看這裡）。
+        public RecipeConfig? Override { get; set; }
+
+        // 唯讀計算屬性必須擋序列化：Newtonsoft 的預設 resolver 會把它寫進設定檔，
+        // 而沒有 setter 的鍵讀不回來（見 RecipeConfig 那一組 [JsonIgnore] 的同一個理由）。
+        [JsonIgnore]
+        public bool HasOverride => Override != null;
 
         public bool Skipping { get; set; }
     }
@@ -94,13 +106,43 @@ namespace Artisan.CraftingLists
     {
         public static int CurrentIndex;
 
-        public static bool Paused { get; set; } = false;
+        private static bool paused;
+
+        public static bool Paused
+        {
+            get => paused;
+            set
+            {
+                if (paused != value)
+                    PausedChanges++;
+                paused = value;
+            }
+        }
+
+        /// <summary><see cref="Paused"/> 實際改變的次數；<see cref="DutyPause"/> 用它判斷待恢復期間清單有沒有被動過。</summary>
+        internal static int PausedChanges { get; private set; }
 
         public static Dictionary<uint, int>? Materials;
 
         public static TaskManager CLTM = new();
 
         public static TimeSpan ListEndTime = default(TimeSpan);
+
+        /// <summary>
+        /// 正在跑的清單項對這個配方指定的消耗品覆寫；不在跑清單、或跑的不是這個配方時回 null。
+        /// </summary>
+        /// <remarks>
+        /// 🔴 拿消耗品設定的路徑一律寫成「這支 ?? 全域 RecipeConfigs」——
+        /// 漏掉一條路徑的失敗形式是靜默吃錯食物，不會有任何訊息。
+        /// 📌 覆寫刻意只管消耗品：解算器仍由全域設定決定。
+        /// </remarks>
+        public static RecipeConfig? ActiveListItemOverride(uint recipeId)
+        {
+            if (!CraftingListUI.Processing || CraftingListUI.CurrentProcessedItem != recipeId)
+                return null;
+
+            return CraftingListUI.selectedList?.Recipes.FirstOrDefault(x => x.ID == recipeId)?.ListItemOptions?.Override;
+        }
 
         public static void SetID(this NewCraftingList list)
         {
@@ -117,14 +159,14 @@ namespace Artisan.CraftingLists
         public static Dictionary<uint, int> ListMaterials(this NewCraftingList list)
         {
             var output = new Dictionary<uint, int>();
-            foreach (var item in list.Recipes)
+            // This runs on a background thread (called from IngredientHelpers.GenerateList while the list
+            // editor keeps drawing), and the editor can add/remove/skip recipes on list.Recipes concurrently.
+            // Iterate a snapshot so a structural change can't throw "Collection was modified" here, and don't
+            // mutate config objects or call P.Config.Save() from this thread (?. covers the rare legacy-null
+            // ListItemOptions without writing back).
+            foreach (var item in list.Recipes.ToArray())
             {
-                if (item.ListItemOptions == null)
-                {
-                    item.ListItemOptions = new ListItemOptions();
-                    P.Config.Save();
-                }
-                if (item.ListItemOptions.Skipping || item.Quantity == 0) continue;
+                if (item.ListItemOptions?.Skipping == true || item.Quantity == 0) continue;
                 Recipe r = LuminaSheets.RecipeSheet[item.ID];
                 CraftingListHelpers.AddRecipeIngredientsToList(r, ref output, false, list);
             }
@@ -166,6 +208,21 @@ namespace Artisan.CraftingLists
             return TryGetAddonByName<AddonRecipeNote>("RecipeNote", out var addon) && addon->AtkUnitBase.IsVisible && Operations.GetSelectedRecipeEntry() != null;
         }
 
+        /// <summary>
+        /// 製作手帳開著、而且選著的就是 <paramref name="recipe"/>。只看「開著」的話，
+        /// 視窗停在上一個配方時開始製作會做到上一個配方（選取還在進行）。
+        /// 宇宙配方（Number == 0）的選取不寫 RecipeList，維持只看開著。
+        /// </summary>
+        public static unsafe bool RecipeWindowShows(Recipe recipe)
+        {
+            if (!RecipeWindowOpen())
+                return false;
+            if (recipe.Number == 0)
+                return true;
+            var re = Operations.GetSelectedRecipeEntry();
+            return re != null && re->RecipeId == recipe.RowId;
+        }
+
         public static unsafe bool CosmicLogOpen()
         {
             return TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmicaddon) && cosmicaddon->IsVisible;
@@ -191,6 +248,40 @@ namespace Artisan.CraftingLists
             if (recipe.RowId == 0) return false;
 
             return CraftingListUI.CheckForIngredients(recipe, false);
+        }
+
+        private static DateTime _lastConsumableLog = DateTime.MinValue;
+        private static DateTime _lastBranchLog = DateTime.MinValue;
+        private static string _lastBranch = "";
+
+        // Names the guard branch that stopped ProcessList before it could reach
+        // recipe selection. Information (a diagnostic the user is asked to report) and
+        // throttled, but always logs immediately when the branch CHANGES so a loop
+        // between two branches is visible rather than averaged away.
+        private static void ReportBranch(string branch)
+        {
+            if (branch != _lastBranch || (DateTime.Now - _lastBranchLog).TotalSeconds >= 3)
+            {
+                _lastBranch = branch;
+                _lastBranchLog = DateTime.Now;
+                Svc.Log.Information($"Artisan: ProcessList stopped early at [{branch}] "
+                                    + $"(CurState={Crafting.CurState}, "
+                                    + $"PreCrafting.Tasks={PreCrafting.Tasks.Count}, CLTM.IsBusy={CLTM.IsBusy})");
+            }
+        }
+
+        // 清單碰到沒跟到的製作時等多久才暫停。不在製作時狀態機一幀內就回到閒置，正常情況等不到這個上限。
+        // 兩次呼叫隔超過 2 秒（暫停過、視窗沒在畫）＝重新起算。
+        private const int UntrackedCraftWaitSeconds = 5;
+        private static readonly SelectGiveUpTimer _untrackedCraftTimer = new(UntrackedCraftWaitSeconds * 1000L, 2000);
+
+        // 暫停而不是取消：使用者手動做完或放棄那場製作之後按「繼續」就接著排。
+        private static void PauseForUntrackedCraft()
+        {
+            Endurance.NotifyForcedStop("清單碰到一場沒跟到的製作");
+            Paused = true;
+            CLTM.Abort();
+            DuoLog.Error($"Artisan：有一場 Artisan 沒有跟到的製作正在進行（例如製作中途重新載入了插件），等了 {UntrackedCraftWaitSeconds} 秒仍沒結束，已暫停製作清單。請手動完成或放棄這場製作，再按「繼續」。");
         }
 
         internal static unsafe void ProcessList(NewCraftingList selectedList)
@@ -230,12 +321,21 @@ namespace Artisan.CraftingLists
 
                 if (P.Config.PlaySoundFinishList)
                     Sounds.SoundPlayer.PlaySound();
+
+                // 整份清單跑完的唯一收尾點（其餘把 Processing 設回 false 的地方都是登出／登入的
+                // 中止路徑，不是「做完了」）。刻意放在這裡而不是每件物品完成時，才不會一份清單念一串。
+                // ProcessList 是從 ProcessingWindow.Draw 每幀呼叫的 ⇒ 這裡就是主執行緒。
+                if (P.Config.TataruPraiseFinishList)
+                    TataruPraiseIPC.Praise(TataruPraiseIPC.CategoryCrafting);
+
                 return;
             }
 
             var recipe = LuminaSheets.RecipeSheet[CraftingListUI.CurrentProcessedItem];
-            var options = selectedList.Recipes.First(x => x.ID == CraftingListUI.CurrentProcessedItem).ListItemOptions;
-            var config = /* options?.CustomConfig ?? */ P.Config.RecipeConfigs.GetValueOrDefault(CraftingListUI.CurrentProcessedItem) ?? new();
+            // 先做素材插進來的配方不在 Recipes 裡。
+            var options = ListPrecraft.OptionsFor(selectedList, CraftingListUI.CurrentProcessedItem);
+            var isPrecraftEntry = ListPrecraft.IsPrecraftEntry(CurrentIndex);
+            var config = options?.Override ?? P.Config.RecipeConfigs.GetValueOrDefault(CraftingListUI.CurrentProcessedItem) ?? new();
             var needToRepair = selectedList.Repair && RepairManager.GetMinEquippedPercent() < selectedList.RepairPercent && (RepairManager.CanRepairAny() || RepairManager.RepairNPCNearby(out _));
             PreCrafting.CraftType type = (options?.NQOnly ?? false) && recipe.CanQuickSynth && P.ri.HasRecipeCrafted(recipe.RowId) ? PreCrafting.CraftType.Quick : PreCrafting.CraftType.Normal;
 
@@ -244,7 +344,17 @@ namespace Artisan.CraftingLists
                 Operations.CloseQuickSynthWindow();
             }
 
-            if (PreCrafting.Tasks.Count > 0 || Crafting.CurState is not Crafting.State.IdleNormal and not Crafting.State.IdleBetween and not Crafting.State.InvalidState)
+            // InvalidState＝有一場沒跟到的製作在進行（例如製作中途重新載入插件）：沒人替它下技能，
+            // 只有使用者做完或放棄才會離開。所以不往下排，也不無限等：逾時就暫停清單並說明。
+            if (Crafting.CurState is Crafting.State.InvalidState)
+            {
+                if (_untrackedCraftTimer.Expired(0, Environment.TickCount64))
+                    PauseForUntrackedCraft();
+                return;
+            }
+            _untrackedCraftTimer.Reset();
+
+            if (PreCrafting.Tasks.Count > 0 || Crafting.CurState is not Crafting.State.IdleNormal and not Crafting.State.IdleBetween)
             {
                 return;
             }
@@ -279,7 +389,8 @@ namespace Artisan.CraftingLists
                 }
             }
 
-            if (selectedList.SkipIfEnough && (preparing || !isCrafting))
+            // 先做素材的項目是照實際缺口算的，「已經夠了就跳過」的總量估法不適用。
+            if (selectedList.SkipIfEnough && !isPrecraftEntry && (preparing || !isCrafting))
             {
                 var ItemId = recipe.ItemResult.RowId;
                 int numMats = Materials.Any(x => x.Key == recipe.ItemResult.RowId) && !selectedList.SkipLiteral ? Materials.First(x => x.Key == recipe.ItemResult.RowId).Value : selectedList.ExpandedList.Count(x => LuminaSheets.RecipeSheet[x].ItemResult.RowId == ItemId) * recipe.AmountResult;
@@ -302,6 +413,10 @@ namespace Artisan.CraftingLists
 
             if (!HasItemsForRecipe(CraftingListUI.CurrentProcessedItem) && (preparing || !isCrafting))
             {
+                if (P.Config.PrecraftMissingIngredients
+                    && ListPrecraft.TryInsert(selectedList, recipe, type == PreCrafting.CraftType.Quick, CurrentIndex))
+                    return;
+
                 DuoLog.Error($"Insufficient materials for {recipe.ItemResult.Value.Name}. Moving on.");
                 var currentRecipe = selectedList.ExpandedList[CurrentIndex];
 
@@ -316,12 +431,13 @@ namespace Artisan.CraftingLists
                 return;
             }
 
-            if (Svc.ClientState.LocalPlayer.ClassJob.RowId != recipe.CraftType.Value.RowId + 8)
+            if (Svc.Objects.LocalPlayer.ClassJob.RowId != recipe.CraftType.Value.RowId + 8)
             {
                 PreCrafting.equipGearsetLoops = 0;
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200)));
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskClassChange((Job)recipe.CraftType.Value.RowId + 8), TimeSpan.FromMilliseconds(200)));
 
+                ReportBranch("class-change");
                 return;
             }
 
@@ -330,12 +446,13 @@ namespace Artisan.CraftingLists
             {
                 PreCrafting.equipAttemptLoops = 0;
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskEquipItem(recipe.ItemRequired.RowId), TimeSpan.FromMilliseconds(200)));
+                ReportBranch("equip-item");
                 return;
             }
 
-            if (Svc.ClientState.LocalPlayer.Level < recipe.RecipeLevelTable.Value.ClassJobLevel - 5 && Svc.ClientState.LocalPlayer.ClassJob.RowId == recipe.CraftType.Value.RowId + 8 && !isCrafting && !preparing)
+            if (Svc.Objects.LocalPlayer.Level < recipe.RecipeLevelTable.Value.ClassJobLevel - 5 && Svc.Objects.LocalPlayer.ClassJob.RowId == recipe.CraftType.Value.RowId + 8 && !isCrafting && !preparing)
             {
-                DuoLog.Error("Insufficient level to craft this item. Moving on.");
+                DuoLog.Error($"Insufficient level for {recipe.ItemResult.Value.Name}. Moving on.");
                 var currentRecipe = selectedList.ExpandedList[CurrentIndex];
 
                 while (currentRecipe == selectedList.ExpandedList[CurrentIndex])
@@ -352,18 +469,20 @@ namespace Artisan.CraftingLists
             if (!Spiritbond.ExtractMateriaTask(selectedList.Materia))
             {
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200)));
+                ReportBranch("materia-extraction");
                 return;
             }
 
             if (selectedList.Repair && !RepairManager.ProcessRepair(selectedList))
             {
                 PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200)));
+                ReportBranch("repair");
                 return;
             }
 
-            if (selectedList.Recipes.First(x => x.ID == CraftingListUI.CurrentProcessedItem).ListItemOptions is null)
+            if (selectedList.Recipes.FirstOrDefault(x => x.ID == CraftingListUI.CurrentProcessedItem) is { ListItemOptions: null } listItem)
             {
-                selectedList.Recipes.First(x => x.ID == CraftingListUI.CurrentProcessedItem).ListItemOptions = new ListItemOptions();
+                listItem.ListItemOptions = new ListItemOptions();
             }
             bool needConsumables = PreCrafting.NeedsConsumablesCheck(type, config);
             bool hasConsumables = PreCrafting.HasConsumablesCheck(config);
@@ -371,8 +490,15 @@ namespace Artisan.CraftingLists
             if (P.Config.AbortIfNoFoodPot && needConsumables && !hasConsumables)
             {
                 PreCrafting.MissingConsumablesMessage(recipe, config);
-                Paused = false;
+                Endurance.NotifyForcedStop("清單缺少要求的消耗品");
+                // 暫停才會只說一次：不暫停的話清單每幀重跑到這裡、每幀洗一次聊天視窗。
+                // 補好貨按「繼續」照常往下；還缺就再停一次、再說一次。
+                Paused = true;
                 return;
+            }
+            else if (needConsumables && !hasConsumables)
+            {
+                PreCrafting.NotifyMissingConsumables(recipe, config);
             }
 
             bool needFood = config != default && ConsumableChecker.HasItem(config.RequiredFood, config.RequiredFoodHQ) && !ConsumableChecker.IsFooded(config);
@@ -382,6 +508,26 @@ namespace Artisan.CraftingLists
 
             if (needFood || needPot || needManual || needSquadronManual)
             {
+                // This block CLOSES the recipe window (TaskExitCraft) and then returns,
+                // so recipe selection below never runs. If a flag never clears, that is
+                // the open/close loop the user hears. Information (a diagnostic the user is asked to report),
+                // throttled, and only while actually stuck.
+                if ((DateTime.Now - _lastConsumableLog).TotalSeconds >= 3)
+                {
+                    _lastConsumableLog = DateTime.Now;
+                    Svc.Log.Information(
+                        $"Artisan: blocked before recipe selection by consumables - "
+                        + $"food={needFood} pot={needPot} manual={needManual} squadron={needSquadronManual}. "
+                        + $"config: foodEnabled={config?.FoodEnabled} food={config?.RequiredFood} foodHQ={config?.RequiredFoodHQ}, "
+                        + $"potEnabled={config?.PotionEnabled} pot={config?.RequiredPotion} potHQ={config?.RequiredPotionHQ}, "
+                        + $"manual={config?.RequiredManual} squadron={config?.RequiredSquadronManual}. "
+                        + $"CurState={Crafting.CurState}, PreCrafting.Tasks={PreCrafting.Tasks.Count}, CLTM.IsBusy={CLTM.IsBusy}. "
+                        + "While this is true the recipe window is repeatedly closed by TaskExitCraft.");
+                }
+
+                // Same pile-up as the recipe-selection block below: the CLTM tasks only append to
+                // PreCrafting.Tasks and complete immediately, so DelayNext(100) was the only thing keeping
+                // this from re-queueing every frame. Wait for the queue to drain instead.
                 if (!CLTM.IsBusy && !PreCrafting.Occupied())
                 {
                     CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), TimeSpan.FromMilliseconds(200))));
@@ -393,26 +539,42 @@ namespace Artisan.CraftingLists
 
             if (Crafting.CurState is Crafting.State.IdleBetween or Crafting.State.IdleNormal && !PreCrafting.Occupied())
             {
+                // ProcessList() runs once per frame (ProcessingWindow.Draw), and the CLTM task below only
+                // appends to PreCrafting.Tasks, so it finishes on the very next tick and CLTM goes idle
+                // again - !CLTM.IsBusy therefore provides no back-pressure whatsoever. PreCrafting.Occupied()
+                // only reads ConditionFlags and never looks at the queue either, so while the crafting log is
+                // still opening (TaskSelectRecipe calls OpenRecipeByRecipeId and returns Retry, which
+                // PreCrafting.Update() only re-runs on its retry delay) this piled up ~60 duplicate TaskSelectRecipe
+                // entries per second. Each one that got its turn re-opened the recipe window, which is the
+                // flickering / repeatedly reopening crafting menu that made a starting list look stuck.
+                // Waiting for the queue to drain is the back-pressure that was missing; Occupied() itself must
+                // NOT be made queue-aware, because tasks such as TaskUseConsumables call it from inside the
+                // queue and would then deadlock by always seeing themselves as occupied.
                 if (!CLTM.IsBusy)
                 {
-                    CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskSelectRecipe(recipe), TimeSpan.FromMilliseconds(500))));
+                    // 100ms 是「看選好了沒」的間隔；重送開窗的間隔由 TaskSelectRecipe 自己維持約 500ms。
+                    CLTM.Enqueue(() => PreCrafting.Tasks.Add((() => PreCrafting.TaskSelectRecipe(recipe), TimeSpan.FromMilliseconds(100))));
 
-                    if (!RecipeWindowOpen()) return;
+                    if (!RecipeWindowShows(recipe)) return;
 
                     if (type == PreCrafting.CraftType.Quick)
                     {
                         var lastIndex = selectedList.ExpandedList.LastIndexOf(CraftingListUI.CurrentProcessedItem);
                         var count = lastIndex - CurrentIndex + 1;
-                        count = CheckWhatExpected(selectedList, recipe, count);
+                        // 插入的區段只做規劃好的件數：不能一路做到清單後面同一個配方去，否則中間的項目會被跳過。
+                        if (isPrecraftEntry)
+                            count = ListPrecraft.PrecraftRun(selectedList, CurrentIndex);
+                        else
+                            count = CheckWhatExpected(selectedList, recipe, count);
                         if (count >= 99)
                         {
-                            CLTM.Enqueue(() => Operations.QuickSynthItem(99));
+                            CLTM.Enqueue(Operations.QuickSynthTask(99), 3000, "ListQS99Start");
                             CLTM.Enqueue(() => Crafting.CurState is Crafting.State.InProgress or Crafting.State.QuickCraft, 2000, "ListQS99WaitStart");
                             return;
                         }
                         else if (count > 0)
                         {
-                            CLTM.Enqueue(() => Operations.QuickSynthItem(count));
+                            CLTM.Enqueue(Operations.QuickSynthTask(count), 3000, "ListQSCountStart");
                             CLTM.Enqueue(() => Crafting.CurState is Crafting.State.InProgress or Crafting.State.QuickCraft, 2000, "ListQSCountWaitStart");
                             return;
                         }
@@ -450,7 +612,8 @@ namespace Artisan.CraftingLists
                 var inventoryitems = CraftingListUI.NumberOfIngredient(recipe.ItemResult.Value.RowId);
                 var expectedNumber = 0;
                 var stillToCraft = 0;
-                var totalToCraft = selectedList.ExpandedList.Count(x => LuminaSheets.RecipeSheet[x].ItemResult.Value.Name.ToDalamudString().ToString() == recipe.ItemResult.Value.Name.ToDalamudString().ToString()) * recipe.AmountResult;
+                var recipeName = recipe.ItemResult.Value.Name.ToDalamudString().ToString();
+                var totalToCraft = selectedList.ExpandedList.Count(x => x.NameOfRecipeOrThrow() == recipeName) * recipe.AmountResult;
                 if (Materials!.Count(x => x.Key == recipe.ItemResult.RowId) == 0 || selectedList.SkipLiteral)
                 {
                     // var previousCrafted = selectedList.Items.Count(x => LuminaSheets.RecipeSheet[x].ItemResult.Value.Name.ToDalamudString().ToString() == recipe.ItemResult.Value.Name.ToDalamudString().ToString() && selectedList.Items.IndexOf(x) < CurrentIndex) * recipe.AmountResult;
@@ -472,6 +635,87 @@ namespace Artisan.CraftingLists
             return count;
         }
 
+        // 只在第一次進入宇宙製作分支時傾印一次節點清單，避免每幀洗版。
+        private static bool _cosmicNodesDumped = false;
+
+        // WKSRecipeNotebook 的 NQ／HQ 全選按鈕 —— 用**節點 ID**指定，不是節點清單索引。
+        // 上游寫死的 NodeList[17]/[18] 在台服其實**指對了**（就是節點 39/40），
+        // 但索引會隨版本漂移而 ID 不會，而且查 ID 失敗是回 null（可偵測），
+        // 索引錯掉則是安靜地點到別的東西。ECommons 的 AddonMaster.WKSRecipeNotebook
+        // 也是用 GetComponentButtonById(39)/(40)，兩邊獨立指向同一組 ID。
+        private const uint CosmicNQButtonNodeId = 39;
+        private const uint CosmicHQButtonNodeId = 40;
+
+        /// <summary>
+        /// 在 addon 的節點清單裡用節點 ID 找節點。
+        /// </summary>
+        /// <remarks>
+        /// 刻意不用 <c>AtkUnitBase.GetComponentButtonById</c>：那是 <c>[MemberFunction]</c>，
+        /// 要靠特徵碼掃描解位址，台服對不上時的失敗形式是原生層的問題。
+        /// 這裡只讀 <c>NodeList</c> 與 <c>NodeId</c> 兩個純欄位，邊界是 <c>NodeListCount</c>，
+        /// 完全不呼叫遊戲函式 —— 假設不成立時最差就是回 null。
+        /// </remarks>
+        private static unsafe AtkResNode* FindNodeById(AtkUnitBase* addon, uint nodeId)
+        {
+            if (addon == null)
+                return null;
+            // 🔴 NodeListCount 非 0 不保證 NodeList 已配置（元件還在載入時就是 null）——
+            //    上界之外還要判指標，否則是 AccessViolation。
+            if (addon->UldManager.NodeList == null)
+                return null;
+
+            var count = addon->UldManager.NodeListCount;
+            for (var i = 0; i < count; i++)
+            {
+                var n = addon->UldManager.NodeList[i];
+                if (n != null && n->NodeId == nodeId)
+                    return n;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 把 WKSRecipeNotebook 的節點清單傾印一次（只在按 ID 找不到按鈕時才會用到）。
+        /// </summary>
+        /// <remarks>
+        /// 會印 NodeId：只印索引與 type 的話，
+        /// 拿到 log 也沒辦法直接對到 ULD 的節點編號。
+        /// 只讀 NodeList／NodeId／Type 三個純欄位，邊界一律是 NodeListCount。
+        /// </remarks>
+        private static unsafe void DumpCosmicNodeList(AtkUnitBase* addon)
+        {
+            if (addon == null)
+                return;
+            // 🔴 同 FindNodeById：NodeListCount 非 0 不保證 NodeList 已配置。
+            if (addon->UldManager.NodeList == null)
+            {
+                Svc.Log.Information("Artisan: WKSRecipeNotebook 節點傾印 — NodeList 尚未配置，跳過");
+                return;
+            }
+
+            var count = addon->UldManager.NodeListCount;
+            var dump = new System.Text.StringBuilder();
+            dump.Append($"Artisan: WKSRecipeNotebook 節點傾印 (NodeListCount={count}):");
+            for (var i = 0; i < count; i++)
+            {
+                var n = addon->UldManager.NodeList[i];
+                if (n == null) { dump.Append($" [{i}]=null"); continue; }
+                dump.Append($" [{i}]id={n->NodeId},type={n->Type}");
+                if (n->Type == NodeType.Text)
+                {
+                    var t = n->GetAsAtkTextNode();
+                    if (t != null) dump.Append($",text=\"{t->NodeText}\"");
+                }
+                else if ((ushort)n->Type >= 1000)
+                {
+                    var c = n->GetAsAtkComponentNode();
+                    if (c != null && c->Component != null)
+                        dump.Append($",comp={c->Component->UldManager.NodeListCount}nodes");
+                }
+            }
+            Svc.Log.Information(dump.ToString());
+        }
+
         public static unsafe bool SetIngredients(EnduranceIngredients[]? setIngredients = null)
         {
             var recipe = Operations.GetSelectedRecipeEntry();
@@ -481,62 +725,217 @@ namespace Artisan.CraftingLists
             if (TryGetAddonByName<AtkUnitBase>("WKSRecipeNotebook", out var cosmicAddon) &&
                 cosmicAddon->IsVisible)
             {
-                var hqBtn = cosmicAddon->UldManager.NodeList[17]->GetAsAtkComponentButton();
-                var nqBtn = cosmicAddon->UldManager.NodeList[18]->GetAsAtkComponentButton();
+                // 用節點 ID 取按鈕（見上方 ULD 註解）。上游是寫死 NodeList[17]/[18]，
+                // 索引超出 NodeListCount 就是讀陣列後方的堆積垃圾再當 AtkResNode* 解參考
+                // —— 那是攔不到的 AVE。用 ID 查則是「找不到就回 null」。
+                var nqNode = FindNodeById(cosmicAddon, CosmicNQButtonNodeId);
+                var hqNode = FindNodeById(cosmicAddon, CosmicHQButtonNodeId);
+                if (nqNode == null || hqNode == null)
+                {
+                    // 只印一次，避免每幀洗版；含節點 ID 是為了下次 ULD 真的改版時能立刻定位。
+                    if (!_cosmicNodesDumped)
+                    {
+                        _cosmicNodesDumped = true;
+                        DumpCosmicNodeList(cosmicAddon);
+                    }
+                    Svc.Log.Information(
+                        $"Artisan: WKSRecipeNotebook 找不到素材全選按鈕節點 "
+                        + $"(ID {CosmicNQButtonNodeId}/{CosmicHQButtonNodeId}，"
+                        + $"NodeListCount={cosmicAddon->UldManager.NodeListCount})，無法指派宇宙製作的素材");
+                    return false;
+                }
 
-                nqBtn->ClickAddonButton(cosmicAddon);
-                hqBtn->ClickAddonButton(cosmicAddon);
+                var nqBtn = nqNode->GetAsAtkComponentButton();
+                var hqBtn = hqNode->GetAsAtkComponentButton();
+                if (nqBtn == null || hqBtn == null)
+                {
+                    if (!_cosmicNodesDumped)
+                    {
+                        _cosmicNodesDumped = true;
+                        DumpCosmicNodeList(cosmicAddon);
+                    }
+                    Svc.Log.Information(
+                        $"Artisan: WKSRecipeNotebook 節點 {CosmicNQButtonNodeId}/{CosmicHQButtonNodeId} "
+                        + $"不是 AtkComponentButton (typeNQ={nqNode->Type}, typeHQ={hqNode->Type})，"
+                        + "無法指派宇宙製作的素材");
+                    return false;
+                }
+
+                // 同一幀連按兩顆不同的鈕(NQ 全選、HQ 全選)是刻意的正常流程,兩顆各一把 key、互不擋;
+                // 筆記本身按了不會關(每一件都會再按 ⇒ 15 幀逃生口)。要擋的是 TaskExitCraft 對這一扇送過 Fire(-1)
+                // 之後它還在關閉中的那幾幀(IsVisible 那時仍為真)。先看再登記:任一顆被擋就整趟不按,
+                // 回 false 讓輪詢任務下個 tick 再來(與「筆記還沒開好」同一條路徑)。
+                if (AddonPressGuard.IsHeld("WKSRecipeNotebook", cosmicAddon, "NQAll")
+                    || AddonPressGuard.IsHeld("WKSRecipeNotebook", cosmicAddon, "HQAll"))
+                    return false;
+
+                Svc.Log.Information("Artisan: 指派宇宙製作素材(點擊 NQ/HQ 全選按鈕)");
+                if (AddonPressGuard.TryBeginPress("WKSRecipeNotebook", cosmicAddon, "NQAll", AddonPressGuard.RoutineRePressEscapeFrames))
+                    nqBtn->ClickAddonButton(cosmicAddon);
+                if (AddonPressGuard.TryBeginPress("WKSRecipeNotebook", cosmicAddon, "HQAll", AddonPressGuard.RoutineRePressEscapeFrames))
+                    hqBtn->ClickAddonButton(cosmicAddon);
 
                 return true;
             }
 
+            // 🔴 這條 && 鏈要連同一行裡的 RaptureAtkModule.Instance() 一起判：它是 CS 手寫包裝
+            // （`UIModule.Instance() == null ? null : uiModule->GetRaptureAtkModule()`），而 UIModule.Instance() 又是
+            // `Framework.Instance() == null ? null : ...` —— 兩層都合法回 null（登入前／切換場景時是常態），
+            // 裸解參考就是攔不到的 AVE。
+            // 這裡是每幀輪詢的閘門：取不到就當成「還沒 ready」讓 && 短路成 false，不寫 log。
             if (TryGetAddonByName<AddonRecipeNote>("RecipeNote", out var addon) &&
                 addon->AtkUnitBase.IsVisible &&
+                // TaskExitCraft 對這一扇送過 Fire(-1)、它還在關閉中 ⇒ 這一輪整段不碰(IsVisible 在那幾幀仍為真)。
+                !AddonPressGuard.IsClosing("RecipeNote", &addon->AtkUnitBase) &&
                 AgentRecipeNote.Instance() != null &&
+                RaptureAtkModule.Instance() != null &&
                 RaptureAtkModule.Instance()->AtkModule.IsAddonReady(AgentRecipeNote.Instance()->AgentInterface.AddonId))
             {
                 if (setIngredients == null || Endurance.IPCOverride)
                 {
+                    var diagHandled = 0;
+                    var diag = new System.Text.StringBuilder();
+                    diag.Append($"Artisan: SetIngredients walking RecipeNote nodes "
+                                + $"(NodeCount={addon->AtkUnitBase.UldManager.NodeListCount}):");
+
+                    // 🔴 上界必須在進迴圈前就驗，而且**只補判空是半套、完全擋不住**：
+                    // UldManager.NodeList 的長度恰為 NodeListCount，索引越界讀到的是陣列後方的堆積垃圾 —— 那不是 null。
+                    // 再把垃圾交給 GetAsAtkComponentNode()（[MemberFunction] 原生呼叫，不是受管理轉型）就是
+                    // AccessViolationException，底下那個 try/catch 與任何例外隔離包裝**一律攔不到**。
+                    // 這個迴圈用到外層 NodeList[18..23]（i = 0..5），所以要求 count >= 24。
+                    var outerList = addon->AtkUnitBase.UldManager.NodeList;
+                    var outerCount = addon->AtkUnitBase.UldManager.NodeListCount;
+                    if (outerList == null || outerCount < 24)
+                    {
+                        Svc.Log.Information(diag.ToString()
+                            + $" -> RecipeNote NodeList 不足（count={outerCount}，需要 24），"
+                            + "這次不指派素材。失敗形式是「沒有指派」而不是崩潰。");
+                        return false;
+                    }
+
                     for (int i = 0; i <= 5; i++)
                     {
                         try
                         {
-                            var node = addon->AtkUnitBase.UldManager.NodeList[23 - i]->GetAsAtkComponentNode();
+                            diag.Append($" [{i}]node{23 - i}=");
 
-                            if (node is null || !node->AtkResNode.IsVisible())
+                            var rawNode = outerList[23 - i];
+                            if (rawNode == null)
                             {
+                                diag.Append("NULL");
                                 continue;
                             }
 
-                            if (node->Component->UldManager.NodeList[11]->IsVisible())
+                            // 轉型前先驗型別：AtkResNode 宣告 Size = 0xB0，而 AtkComponentNode.Component
+                            // 在 FieldOffset 0xB0 ⇒ 對非 component 節點讀 Component 是讀出界 16 bytes。
+                            // Type >= 1000 才是 component 家族。
+                            if ((int)rawNode->Type < 1000)
+                            {
+                                diag.Append($"type{(int)rawNode->Type}");
+                                continue;
+                            }
+
+                            var node = rawNode->GetAsAtkComponentNode();
+                            if (node == null || node->Component == null)
+                            {
+                                diag.Append("NULL");
+                                continue;
+                            }
+
+                            // node->AtkResNode 是 FieldOffset 0 的內嵌結構，位址等同 rawNode。
+                            if (!rawNode->IsVisible())
+                            {
+                                diag.Append("hidden");
+                                continue;
+                            }
+
+                            // 內層元件同樣要驗：本區塊用到元件的 NodeList[11] 與 [14] ⇒ 要求 count >= 15。
+                            var innerList = node->Component->UldManager.NodeList;
+                            var innerCount = node->Component->UldManager.NodeListCount;
+                            if (innerList == null || innerCount < 15)
+                            {
+                                diag.Append($"inner-count{innerCount}");
+                                continue;
+                            }
+
+                            var hqMenuNode = innerList[11];
+                            if (hqMenuNode == null)
+                            {
+                                diag.Append("inner-null");
+                                continue;
+                            }
+
+                            // 診斷與決策共用同一次求值（各求一次是 TOCTOU）。
+                            var hqMenuVisible = hqMenuNode->IsVisible();
+                            diag.Append(hqMenuVisible ? "visible/hq-menu" : "visible/material");
+
+                            diagHandled++;
+
+                            if (hqMenuVisible)
                             {
                                 var ingredient = LuminaSheets.RecipeSheet.Values.Where(x => x.RowId == Endurance.RecipeID).FirstOrDefault().Ingredients().ElementAt(i).Item;
 
-                                var btn = node->Component->UldManager.NodeList[14]->GetAsAtkComponentButton();
+                                var buttonNode = innerList[14];
+                                if (buttonNode == null)
+                                {
+                                    diag.Append("(btn-node-null)");
+                                    continue;
+                                }
+
+                                var btn = buttonNode->GetAsAtkComponentButton();
+                                if (btn == null)
+                                {
+                                    diag.Append("(btn-null)");
+                                    continue;
+                                }
+
+                                // 手帳上的 HQ 素材鈕按了不會關手帳(它開的是 ContextIconMenu),每一件都會再按 ⇒ 15 幀逃生口;
+                                // 每個素材格各一把 key,同一趟六格互不擋。
+                                if (!AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, $"HQMenu|{i}", AddonPressGuard.RoutineRePressEscapeFrames))
+                                {
+                                    diag.Append("(guard-held)");
+                                    continue;
+                                }
+
                                 try
                                 {
+                                    // ⚠️ ClickAddonButton 的第一個參數是 by-value `this AtkComponentButton`
+                                    // ⇒ **傳參當下就解參考**，內部守衛救不了呼叫端的 null，
+                                    // 而這個 try 只擋得住受管理例外。null 必須在上面就攔掉。
                                     btn->ClickAddonButton((AtkComponentBase*)addon, 4, EventType.CHANGE);
                                 }
                                 catch (Exception ex)
                                 {
                                     ex.Log();
                                 }
-                                var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextIconMenu");
-                                if (contextMenu != null)
+                                var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextIconMenu").Address;
+                                // 選了項目 ContextIconMenu 就關。下一格若同幀又開到同一個位址(遊戲重用而不重建),
+                                // 帶的是不同素材 id ⇒ 不同 key、同幀不互擋;真正擋的是同一格對同一扇關閉中的選單再送。
+                                if (contextMenu != null
+                                    && AddonPressGuard.TryBeginPress("ContextIconMenu", contextMenu, $"T|0|0|0|{ingredient}|0", AddonPressGuard.RoutineRePressEscapeFrames))
                                 {
                                     Callback.Fire(contextMenu, true, 0, 0, 0, ingredient, 0);
                                 }
                             }
                             else
                             {
-                                for (int m = 0; m <= 100; m++)
+                                // 這兩個迴圈是刻意的飽和送法(同一參數組連送 101 次把該格填滿),手帳不會因此關閉。
+                                // 守衛以「整趟一次」為單位登記(每格 NQ／HQ 各一把 key、15 幀逃生口),迴圈內部照舊;
+                                // 擋的只有「同一格對同一扇手帳在 15 幀內再跑一整趟」與 TaskExitCraft 關閉中的那幾幀。
+                                if (AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, $"Material|{i}|NQ", AddonPressGuard.RoutineRePressEscapeFrames))
                                 {
-                                    new AddonMaster.RecipeNote((IntPtr)addon).Material((uint)i, false);
+                                    for (int m = 0; m <= 100; m++)
+                                    {
+                                        new AddonMaster.RecipeNote((IntPtr)addon).Material((uint)i, false);
+                                    }
                                 }
 
-                                for (int m = 0; m <= 100; m++)
+                                if (AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, $"Material|{i}|HQ", AddonPressGuard.RoutineRePressEscapeFrames))
                                 {
-                                    new AddonMaster.RecipeNote((IntPtr)addon).Material((uint)i, true);
+                                    for (int m = 0; m <= 100; m++)
+                                    {
+                                        new AddonMaster.RecipeNote((IntPtr)addon).Material((uint)i, true);
+                                    }
                                 }
                             }
 
@@ -546,6 +945,13 @@ namespace Artisan.CraftingLists
                             return false;
                         }
                     }
+
+                    if (diagHandled == 0)
+                        Svc.Log.Information(diag.ToString()
+                            + " -> NO slot handled, nothing assigned. The hardcoded node "
+                            + "indices do not match this client's RecipeNote layout.");
+                    else
+                        Svc.Log.Verbose(diag.ToString() + $" -> handled {diagHandled} slot(s).");
                 }
                 else
                 {

@@ -1,16 +1,14 @@
 {
   "Author": "Taurenkey (Puni.sh)",
   "Name": "Artisan",
-  "Punchline": "A 'simple' crafting plugin.",
-  "Description": "The all-in-one crafting plugin.",
+  "Punchline": "一款「簡單」的製作插件。",
+  "Description": "整合各種功能的全能製作插件。",
   "InternalName": "Artisan",
   "ApplicableVersion": "any",
-  "IconUrl": "https://love.puni.sh/resources/artisan.png",
+  "IconUrl": "https://raw.githubusercontent.com/ffxiv-tc-port/DalamudPluginsTC/main/icons/Artisan.png",
   "Tags": [
     "crafting"
   ],
-  "Changelog": "Update Raphael Solver",
-  "RepoUrl": "https://github.com/PunishXIV/Artisan",
-  "DalamudApiLevel": 12,
-  "DownloadLinkTesting": "https://love.puni.sh/plugins/Artisan/Testing/latest.zip"
+  "RepoUrl": "https://github.com/ffxiv-tc-port/Artisan",
+  "DalamudApiLevel": 13
 }

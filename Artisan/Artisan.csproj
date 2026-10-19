@@ -3,10 +3,24 @@
   <PropertyGroup>
     <Authors></Authors>
     <Company></Company>
-    <Version>4.0.3.45</Version>
     <Description>A 'simple' crafting plugin.</Description>
     <Copyright>Taurenkey</Copyright>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <BuildNumberFile>$(MSBuildProjectDirectory)\BuildNumber.txt</BuildNumberFile>
+    <_PreviousBuildNumber Condition="Exists('$(BuildNumberFile)')">$([System.IO.File]::ReadAllText('$(BuildNumberFile)').Trim())</_PreviousBuildNumber>
+    <_PreviousBuildNumber Condition="'$(_PreviousBuildNumber)' == ''">46</_PreviousBuildNumber>
+    <BuildNumber>$([MSBuild]::Add($(_PreviousBuildNumber), 1))</BuildNumber>
+    <VersionPrefix>7.15.0</VersionPrefix>
+    <Version>$(VersionPrefix).$(BuildNumber)</Version>
+    <AssemblyVersion>$(Version)</AssemblyVersion>
+    <FileVersion>$(Version)</FileVersion>
+  </PropertyGroup>
+
+  <Target Name="PersistBuildNumber" AfterTargets="Build">
+    <WriteLinesToFile File="$(BuildNumberFile)" Lines="$(BuildNumber)" Overwrite="true" />
+  </Target>
 
 	<PropertyGroup>
 		<DalamudLibPath>$(appdata)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
@@ -50,6 +64,10 @@
   </PropertyGroup>
 	
   <ItemGroup>
+    <EmbeddedResource Include="RawInformation\TeamcraftItemNames.tsv" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\.editorconfig" Link=".editorconfig" />
     <None Update="bcryptprimitives.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
@@ -84,6 +102,9 @@
     <None Update="Images\ThemeCraftingWindowExample.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Update="LanguageChineseTraditional.ini">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="raphael-cli.exe">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
@@ -93,8 +114,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="DalamudPackager" Version="12.0.0" />
+    <PackageReference Include="DalamudPackager" Version="13.0.0" />
     <PackageReference Include="Discord.Net.Webhook" Version="3.15.3" />
+    <!-- Discord.Net 會把 Newtonsoft.Json 帶進輸出目錄；自帶一份的話 Dalamud 存設定時不認得本專案的 [JsonIgnore]／[JsonProperty]。只取編譯期參考，執行期用 Dalamud 那份。 -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
     <PackageReference Include="FuzzySharp" Version="2.0.2" />
     <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="4.10.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.10.0" />
@@ -116,8 +139,16 @@
      <HintPath>$(DalamudLibPath)FFXIVClientStructs.dll</HintPath>
      <Private>false</Private>
 	</Reference>
-    <Reference Include="ImGui.NET">
-      <HintPath>$(DalamudLibPath)ImGui.NET.dll</HintPath>
+    <Reference Include="Dalamud.Bindings.ImGui">
+      <HintPath>$(DalamudLibPath)Dalamud.Bindings.ImGui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Dalamud.Bindings.ImPlot">
+      <HintPath>$(DalamudLibPath)Dalamud.Bindings.ImPlot.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Dalamud.Bindings.ImGuizmo">
+      <HintPath>$(DalamudLibPath)Dalamud.Bindings.ImGuizmo.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="ImGuiScene">
@@ -142,4 +173,11 @@
 	  </Reference>
   </ItemGroup>
 
+  <!-- ECommons 的文件註解檔 ECommons.xml 執行期用不到：不複製進輸出目錄，出貨包也就不帶它（ECommons.pdb 照留，崩潰堆疊行號要用）。 -->
+  <Target Name="ExcludeECommonsXmlDoc" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <_ECommonsXmlDoc Include="@(ReferenceCopyLocalPaths)" Condition="'%(Filename)%(Extension)' == 'ECommons.xml'" />
+      <ReferenceCopyLocalPaths Remove="@(_ECommonsXmlDoc)" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -5,7 +5,8 @@ using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using ECommons.ExcelServices;
 using ECommons.ImGuiMethods;
-using ImGuiNET;
+using ECommons.LanguageHelpers;
+using Dalamud.Bindings.ImGui;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -37,8 +38,8 @@ namespace Artisan.UI
 
         public static void Draw()
         {
-            ImGuiEx.TextWrapped($"本标签页可根据配方条件，快速为配方批量分配解算器与消耗品。");
-            ImGuiEx.TextWrapped($"职业缩写对照：CRP - 刻木匠；ARM - 铸甲匠；LTW - 制革匠；ALC - 炼金术士；BSM - 锻铁匠；GSM - 雕金匠；WVR - 裁衣匠；CUL - 烹调师。");
+            ImGuiEx.TextWrapped("This tab allows you to quickly assign solvers and consumables to recipes based on recipe criteria.".Loc());
+            ImGuiEx.TextWrapped(SharedText.JobAbbreviations.Loc());
             ImGui.Separator();
             ImGui.Spacing();
             DrawCriteria();
@@ -47,7 +48,7 @@ namespace Artisan.UI
 
         private static void DrawCriteria()
         {
-            ImGuiEx.TextCentered($"条件");
+            ImGuiEx.TextCentered("Criteria".Loc());
             DrawAssignOptions();
         }
 
@@ -58,9 +59,9 @@ namespace Artisan.UI
 
             ImGui.Spacing();
             var recipe = filteredRecipes.First();
-            var stats = CharacterStats.GetBaseStatsForClassHeuristic(Job.CRP + recipe.CraftType.RowId);
+            var stats = CharacterStats.GetBaseStatsForClassHeuristic((Job)((uint)Job.CRP + recipe.CraftType.RowId));
             stats.AddConsumables(new(DummyConfig.RequiredFood, DummyConfig.RequiredFoodHQ), new(DummyConfig.RequiredPotion, DummyConfig.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
-            var c = Crafting.BuildCraftStateForRecipe(stats, Job.CRP + recipe.CraftType.RowId, recipe);
+            var c = Crafting.BuildCraftStateForRecipe(stats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
 
             DummyConfig.DrawFood();
             DummyConfig.DrawPotion();
@@ -68,8 +69,8 @@ namespace Artisan.UI
             DummyConfig.DrawSquadronManual();
             DummyConfig.DrawSolver(c, false, false);
 
-            ImGui.Checkbox("分配配方时显示通知", ref Notification);
-            if (ImGui.Button("全部分配", new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
+            ImGui.Checkbox("Show which crafts have been assigned as a notification".Loc(), ref Notification);
+            if (ImGui.Button("Assign To All".Loc(), new Vector2(ImGui.GetContentRegionAvail().X, 25f.Scale())))
             {
                 foreach (var rec in filteredRecipes)
                 {
@@ -85,7 +86,7 @@ namespace Artisan.UI
                     };
                     if (Notification)
                     {
-                        P.TM.Enqueue(() => Notify.Success($"Assigned {rec.CraftType.Value.Name} - {rec.ItemResult.Value.Name}"));
+                        P.TM.Enqueue(() => Notify.Success("Assigned ?? - ??".Loc(rec.CraftType.Value.Name, rec.ItemResult.Value.Name)));
                         P.TM.DelayNext(75);
                     }
                 }
@@ -152,7 +153,7 @@ namespace Artisan.UI
                 ImGui.SameLine(100f.Scale());
                 if (ImGui.BeginListBox($"###AssignJobBox", new Vector2(0, 55f.Scale())))
                 {
-                    ImGui.Columns(4, null, false);
+                    ImGui.Columns(4, "", false);
                     for (var job = Job.CRP; job <= Job.CUL; ++job)
                     {
                         ImGui.Checkbox(job.ToString(), ref quickAssignJobs[job - Job.CRP]);
@@ -168,7 +169,7 @@ namespace Artisan.UI
                     ImGui.SameLine(100f.Scale());
                     if (ImGui.BeginListBox($"###AssignDurabilities", new Vector2(0, 55f.Scale())))
                     {
-                        ImGui.Columns(4, null, false);
+                        ImGui.Columns(4, "", false);
 
                         foreach (var recipe in filteredRecipes)
                         {
@@ -202,7 +203,7 @@ namespace Artisan.UI
                         var anyHQ = filteredRecipes.Any(recipe => recipe.CanHq);
                         var anyNonHQ = filteredRecipes.Any(recipe => !recipe.CanHq);
 
-                        ImGui.Columns(2, null, false);
+                        ImGui.Columns(2, "", false);
                         if (anyNonHQ)
                         {
                             if (!anyHQ)
@@ -224,7 +225,7 @@ namespace Artisan.UI
                                 quickAssignCannotHQ = false;
                             }
                         }
-                        ImGui.Columns(1, null, false);
+                        ImGui.Columns(1, "", false);
                         ImGui.EndListBox();
                     }
                     filteredRecipes = filteredRecipes.Where(x => x.CanHq != quickAssignCannotHQ);

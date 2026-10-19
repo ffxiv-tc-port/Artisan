@@ -1,4 +1,5 @@
-﻿using Artisan.IPC;
+﻿using Artisan.GameInterop;
+using Artisan.IPC;
 using Artisan.RawInformation;
 using Dalamud.Game;
 using Dalamud.Game.ClientState.Conditions;
@@ -8,6 +9,7 @@ using ECommons.Automation;
 using ECommons.Automation.LegacyTaskManager;
 using ECommons.DalamudServices;
 using ECommons.Events;
+using ECommons.Throttlers;
 using ECommons.UIHelpers.AddonMasterImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -38,20 +40,113 @@ internal unsafe static class RetainerListHandlers
 {
     internal static bool? SelectRetainerByID(ulong id)
     {
-        string retainerName = "";
-        for (uint i = 0; i < 10; i++)
+        var retainerName = ResolveRetainerName(id);
+        if (string.IsNullOrEmpty(retainerName))
         {
-            var retainer = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance()->GetRetainerBySortedIndex(i);
-            if (retainer == null) continue;
-
-            if (retainer->RetainerId == id)
-                retainerName = retainer->NameString;
-
+            // 🔴 Returns false ("not done, ask me again") rather than throwing. This task runs 200ms after the
+            // summoning bell is touched, and the client has usually not received the retainer list by then.
+            // ECommons' TaskManager answers an exception by logging it, dropping the task and carrying on with
+            // the rest of the queue - the whole restock would then run with no retainer ever selected, every
+            // later step quietly doing nothing while looking like it was working.
+            ReportRetainerUnresolved(id);
+            return false;
         }
 
         return SelectRetainerByName(retainerName);
     }
 
+    /// <summary>
+    /// Turns a retainer id into its name, or "" when the client cannot answer yet.
+    /// <para/>
+    /// 🔴 Deliberately walks the raw <c>Retainers</c> array rather than calling
+    /// <c>GetRetainerBySortedIndex</c>. That helper indexes through the display-order table at +0x2D0 and
+    /// returns <c>&amp;Retainers[displayOrder[i]]</c>, so for as long as that table is still zeroed - it is
+    /// only filled in once the retainer list has actually loaded - every sorted index resolves to retainer 0
+    /// and a lookup for any other retainer silently finds nothing. AutoRetainer's own GameRetainerManager
+    /// guards against the same table being unpopulated. The raw array needs no such table.
+    /// </summary>
+    private static string ResolveRetainerName(ulong id)
+    {
+        if (id == 0) return "";
+
+        var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+        if (manager == null) return "";
+
+        for (var i = 0; i < manager->Retainers.Length; i++)
+        {
+            var retainer = manager->Retainers[i];
+            if (retainer.RetainerId == id)
+                return retainer.NameString;
+        }
+
+        return "";
+    }
+
+    /// <summary>
+    /// Says why a retainer id could not be turned into a name. Information level (a diagnostic users are
+    /// asked to report): this is otherwise completely invisible - the only symptom is
+    /// "restocking did nothing". Throttled per id, since the caller polls this.
+    /// </summary>
+    private static void ReportRetainerUnresolved(ulong id)
+    {
+        if (!EzThrottler.Throttle($"ArtisanResolveRetainer{id}", 3000)) return;
+
+        var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+        if (manager == null)
+        {
+            Svc.Log.Information($"[Artisan][Restock] Retainer {id} cannot be resolved: RetainerManager is not available yet. Waiting.");
+            return;
+        }
+
+        var loaded = new List<ulong>();
+        for (var i = 0; i < manager->Retainers.Length; i++)
+        {
+            var retainer = manager->Retainers[i];
+            if (retainer.RetainerId != 0) loaded.Add(retainer.RetainerId);
+        }
+
+        Svc.Log.Information($"[Artisan][Restock] Retainer {id} is not in the client's retainer list yet " +
+                            $"(IsReady={manager->IsReady}, {loaded.Count} loaded: {(loaded.Count == 0 ? "none" : string.Join(", ", loaded))}). " +
+                            $"Waiting for the list to arrive rather than skipping this retainer.");
+    }
+
+
+    /// <summary>
+    /// 讀僱員清單某一列的名字，<b>剝掉 SeString payload</b> 之後回純文字。
+    /// </summary>
+    /// <remarks>
+    /// 🔴 不用 <c>ReaderRetainerList.Retainer.Name</c>：它走 <c>AtkReader.ReadString</c> →
+    /// <c>MemoryHelper.ReadStringNullTerminated</c>，把整段位元組原樣當 UTF-8 解。
+    /// SeString payload 的位元組不是合法 UTF-8 ⇒ 解出來會夾著 <c>U+FFFD</c>。
+    /// 而這個字串緊接著就餵給 <see cref="AddonPressGuard.IsTextCorrupt"/>，那道守衛的判準正是
+    /// 「含 U+FFFD ⇒ 這一幀不碰」⇒ 名字一旦帶 payload，守衛會<b>永遠成立</b>，
+    /// 選僱員這一步就靜默地一直回 false 重試到逾時，而 log 上只會看到守衛自己那一行。
+    /// <para/>
+    /// 📌 僱員名實務上是純文字，目前沒有觀察到觸發；這裡防的是<b>形狀</b>不是已知症狀。
+    /// ⚠️ <c>AtkReader.ReadSeString</c> 是 <c>protected</c>，Artisan 拿不到 ⇒ 改用它公開的
+    /// <c>AtkReaderParams</c> 自己讀同一格 <c>AtkValue</c>，三道守衛（判空／界限／型別）
+    /// 逐字照抄 <c>ReadString</c>，只把最後一步換成 SeString 解析。
+    /// 🔑 讀的格子與 <c>Name =&gt; ReadString(0)</c> 完全相同：<c>BeginOffset + 0</c>。
+    /// </remarks>
+    private static string ReadRetainerEntryName(AddonMaster.RetainerList.Entry retainer)
+    {
+        var (unitBasePtr, beginOffset) = retainer.AtkReaderParams;
+        if (unitBasePtr == 0) return "";
+
+        var unitBase = (AtkUnitBase*)unitBasePtr;
+        var index = beginOffset;
+        if (unitBase->AtkValues == null || index < 0 || index >= unitBase->AtkValuesCount) return "";
+
+        var value = unitBase->AtkValues[index];
+        if (value.Type is not (FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
+                or FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String8
+                or FFXIVClientStructs.FFXIV.Component.GUI.ValueType.WideString
+                or FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)) return "";
+        // 型別對不代表指標非空；從位址 0 起掃 null 結尾就是 AccessViolationException（攔不到）。
+        if (value.String.Value == null) return "";
+
+        return MemoryHelper.ReadSeStringNullTerminated((nint)value.String.Value).GetText();
+    }
 
     internal static bool? SelectRetainerByName(string name)
     {
@@ -64,11 +159,16 @@ internal unsafe static class RetainerListHandlers
             var list = new AddonMaster.RetainerList(retainerList);
             foreach (var retainer in list.Retainers)
             {
-                if (retainer.Name == name)
+                var retainerName = ReadRetainerEntryName(retainer);
+                // 讀窗文字做判定:讀到 U+FFFD 代表窗記憶體正在變動,這一幀不碰。
+                if (AddonPressGuard.IsTextCorrupt("RetainerList", retainerName)) return false;
+                if (retainerName == name)
                 {
-                    if (RetainerInfo.GenericThrottle)
+                    // key 帶列號:同一扇清單接著選別的僱員不受影響,同一位重按才擋;被擋回 false(下一輪重試),不回 null。
+                    if (RetainerInfo.GenericThrottle
+                        && AddonPressGuard.TryBeginPress("RetainerList", retainerList, $"Select|{retainer.Index}"))
                     {
-                        Svc.Log.Debug($"Selecting retainer {retainer.Name} with index {retainer.Index}");
+                        Svc.Log.Debug($"Selecting retainer {retainerName} with index {retainer.Index}");
                         retainer.Select();
                         return true;
                     }
@@ -104,7 +204,7 @@ internal unsafe static class RetainerListHandlers
 
     internal static bool TryGetCurrentRetainer(out string name)
     {
-        if (Svc.Condition[ConditionFlag.OccupiedSummoningBell] && ProperOnLogin.PlayerPresent && Svc.Objects.Where(x => x.ObjectKind == ObjectKind.Retainer).OrderBy(x => Vector3.Distance(Svc.ClientState.LocalPlayer.Position, x.Position)).TryGetFirst(out var obj))
+        if (Svc.Condition[ConditionFlag.OccupiedSummoningBell] && ProperOnLogin.PlayerPresent && Svc.Objects.Where(x => x.ObjectKind == ObjectKind.Retainer).OrderBy(x => Vector3.Distance(Svc.Objects.LocalPlayer.Position, x.Position)).TryGetFirst(out var obj))
         {
             name = obj.Name.ToString();
             return true;
@@ -247,48 +347,126 @@ internal unsafe static class RetainerHandlers
 
         foreach (var inv in inventories)
         {
-            //Svc.Log.Debug($"RETAINER PAGE {inv} WITH SIZE {InventoryManager.Instance()->GetInventoryContainer(inv)->Size}");
-            for (int i = 0; i < InventoryManager.Instance()->GetInventoryContainer(inv)->Size; i++)
+            // 容器指標在迴圈外取一次：
+            // 迴圈內唯二會回到遊戲的呼叫（OpenForItemSlot / Callback.Fire）後面都緊接著 return，
+            // 沒有任何一輪會在遊戲可能重配容器之後繼續跑，所以提出來不會拿到失效指標。
+            var container = InventoryManager.Instance()->GetInventoryContainer(inv);
+            // 讀不到就跳過這一頁，當成「這一頁裡沒有這個道具」，最壞情況是回 false 讓呼叫端重試。
+            // 反方向極危險：Items 尚未配置時 GetInventorySlot(i) 會回小偏移假指標，
+            // 假的 ItemId 若剛好對上就會用那個 i 去 OpenForItemSlot，對錯的格子按下「取回」。
+            if (container == null || container->Items == null)
+                continue;
+            //Svc.Log.Debug($"RETAINER PAGE {inv} WITH SIZE {container->Size}");
+            for (int i = 0; i < container->Size; i++)
             {
-                var item = InventoryManager.Instance()->GetInventoryContainer(inv)->GetInventorySlot(i);
+                var item = container->GetInventorySlot(i);
+                if (item == null)
+                    continue;
                 //Svc.Log.Debug($"ITEM {item->ItemId.NameOfItem()} IN {item->Slot}");
                 if (item->ItemId == ItemId && ((lookingForHQ && item->Flags == InventoryItem.ItemFlags.HighQuality) || (!lookingForHQ)))
                 {
                     quantity = item->Quantity;
                     Svc.Log.Debug($"Found item? {item->Quantity}");
+                    // 🔴 三處都能合法回 null,裸解參考就是 AccessViolationException:
+                    //    ① AgentInventoryContext.Instance()(產生器產出的「agentModule == null ? null : GetAgentByInternalId(...)」);
+                    //    ② AgentModule.Instance() 是 UIModule 的轉手;③ GetAgentByInternalId 查的那一格,僱員 agent 還沒建立時就是 null。
+                    // fail-closed:取不到就回 false —— 與這個迴圈既有的「這一頁裡沒有這個道具」同義,呼叫端本來就會重試。
                     var ag = AgentInventoryContext.Instance();
-                    ag->OpenForItemSlot(inv, i, AgentModule.Instance()->GetAgentByInternalId(AgentId.Retainer)->GetAddonId());
-                    var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu", 1);
+                    var agentModule = AgentModule.Instance();
+                    var retainerAgent = agentModule == null ? null : agentModule->GetAgentByInternalId(AgentId.Retainer);
+                    if (ag == null || retainerAgent == null)
+                    {
+                        Svc.Log.Information($"Artisan: inventory/retainer agent unavailable (ctx={(nint)ag:X}, retainer={(nint)retainerAgent:X}) - not opening the context menu for item {ItemId} this time.");
+                        return false;
+                    }
+                    ag->OpenForItemSlot(inv, i, 0, retainerAgent->GetAddonId());
+                    var contextMenu = (AtkUnitBase*)Svc.GameGui.GetAddonByName("ContextMenu", 1).Address;
+                    // 重新取得的一次呼叫,各自判空(下面整段都在解參考它)。
                     var contextAgent = AgentInventoryContext.Instance();
+                    if (contextAgent == null)
+                        return false;
                     var indexOfRetrieveAll = -1;
                     var indexOfRetrieveQuantity = -1;
 
-                    int looper = 0;
-                    foreach (var contextObj in contextAgent->EventParams)
+                    // Addon#98 "Retrieve from Retainer" is the ONLY retrieve entry the game ever places in
+                    // the retainer item context menu. Addon#773 "Retrieve Quantity from Retainer" is not a
+                    // menu entry at all - it is the caption of the quantity dialog that the game opens by
+                    // itself once the selected stack holds more than one item. Verified against the client
+                    // data: Addon rows 88-99 are the inventory context-menu block (91 Discard, 92 Split,
+                    // 93 Sell, 96 Equip, 97 Entrust to Retainer, 98 Retrieve from Retainer, 99 Put Up for
+                    // Sale), while 772/773 live in the quantity-dialog block right next to 889/914 "Select
+                    // the desired quantity."; the client binary emits 97+98 together 24 times over and never
+                    // emits 773 anywhere near 98.
+                    // The old code asked for #773 whenever Quantity > 1, never found it, and therefore fired
+                    // no callback at all - the right-click menu opened and nothing was ever retrieved. The
+                    // caller (RetainerInfo.ExtractItem/ExtractSingular) already waits for the quantity dialog
+                    // and types the amount via InputNumericValue, so selecting #98 completes the flow.
+                    // #773 is still preferred when a client really does expose it, so this cannot regress.
+                    var retrieveAllText = LuminaSheets.AddonSheet[98].Text.ExtractText().Trim();
+                    var retrieveQuantityText = LuminaSheets.AddonSheet[773].Text.ExtractText().Trim();
+
+                    // Index the entries the way the game (and AutoRetainer, which works on this client) does:
+                    // the live menu occupies EventParams[ContexItemStartIndex .. +ContextItemCount]. Scanning
+                    // all 98 slots and counting only strings also matched stale leftovers from a previously
+                    // opened menu, and the resulting counter was not the menu row index the callback wants.
+                    var startIndex = Math.Clamp(contextAgent->ContexItemStartIndex, 0, 98);
+                    var itemCount = Math.Clamp(contextAgent->ContextItemCount, 0, 98 - startIndex);
+                    var labels = new string[itemCount];
+
+                    for (var entry = 0; entry < itemCount; entry++)
                     {
-                        if (contextObj.Type == FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String)
-                        {
-                            var label = MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String));
+                        var contextObj = contextAgent->EventParams[startIndex + entry];
+                        if (contextObj.Type is not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.String
+                            and not FFXIVClientStructs.FFXIV.Component.GUI.ValueType.ManagedString)
+                            continue;
 
-                            if (LuminaSheets.AddonSheet[98].Text == label.TextValue) indexOfRetrieveAll = looper;
-                            if (LuminaSheets.AddonSheet[773].Text == label.TextValue) indexOfRetrieveQuantity = looper;
+                        // 🔴 下面拿它去比 LuminaSheets.AddonSheet[98]/[773] 的 Text.ExtractText() ⇒ 這一端
+                        // 也要走 Lumina 解析器。ECommons 已標 [Obsolete] 的那支 ExtractText 會丟掉連字符
+                        // payload ⇒ 選單項目名含破折號時比不中,表現是「右鍵選單開了但什麼都沒取回」。
+                        var label = LuminaText.Extract(MemoryHelper.ReadSeStringNullTerminated(new IntPtr(contextObj.String))).Trim();
+                        // 讀窗文字做判定:讀到 U+FFFD 代表選單記憶體正在變動,這一幀不碰(回 false = 下一輪重來)。
+                        if (AddonPressGuard.IsTextCorrupt("ContextMenu", label)) return false;
+                        labels[entry] = label;
 
-                            looper++;
-                        }
+                        if (indexOfRetrieveAll == -1 && retrieveAllText == label) indexOfRetrieveAll = entry;
+                        if (indexOfRetrieveQuantity == -1 && retrieveQuantityText == label) indexOfRetrieveQuantity = entry;
                     }
+
+                    Svc.Log.Debug($"Artisan: retainer context menu for item {ItemId} (qty {item->Quantity}) - ContexItemStartIndex={contextAgent->ContexItemStartIndex}, ContextItemCount={contextAgent->ContextItemCount}, disabledMask=0x{contextAgent->ContextItemDisabledMask:X}, ContextMenu addon=0x{(nint)contextMenu:X}");
+                    for (var entry = 0; entry < itemCount; entry++)
+                    {
+                        var contextObj = contextAgent->EventParams[startIndex + entry];
+                        Svc.Log.Debug($"Artisan:   entry[{entry}] = EventParams[{startIndex + entry}] type={contextObj.Type} disabled={contextAgent->IsContextItemDisabled(entry)} text=\"{labels[entry] ?? "<not a string>"}\"");
+                    }
+                    Svc.Log.Debug($"Artisan: Addon#98 \"{retrieveAllText}\" -> index {indexOfRetrieveAll}; Addon#773 \"{retrieveQuantityText}\" -> index {indexOfRetrieveQuantity}");
 
                     if (contextMenu != null)
                     {
-                        if (item->Quantity == 1 || item->ItemId <= 19)
+                        // A single item (and crystals/shards, ItemId <= 19) is retrieved outright; a larger
+                        // stack makes the game raise the quantity dialog, which the caller then fills in.
+                        var index = item->Quantity == 1 || item->ItemId <= 19
+                            ? indexOfRetrieveAll
+                            : indexOfRetrieveQuantity >= 0 ? indexOfRetrieveQuantity : indexOfRetrieveAll;
+
+                        if (index == -1)
                         {
-                            if (indexOfRetrieveAll == -1) return true;
-                            Callback.Fire(contextMenu, true, 0, indexOfRetrieveAll, 0, 0, 0);
+                            Svc.Log.Warning($"Artisan: couldn't find \"{retrieveAllText}\" in the retainer item context menu, item {ItemId} was not retrieved. " +
+                                            $"Menu had {itemCount} entries starting at EventParams[{startIndex}]: {string.Join(" | ", labels.Select(x => x ?? "<not a string>"))}");
+                            return true;
                         }
-                        else
-                        {
-                            if (indexOfRetrieveQuantity == -1) return true;
-                            Callback.Fire(contextMenu, true, 0, indexOfRetrieveQuantity, 0, 0, 0);
-                        }
+
+                        if (contextAgent->IsContextItemDisabled(index))
+                            Svc.Log.Warning($"Artisan: context menu entry {index} (\"{labels[index]}\") is disabled, retrieving item {ItemId} will probably do nothing.");
+
+                        Svc.Log.Debug($"Artisan: firing retainer context menu entry {index} (\"{labels[index]}\") for item {ItemId}");
+                        // 🔴 送出前登記「這扇窗按過了」:本輪送出後遊戲還沒處理完,下一幀重新走到這裡會對同一扇窗再送一發,
+                        //    打在正在拆除的窗上就是攔不到的存取違規。
+                        // 📌 pressKey 用預設的空字串:Artisan 對一扇 ContextMenu 只會按一個項目;ContextMenu 是常駐窗,記號由「連續隱藏」解除(見 AddonPressGuard.HiddenReleaseFrames)。
+                        // 📌 前面沒有消耗型節流,所以直接放在送出動作前面(見 TryBeginPress 的 remarks)。
+                        // 🔴 被擋要回 false 讓呼叫端下一輪重試,不能回 true —— true 代表「已經送出」。
+                        if (!AddonPressGuard.TryBeginPress("ContextMenu", contextMenu))
+                            return false;
+                        Callback.Fire(contextMenu, true, 0, index, 0, 0, 0);
                         return true;
                     }
                 }
@@ -299,7 +477,7 @@ internal unsafe static class RetainerHandlers
 
     internal static bool InputNumericValue(int value)
     {
-        var numeric = (AtkUnitBase*)Svc.GameGui.GetAddonByName("InputNumeric", 1);
+        var numeric = (AtkUnitBase*)Svc.GameGui.GetAddonByName("InputNumeric", 1).Address;
         if (numeric != null)
         {
             Svc.Log.Debug($"{value}");
@@ -314,9 +492,33 @@ internal unsafe static class RetainerHandlers
         var text = Svc.Data.GetExcelSheet<Lumina.Excel.Sheets.Addon>().GetRow(13530).Text.ToDalamudString().GetText();
         if (TryGetAddonByName<AtkUnitBase>("RetainerItemTransferProgress", out var addon) && IsAddonReady(addon))
         {
-            var button = (AtkComponentButton*)addon->UldManager.NodeList[2]->GetComponent();
-            var nodetext = MemoryHelper.ReadSeString(&addon->UldManager.NodeList[2]->GetComponent()->UldManager.NodeList[2]->GetAsAtkTextNode()->NodeText).GetText();
-            if (nodetext == text && addon->UldManager.NodeList[2]->IsVisible() && button->IsEnabled && RetainerInfo.GenericThrottle)
+            // 🔴 GetComponent()／GetAsAtkTextNode() 在 FFXIVClientStructs 都是 [MemberFunction] 原生呼叫，對空節點呼叫是 AVE；
+            // IsEnabled 解的又是 OwnerNode（AtkComponentBase 的 [0xA8]），對 OwnerNode 零空指標檢查 ⇒ 只能在呼叫／讀取前先驗。
+            // 節點與元件一律先取到區域變數再用（重取是 TOCTOU）；上界也要驗 —— NodeListCount 不足時 NodeList[2]
+            // 讀到的是陣列後方的堆積垃圾，那不是 null，只做判空等於沒擋。任一層驗不過就這一幀不做事，下一輪重來。
+            var nodeCount = addon->UldManager.NodeListCount;
+            var nodeList = addon->UldManager.NodeList;
+            if (nodeCount <= 2 || nodeList == null) return false;
+            var progressNode = nodeList[2];
+            if (progressNode == null) return false;
+            var component = progressNode->GetComponent();
+            if (component == null) return false;
+            var innerCount = component->UldManager.NodeListCount;
+            var innerList = component->UldManager.NodeList;
+            if (innerCount <= 2 || innerList == null) return false;
+            var labelNode = innerList[2];
+            if (labelNode == null) return false;
+            var labelTextNode = labelNode->GetAsAtkTextNode();
+            if (labelTextNode == null) return false;
+
+            var button = (AtkComponentButton*)component;
+            var nodetext = MemoryHelper.ReadSeString(&labelTextNode->NodeText).GetText();
+            // 讀窗文字做判定:讀到 U+FFFD 代表窗記憶體正在變動,這一幀不碰。
+            if (AddonPressGuard.IsTextCorrupt("RetainerItemTransferProgress", nodetext)) return false;
+            // 這顆是關閉鈕,按下窗就關;GenericThrottle 100ms(~6 幀)落在關閉中的窗口內,不是防護。
+            // 守衛放在節流之後,同一扇窗只按一次。
+            if (nodetext == text && progressNode->IsVisible() && IsComponentEnabled(button) && RetainerInfo.GenericThrottle
+                && AddonPressGuard.TryBeginPress("RetainerItemTransferProgress", addon))
             {
                 button->ClickAddonButton(addon);
                 return true;
@@ -331,7 +533,16 @@ internal unsafe static class RetainerHandlers
 
     internal static bool? CloseAgentRetainer()
     {
-        var a = CSFramework.Instance()->UIModule->GetAgentModule()->GetAgentByInternalId(AgentId.Retainer);
+        // 五層鏈逐節判空(Framework isPointer:true 合法回 null,UIModule/AgentModule/agent 各層皆可 null)。
+        // 取不到=沒有東西要關,回 false。
+        var framework = CSFramework.Instance();
+        if (framework == null) return false;
+        var uiModule = framework->UIModule;
+        if (uiModule == null) return false;
+        var agentModule = uiModule->GetAgentModule();
+        if (agentModule == null) return false;
+        var a = agentModule->GetAgentByInternalId(AgentId.Retainer);
+        if (a == null) return false;
         if (a->IsAgentActive())
         {
             a->Hide();
@@ -349,11 +560,15 @@ internal unsafe static class RetainerHandlers
     {
         if (TryGetAddonByName<AddonSelectString>("SelectString", out var addon) && IsAddonReady(&addon->AtkUnitBase))
         {
+            // 讀窗文字做判定:任一列讀到 U+FFFD 代表窗記憶體正在變動,這一幀不碰。
+            if (GetEntries(addon).Any(x => AddonPressGuard.IsTextCorrupt("SelectString", x))) return false;
             var entry = GetEntries(addon).FirstOrDefault(x => x.StartsWithAny(text));
             if (entry != null)
             {
                 var index = GetEntries(addon).IndexOf(entry);
-                if (index >= 0 && RetainerInfo.GenericThrottle)
+                // 選了項目這扇選單就會關,擋重按的是守衛不是 100ms 節流;key 帶列號,與 SelectIconString 同慣例。
+                if (index >= 0 && RetainerInfo.GenericThrottle
+                    && AddonPressGuard.TryBeginPress("SelectString", &addon->AtkUnitBase, $"T|{index}"))
                 {
                     new AddonMaster.SelectString((nint)addon).Entries[(ushort)index].Select();
                     return true;

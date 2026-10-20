@@ -114,6 +114,8 @@ namespace Artisan.UI
                     SimulatorUIVeynVersion.Draw();
                     ImGui.EndTabItem();
                 }
+
+                ImGui.EndTabBar();
             }
 
 

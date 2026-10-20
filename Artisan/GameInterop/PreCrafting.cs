@@ -22,6 +22,8 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using static ECommons.GenericHelpers;
 using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 
@@ -1309,17 +1311,54 @@ public unsafe static class PreCrafting
            || Svc.Condition[ConditionFlag.OccupiedSummoningBell];
     }
 
+    // 接手按鈕時遊戲原函式不呼叫（Artisan 自己開始製作）；位址解不出或接手途中擲例外就交還遊戲、呼叫原函式恰好一次。
+    // 受管理例外穿出 detour＝遊戲崩潰，所以這裡一律不讓它出去。
     private static void ClickSynthButtons(void* thisPtr, AtkEventType eventType, int eventParam, AtkEvent* atkEvent, AtkEventData* atkEventData)
     {
         if (eventType == AtkEventType.ButtonClick && eventParam is 14 or 15 or 16)
         {
-            StartCraftingFromSynth(eventParam);
-        }
-        else
-        {
-            _clickButton?.OriginalDisposeSafe(thisPtr, eventType, eventParam, atkEvent, atkEventData);
+            if (FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Addresses.Instance.Value != 0)
+            {
+                try
+                {
+                    StartCraftingFromSynth(eventParam);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    ReportSynthTakeoverFailure(ex);
+                }
+            }
+            else
+            {
+                ReportSynthTakeoverFailure(null);
+            }
         }
 
+        _clickButton?.OriginalDisposeSafe(thisPtr, eventType, eventParam, atkEvent, atkEventData);
+    }
+
+    private static int _synthTakeoverFailureReported;
+
+    // 每次載入只記一次 Error、聊天說一次；detour 可能不在框架執行緒，聊天一律轉過去印（EzThrottler 不是執行緒安全的，不用它）。
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ReportSynthTakeoverFailure(Exception? ex)
+    {
+        if (Interlocked.Exchange(ref _synthTakeoverFailureReported, 1) != 0)
+            return;
+
+        try
+        {
+            Svc.Log.Error(ex, ex == null
+                ? "[改版防護] RecipeNote 的遊戲位址解不出：手動按製作手帳的「製作」交還遊戲原本的處理。"
+                : "[改版防護] 接手製作手帳的「製作」按鈕時擲出例外，已攔下並交還遊戲原本的處理。");
+            _ = Svc.Framework.Run(() => Svc.Chat.PrintError(
+                "[Artisan] 手動按製作手帳的「製作／簡易製作／製作練習」時，暫停先自動換職業、換裝、用食物藥水，按鈕照遊戲原本的行為。若遊戲剛改版，請等插件更新。"));
+        }
+        catch
+        {
+            // 回報本身也不可以把例外送回原生框架。
+        }
     }
 
     private static void StartCraftingFromSynth(int eventParam)

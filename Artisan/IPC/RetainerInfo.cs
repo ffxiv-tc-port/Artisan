@@ -1089,7 +1089,8 @@ namespace Artisan.IPC
         /// </summary>
         internal static void AbortRestock(string reason)
         {
-            if (RestockStartedAt != 0)
+            // 正常收尾那一步直接卸掉 Tick，RestockStartedAt 不會歸零 ⇒ 要連佇列一起看才知道還在補貨。
+            if (RestockStartedAt != 0 && TM.IsBusy)
             {
                 restockStopReason ??= reason;
                 Svc.Log.Information($"[Artisan][Restock] 停止從僱員補貨：{reason}。");

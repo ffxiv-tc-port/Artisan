@@ -333,7 +333,7 @@ namespace Artisan.CraftingLists
 
             var recipe = LuminaSheets.RecipeSheet[CraftingListUI.CurrentProcessedItem];
             // 先做素材插進來的配方不在 Recipes 裡。
-            var options = ListPrecraft.OptionsFor(selectedList, CraftingListUI.CurrentProcessedItem);
+            var options = ListPrecraft.OptionsFor(selectedList, CraftingListUI.CurrentProcessedItem, CurrentIndex);
             var isPrecraftEntry = ListPrecraft.IsPrecraftEntry(CurrentIndex);
             var config = options?.Override ?? P.Config.RecipeConfigs.GetValueOrDefault(CraftingListUI.CurrentProcessedItem) ?? new();
             var needToRepair = selectedList.Repair && RepairManager.GetMinEquippedPercent() < selectedList.RepairPercent && (RepairManager.CanRepairAny() || RepairManager.RepairNPCNearby(out _));

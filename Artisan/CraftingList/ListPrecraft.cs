@@ -30,8 +30,9 @@ namespace Artisan.CraftingLists
         private static int regionEnd;
         private static uint regionParent;
         private static readonly Dictionary<uint, int> rounds = new();
-        // 為了「只收 NQ 的簡易製作」而插入、本身不在清單裡的配方：照樣用簡易製作做。
-        private static readonly HashSet<uint> quickRecipes = new();
+        // 插入區間每一項各自的「用簡易製作」旗標，對應 ExpandedList[regionEnd - Count, regionEnd)。
+        // 逐項記而不是按配方記：同一個配方在別次插入可能要求一般製作。
+        private static readonly List<bool> regionQuick = new();
         private static readonly ListItemOptions QuickOptions = new() { NQOnly = true };
 
         internal static void Reset()
@@ -39,7 +40,7 @@ namespace Artisan.CraftingLists
             regionEnd = 0;
             regionParent = 0;
             rounds.Clear();
-            quickRecipes.Clear();
+            regionQuick.Clear();
         }
 
         internal static bool IsPrecraftEntry(int index) => index < regionEnd;
@@ -48,12 +49,18 @@ namespace Artisan.CraftingLists
         internal static uint ParentOf(int index) => IsPrecraftEntry(index) ? regionParent : 0;
 
         /// <summary>清單項目自己的選項優先；插入、不在清單裡的配方回 null（＝一般製作）或簡易製作選項。</summary>
-        internal static ListItemOptions? OptionsFor(NewCraftingList list, uint recipeId)
+        internal static ListItemOptions? OptionsFor(NewCraftingList list, uint recipeId, int index)
         {
             var item = list.Recipes.FirstOrDefault(x => x.ID == recipeId);
             if (item != null)
                 return item.ListItemOptions;
-            return quickRecipes.Contains(recipeId) ? QuickOptions : null;
+            return IsQuickEntry(index) ? QuickOptions : null;
+        }
+
+        private static bool IsQuickEntry(int index)
+        {
+            var offset = index - (regionEnd - regionQuick.Count);
+            return offset >= 0 && offset < regionQuick.Count && regionQuick[offset];
         }
 
         /// <summary>從 <paramref name="index"/> 起、同一個配方連續幾項。</summary>
@@ -69,9 +76,16 @@ namespace Artisan.CraftingLists
             return n;
         }
 
-        /// <summary>插入區間內、從 <paramref name="index"/> 起同一個配方還要做幾項（不越過區間尾）。</summary>
+        /// <summary>插入區間內、從 <paramref name="index"/> 起同一個配方、同一種做法還要做幾項（不越過區間尾）。</summary>
         internal static int PrecraftRun(NewCraftingList list, int index)
-            => Math.Min(ContiguousRun(list, index), Math.Max(0, regionEnd - index));
+        {
+            var n = Math.Min(ContiguousRun(list, index), Math.Max(0, regionEnd - index));
+            var quick = IsQuickEntry(index);
+            var k = 0;
+            while (k < n && IsQuickEntry(index + k) == quick)
+                k++;
+            return k;
+        }
 
         /// <summary>
         /// 試著為 <paramref name="parent"/> 補素材：成功＝已插入、回 true（呼叫端本幀直接 return，下一幀開始做第一項）；
@@ -124,20 +138,25 @@ namespace Artisan.CraftingLists
             }
 
             var entries = new List<uint>();
+            var flags = new List<bool>();
             foreach (var step in plan.Steps)
             {
                 entries.AddRange(Enumerable.Repeat(step.RecipeId, step.Crafts));
-                if (step.Quick && !list.Recipes.Any(x => x.ID == step.RecipeId))
-                    quickRecipes.Add(step.RecipeId);
+                var quick = step.Quick && !list.Recipes.Any(x => x.ID == step.RecipeId);
+                flags.AddRange(Enumerable.Repeat(quick, step.Crafts));
             }
 
             list.ExpandedList.InsertRange(index, entries);
             if (index < regionEnd)
             {
+                var offset = Math.Clamp(index - (regionEnd - regionQuick.Count), 0, regionQuick.Count);
+                regionQuick.InsertRange(offset, flags);
                 regionEnd += entries.Count;
             }
             else
             {
+                regionQuick.Clear();
+                regionQuick.AddRange(flags);
                 regionEnd = index + entries.Count;
                 regionParent = parent.RowId;
             }

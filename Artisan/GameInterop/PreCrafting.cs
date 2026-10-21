@@ -596,7 +596,7 @@ public unsafe static class PreCrafting
         if (IsItemEquipped(ItemId))
             return TaskResult.Done;
 
-        var pos = FindItemInInventory(ItemId, [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4, InventoryType.ArmoryMainHand, InventoryType.ArmoryHands]);
+        var pos = FindItemInInventory(ItemId, EquipItemSources);
         if (pos == null)
         {
             DuoLog.Error($"Failed to find item {LuminaSheets.ItemSheet[ItemId].Name} (ID: {ItemId}) in inventory");
@@ -1274,6 +1274,13 @@ public unsafe static class PreCrafting
     }
 
     public static bool IsItemEquipped(uint ItemId) => InventoryManager.Instance()->GetItemCountInContainer(ItemId, InventoryType.EquippedItems) > 0;
+
+    // TaskEquipItem 只從這幾頁拿；不在這裡也沒裝備著＝它會暫停清單。
+    private static readonly InventoryType[] EquipItemSources = [InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4, InventoryType.ArmoryMainHand, InventoryType.ArmoryHands];
+
+    /// <summary>TaskEquipItem 會不會找得到這件道具（已裝備，或在它會去拿的那幾頁）。只在主執行緒呼叫。</summary>
+    public static bool CanEquipItem(uint itemId)
+        => InventoryManager.Instance() != null && (IsItemEquipped(itemId) || FindItemInInventory(itemId, EquipItemSources) != null);
 
     private static (InventoryType inv, int slot)? FindItemInInventory(uint ItemId, IEnumerable<InventoryType> inventories)
     {

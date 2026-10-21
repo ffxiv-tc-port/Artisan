@@ -1,3 +1,4 @@
+using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using ECommons.DalamudServices;
@@ -102,6 +103,13 @@ namespace Artisan.CraftingLists
             var run = ContiguousRun(list, index);
             if (run < 1)
                 return false;
+
+            var parentBlocked = WhyParentBlocked(parent, CharacterInfo.JobID);
+            if (parentBlocked != null)
+            {
+                Svc.Log.Information($"[Artisan][先做素材] {parentName} 缺素材，但素材補齊了也做不了（{parentBlocked}），不先做素材；照原本跳過。");
+                return false;
+            }
 
             var reasons = new Dictionary<uint, string>();
             var parentModel = ToModel(parent, parentQuick);
@@ -219,12 +227,30 @@ namespace Artisan.CraftingLists
                     return "還沒讀過需要的秘笈";
             }
 
-            if (r.ItemRequired.RowId != 0)
+            return WhyCannotEquipOrSwitch(r, job, current);
+        }
+
+        /// <summary>
+        /// 清單之後輪到父配方本身時會擋下的條件（換職業、裝備必要道具、等級寬限 5 級），提前判；
+        /// 秘笈在呼叫 TryInsert 之前就判過了。
+        /// </summary>
+        private static string? WhyParentBlocked(Recipe parent, Job current)
+        {
+            var job = (Job)(parent.CraftType.RowId + 8);
+            var need = parent.RecipeLevelTable.ValueNullable?.ClassJobLevel;
+            if (need != null)
             {
-                var (nq, hq) = Have(r.ItemRequired.RowId);
-                if (nq + hq == 0)
-                    return $"需要裝備 {r.ItemRequired.RowId.NameOfItem()}，但身上沒有";
+                var lv = CharacterInfo.JobLevel(job);
+                if (lv < need.Value - 5)
+                    return $"{job} 等級 {lv} 比配方等級 {need.Value} 低超過 5 級";
             }
+            return WhyCannotEquipOrSwitch(parent, job, current);
+        }
+
+        private static string? WhyCannotEquipOrSwitch(Recipe r, Job job, Job current)
+        {
+            if (r.ItemRequired.RowId != 0 && !PreCrafting.CanEquipItem(r.ItemRequired.RowId))
+                return $"需要裝備 {r.ItemRequired.RowId.NameOfItem()}，但身上、背包、兵裝庫的主手與手部欄都沒有";
 
             if (job != current && !HasGearset(job))
                 return $"沒有 {job} 的套裝";

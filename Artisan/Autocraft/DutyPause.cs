@@ -99,6 +99,9 @@ namespace Artisan.Autocraft
                 changed = "期間清單被繼續或取消過";
             else if (mode == IPC.IPC.ArtisanMode.Lists && !CraftingListUI.Processing)
                 changed = "清單已經不在執行";
+            // StopCraftingRequest 的 setter 在這兩種狀態下不會真的恢復。
+            else if (Svc.Condition[ConditionFlag.WaitingForDutyFinder] || Svc.Condition[ConditionFlag.BoundByDuty])
+                changed = "要恢復時又在排任務或已在任務中";
 
             if (changed != null)
             {

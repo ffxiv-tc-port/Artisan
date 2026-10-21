@@ -23,7 +23,8 @@ namespace Artisan.Autocraft
         internal static void Init()
         {
             Usables = Svc.Data.GetExcelSheet<Item>().Where(i => i.ItemAction.RowId > 0).ToDictionary(i => i.RowId, i => i.Name.ToString().ToLower())
-            .Concat(Svc.Data.GetExcelSheet<EventItem>().Where(i => i.Action.RowId > 0).ToDictionary(i => i.RowId, i => i.Name.ToString().ToLower()))
+            // 台服 EventItem 的名稱放在 Singular（Name 幾乎全空）；Name 有值時照舊用 Name。
+            .Concat(Svc.Data.GetExcelSheet<EventItem>().Where(i => i.Action.RowId > 0).ToDictionary(i => i.RowId, i => (i.Name.IsEmpty ? i.Singular : i.Name).ToString().ToLower()))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
             Food = Svc.Data.GetExcelSheet<Item>().Where(IsCraftersFood).Select(x => (x.RowId, x.Name.ToString())).ToArray();
             Pots = Svc.Data.GetExcelSheet<Item>().Where(IsCraftersPot).Select(x => (x.RowId, x.Name.ToString())).ToArray();

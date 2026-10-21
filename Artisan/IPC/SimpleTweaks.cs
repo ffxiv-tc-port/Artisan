@@ -77,13 +77,21 @@ namespace Artisan.IPC
 
         private static object? FindImprovedLogTweak()
         {
+            // 查不到就放掉快取，不讓已停用或移除的 SimpleTweaks 實例與 tweak 一直被留著。
             if (!DalamudReflector.TryGetDalamudPlugin("SimpleTweaksPlugin", out var tweaks, false, true) || tweaks == null)
+            {
+                improvedLogOwner = improvedLogTweak = null;
                 return null;
+            }
             if (ReferenceEquals(tweaks, improvedLogOwner) && improvedLogTweak != null && improvedLogTweak.GetFoP("IsDisposed") is false)
                 return improvedLogTweak;
 
             var plugin = tweaks.GetFoP("Plugin");
-            if (plugin == null) return null;
+            if (plugin == null)
+            {
+                improvedLogOwner = improvedLogTweak = null;
+                return null;
+            }
 
             var baseTweak = plugin.Call("GetTweakById", ["ImprovedCraftingLog", plugin.GetFoP("Tweaks")]);
             improvedLogOwner = tweaks;

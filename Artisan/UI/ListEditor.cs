@@ -906,7 +906,7 @@ internal class ListEditor : Window, IDisposable
                 {
                     if (LuminaSheets.ItemSheet.ContainsKey(item.Key))
                     {
-                        if (CraftingListHelpers.SelectedRecipesCraftable[item.Key]) continue;
+                        if (CraftingListHelpers.IsSelectedRecipeCraftable(item.Key)) continue;
                         ImGui.PushID($"###SubTableItem{item}");
                         var sheetItem = LuminaSheets.ItemSheet[item.Key];
                         var name = sheetItem.Name.ToString();

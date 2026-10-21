@@ -7,12 +7,17 @@ using Lumina.Excel.Sheets;
 using OtterGui;
 using OtterGui.Extensions;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 
 internal static class CraftingListHelpers
-{    
-    internal static Dictionary<uint, bool> SelectedRecipesCraftable = new();
+{
+    // 會被執行緒池（清單表格重建、僱員補貨）與框架執行緒同時寫；讀一律 IsSelectedRecipeCraftable，缺鍵＝false。
+    internal static readonly ConcurrentDictionary<uint, bool> SelectedRecipesCraftable = new();
+
+    internal static bool IsSelectedRecipeCraftable(uint itemId)
+        => SelectedRecipesCraftable.TryGetValue(itemId, out var craftable) && craftable;
 
     public static void AddRecipeIngredientsToList(Recipe? recipe, ref Dictionary<uint, int> ingredientList, bool addSublist = true, NewCraftingList? selectedList = null)
     {
@@ -106,7 +111,7 @@ internal static class CraftingListHelpers
 
         foreach (var requiredItem in tempMaterialList)
         {
-            if (SelectedRecipesCraftable[requiredItem.Key])
+            if (IsSelectedRecipeCraftable(requiredItem.Key))
             {
                 var recipe = GetIngredientRecipe(requiredItem.Key);
                 if (list.Recipes.Any(x => x.ID == recipe.Value.RowId))

@@ -32,7 +32,7 @@ namespace Artisan.IPC
         /// <summary>Artisan 設定裡有沒有開 Universalis 查價；沒開時每一列都不會有價格。</summary>
         public bool UniversalisEnabled { get; set; }
 
-        /// <summary>true＝查價範圍是單一世界（「限制在目前資料中心」那個選項），最佳世界只會是查價當時所在的世界。</summary>
+        /// <summary>true＝查價範圍是單一世界（「將Universalis限制為目前所在的伺服器」那個選項；欄位名沿用舊的 DC），最佳世界只會是查價當時所在的世界。</summary>
         public bool PriceScopeSingleWorld { get; set; }
 
         public List<ShoppingPlanItem> Items { get; set; } = new();

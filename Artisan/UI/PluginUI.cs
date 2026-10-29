@@ -1026,8 +1026,10 @@ namespace Artisan.UI
 
                     if (P.Config.UseUniversalis)
                     {
-                        if (ImGui.Checkbox("Limit Universalis to current DC".Loc(), ref P.Config.LimitUnversalisToDC))
+                        if (ImGui.Checkbox("Limit Universalis to current world".Loc(), ref P.Config.LimitUnversalisToDC))
                             P.Config.Save();
+
+                        ImGuiComponents.HelpMarker("Only fetches prices from the world you are currently on (while visiting another world, that world). Unchecked: every world in your region.".Loc());
 
                         if (ImGui.Checkbox("Only Fetch Prices on Demand".Loc(), ref P.Config.UniversalisOnDemand))
                             P.Config.Save();

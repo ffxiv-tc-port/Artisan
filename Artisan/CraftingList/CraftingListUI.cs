@@ -32,7 +32,7 @@ namespace Artisan.CraftingLists
     {
         internal static string Search = string.Empty;
         public static unsafe InventoryManager* invManager = InventoryManager.Instance();
-        public static ConcurrentDictionary<Recipe, bool> CraftableItems = new();
+        public static ConcurrentDictionary<Recipe, bool> CraftableItems = new(RecipeRowComparer.Instance);
         /// <summary>登出時清掉了 <see cref="CraftableItems"/>、還沒為目前角色重建。登出回呼設、LoadCache 開頭清、繪製讀。</summary>
         internal static volatile bool CraftableItemsStale;
         internal static ConcurrentDictionary<int, int> SelectedRecipeRawIngredients = new();

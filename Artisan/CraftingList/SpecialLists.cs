@@ -614,7 +614,7 @@ namespace Artisan.CraftingLists
 
             if (!withSubcrafts)
             {
-                foreach (var recipe in recipes.Distinct())
+                foreach (var recipe in recipes.Distinct(RecipeRowComparer.Instance))
                 {
                     craftingList.Recipes.Add(new ListItem() { ID = recipe.RowId, Quantity = 1, ListItemOptions = new() });
                 }
@@ -624,7 +624,7 @@ namespace Artisan.CraftingLists
             }
             else
             {
-                foreach (var recipe in recipes.Distinct())
+                foreach (var recipe in recipes.Distinct(RecipeRowComparer.Instance))
                 {
                     Svc.Log.Debug($"{recipe.RowId.NameOfRecipe()}");
                     CraftingListUI.AddAllSubcrafts(recipe, craftingList, 1);

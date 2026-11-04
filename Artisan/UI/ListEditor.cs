@@ -832,7 +832,7 @@ internal class ListEditor : Window, IDisposable
             ImGuiEx.SetNextItemFullWidth();
             if (ImGui.BeginCombo("###ListCopyCombo", copyList is null ? "" : copyList.Name))
             {
-                if (ImGui.Selectable($""))
+                if (ImGui.Selectable("##none"))
                 {
                     copyList = null;
                 }
@@ -1250,7 +1250,7 @@ internal class ListEditor : Window, IDisposable
         ImGui.Text("Search".Loc());
         ImGui.SameLine();
         ImGui.InputText("###RecipeSearch", ref Search, 150);
-        if (ImGui.Selectable(string.Empty, SelectedRecipe == null))
+        if (ImGui.Selectable("##none", SelectedRecipe == null))
         {
             SelectedRecipe = null;
         }

@@ -613,7 +613,8 @@ public static class Simulator
         if (potency == 0)
             return 0;
 
-        float buffMod = (1 + (step.GreatStridesLeft > 0 ? 1 : 0) + (step.InnovationLeft > 0 ? 0.5f : 0)) * (100 + 10 * step.IQStacks) / 100;
+        float buffMod = 1 + (step.GreatStridesLeft > 0 ? 1 : 0) + (step.InnovationLeft > 0 ? 0.5f : 0);
+        float iqMod = (100 + 10 * step.IQStacks) / 100f;
 
         float condMod = step.Condition switch
         {
@@ -622,11 +623,11 @@ public static class Simulator
             Condition.Poor => 0.5f,
             _ => 1
         };
-        // note: the multiplication order matters. buffMod is not exactly representable as a float for most
-        // inner quiet stacks (e.g. IQ=3 yields 1.29999995 rather than 1.3), and folding potency in first
-        // (potency * buffMod) rounds that deficit away, producing an off-by-one against the game.
-        // applying buffMod to the base quality first reproduces the game exactly.
-        return (int)(BaseQuality(craft) * buffMod * condMod * potency / 100);
+        // 乘法順序是契約：遊戲的結果帶 float 捨入誤差（基礎品質 330、內靜 3 層得 428 不是 429），換順序可能差 1 點。
+        // 內靜不能先和 potency 併（捨入把誤差吃掉，得 429），也不能先和 buffMod 併
+        // （2.1f 低於 2.1，基礎品質 445 的 4.2 倍會變 1868，遊戲是 1869）。
+        // ⚠️ 遊戲真正的順序未知；這個順序只是與實機樣本全部吻合。
+        return (int)(BaseQuality(craft) * buffMod * iqMod * condMod * potency / 100);
     }
 
     public static bool WillFinishCraft(CraftState craft, StepState step, Skills action) => step.FinalAppraisalLeft == 0 && step.Progress + CalculateProgress(craft, step, action) >= craft.CraftProgress;

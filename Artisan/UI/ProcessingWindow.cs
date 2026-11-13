@@ -1,7 +1,9 @@
-﻿using Artisan.CraftingLists;
+﻿using Artisan.Autocraft;
+using Artisan.CraftingLists;
 using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Dalamud.Interface.Windowing;
+using ECommons.DalamudServices;
 using ECommons.ImGuiMethods;
 using ECommons.LanguageHelpers;
 using Dalamud.Bindings.ImGui;
@@ -59,27 +61,24 @@ namespace Artisan.UI
         {
             if (CraftingListUI.Processing)
             {
-                CraftingListFunctions.ProcessList(CraftingListUI.selectedList);
-
-                //if (ImGuiEx.AddHeaderIcon("OpenConfig", FontAwesomeIcon.Cog, new ImGuiEx.HeaderIconOptions() { Tooltip = "Open Config" }))
-                //{
-                //    P.PluginUi.IsOpen = true;
-                //}
-
-                ImGui.Text("Now Processing: ??".Loc(CraftingListUI.selectedList.Name));
-                ImGui.Separator();
-                ImGui.Spacing();
-                if (CraftingListUI.CurrentProcessedItem != 0)
+                // 擲例外會讓 Dalamud 把整個視窗換成錯誤面板，下面的暫停／取消鈕跟著消失 ⇒ 在這裡接住並暫停清單。
+                // ProcessList 不推彈任何 ImGui 樣式，try 裡沒有要對稱收尾的堆疊。
+                try
                 {
-                    ImGuiEx.TextV("Crafting: ??".Loc(CraftingListUI.CurrentProcessedItem.NameOfRecipeOrThrow()));
-                    if (ListPrecraft.ParentOf(CraftingListFunctions.CurrentIndex) is var precraftFor and not 0)
-                        ImGuiEx.TextV("Making missing materials for: ??".Loc(precraftFor.NameOfRecipe()));
-                    ImGuiEx.TextV("Current Item Progress: ?? / ??".Loc(CraftingListUI.CurrentProcessedItemCount, CraftingListUI.CurrentProcessedItemListCount));
-                    ImGuiEx.TextV("Overall List Progress: ?? / ??".Loc(CraftingListFunctions.CurrentIndex + 1, CraftingListUI.selectedList.ExpandedList.Count));
+                    CraftingListFunctions.ProcessList(CraftingListUI.selectedList);
+                }
+                catch (Exception ex)
+                {
+                    OnProcessListFault(ex);
+                }
 
-                    string duration = CraftingListFunctions.ListEndTime == TimeSpan.Zero ? "Unknown".Loc() : string.Format("{0:D2}d {1:D2}h {2:D2}m {3:D2}s", CraftingListFunctions.ListEndTime.Days, CraftingListFunctions.ListEndTime.Hours, CraftingListFunctions.ListEndTime.Minutes, CraftingListFunctions.ListEndTime.Seconds);
-                    ImGuiEx.TextV("Approximate Remaining Duration: ??".Loc(duration));
-
+                try
+                {
+                    DrawProgress();
+                }
+                catch (Exception ex)
+                {
+                    FaultOnce.Report("ProcessingWindow 進度文字", ex);
                 }
 
                 if (!CraftingListFunctions.Paused)
@@ -116,6 +115,45 @@ namespace Artisan.UI
                     PreCrafting.Tasks.Clear();
                     Crafting.CraftFinished -= CraftingListUI.UpdateListTimer;
                 }
+            }
+        }
+
+        // 與「暫停」鈕做同樣的事；只在清單跑著且沒暫停時才停並說明，暫停中重擲（例如素材表建不起來）只進 log。
+        private static void OnProcessListFault(Exception ex)
+        {
+            FaultOnce.Report("製作清單處理", ex);
+            if (!CraftingListUI.Processing || CraftingListFunctions.Paused)
+                return;
+
+            Endurance.NotifyForcedStop("製作清單處理時發生錯誤");
+            CraftingListFunctions.Paused = true;
+            P.TM.Abort();
+            CraftingListFunctions.CLTM.Abort();
+            PreCrafting.Tasks.Clear();
+            Svc.Chat.PrintError("[Artisan] " + "The crafting list hit an error and has been paused. Press Resume to try again, or Cancel to stop. Details are in the log.".Loc());
+        }
+
+        private static void DrawProgress()
+        {
+            //if (ImGuiEx.AddHeaderIcon("OpenConfig", FontAwesomeIcon.Cog, new ImGuiEx.HeaderIconOptions() { Tooltip = "Open Config" }))
+            //{
+            //    P.PluginUi.IsOpen = true;
+            //}
+
+            ImGui.Text("Now Processing: ??".Loc(CraftingListUI.selectedList.Name));
+            ImGui.Separator();
+            ImGui.Spacing();
+            if (CraftingListUI.CurrentProcessedItem != 0)
+            {
+                ImGuiEx.TextV("Crafting: ??".Loc(CraftingListUI.CurrentProcessedItem.NameOfRecipeOrThrow()));
+                if (ListPrecraft.ParentOf(CraftingListFunctions.CurrentIndex) is var precraftFor and not 0)
+                    ImGuiEx.TextV("Making missing materials for: ??".Loc(precraftFor.NameOfRecipe()));
+                ImGuiEx.TextV("Current Item Progress: ?? / ??".Loc(CraftingListUI.CurrentProcessedItemCount, CraftingListUI.CurrentProcessedItemListCount));
+                ImGuiEx.TextV("Overall List Progress: ?? / ??".Loc(CraftingListFunctions.CurrentIndex + 1, CraftingListUI.selectedList.ExpandedList.Count));
+
+                string duration = CraftingListFunctions.ListEndTime == TimeSpan.Zero ? "Unknown".Loc() : string.Format("{0:D2}d {1:D2}h {2:D2}m {3:D2}s", CraftingListFunctions.ListEndTime.Days, CraftingListFunctions.ListEndTime.Hours, CraftingListFunctions.ListEndTime.Minutes, CraftingListFunctions.ListEndTime.Seconds);
+                ImGuiEx.TextV("Approximate Remaining Duration: ??".Loc(duration));
+
             }
         }
     }

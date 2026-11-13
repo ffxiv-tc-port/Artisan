@@ -364,6 +364,7 @@ public unsafe class Artisan : IDalamudPlugin
             ECommons.GenericHelpers.Safe(() => Sounds.SoundPlayer.Dispose());
             ECommons.GenericHelpers.Safe(IPC.IPC.Dispose);
         }
+        ECommons.GenericHelpers.Safe(SimpleTweaks.RestoreImprovedLogTweak);
         ECommons.GenericHelpers.Safe(AddonPressGuard.ForceTeardown);
         ECommonsMain.Dispose();
         P = null!;

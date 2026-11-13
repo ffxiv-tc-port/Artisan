@@ -1,6 +1,10 @@
-﻿using ECommons.Logging;
+﻿using ECommons.DalamudServices;
+using ECommons.Logging;
 using ECommons.Reflection;
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 
 namespace Artisan.IPC
 {
@@ -64,9 +68,71 @@ namespace Artisan.IPC
 
             var baseTweak = FindImprovedLogTweak();
             if (baseTweak == null || !(bool)baseTweak.GetFoP("Enabled")) return;
-            baseTweak.SetFoP("Enabled", false);
+            SetTweakEnabled(baseTweak, false);
+            disabledByArtisan = baseTweak;
 
             DuoLog.Information($"Improved Crafting Log Tweak is disabled whilst using Artisan.");
+        }
+
+        // Artisan 自己關掉的那一份；卸載時只還原它。SimpleTweaks 換實例或解析不到時一併放掉，不留住別人的組件。
+        private static object? disabledByArtisan;
+        private static bool restoreSkipLogged;
+
+        /// <summary>Artisan 卸載時呼叫（框架執行緒）：把 Artisan 關掉的 ImprovedCraftingLog 開回來。</summary>
+        /// <remarks>只在「同一份 tweak、現在仍關著、SimpleTweaks 設定仍把它列為開」時還原 ⇒ 使用者原本就關、或之後自己在 SimpleTweaks 關掉的都不動。
+        /// 遊戲關閉中不呼叫別的插件；不還原無妨，SimpleTweaks 下次載入照它自己的設定開。</remarks>
+        internal static void RestoreImprovedLogTweak()
+        {
+            if (disabledByArtisan == null)
+                return;
+
+            if (Svc.Framework.IsFrameworkUnloading)
+            {
+                if (!restoreSkipLogged)
+                {
+                    restoreSkipLogged = true;
+                    Svc.Log.Warning("[Artisan] 遊戲關閉中，不還原 SimpleTweaks 的 Improved Crafting Log（SimpleTweaks 下次載入會照它自己的設定開回來）。");
+                }
+                disabledByArtisan = null;
+                return;
+            }
+
+            var tweak = FindImprovedLogTweak();
+            var ours = disabledByArtisan;
+            disabledByArtisan = null;
+            if (tweak == null || !ReferenceEquals(tweak, ours) || (bool)tweak.GetFoP("Enabled") || !StillWantedBySimpleTweaks())
+                return;
+
+            SetTweakEnabled(tweak, true);
+            Svc.Log.Information("[Artisan] 卸載：已把 Artisan 關掉的 SimpleTweaks Improved Crafting Log 開回來。");
+        }
+
+        // 走 SimpleTweaks 自己勾選框用的 InternalEnable／InternalDisable（掛／拆 hook、指令與事件）；只翻 Enabled 會留下仍掛著的 hook。
+        // 不碰它的 EnabledTweaks 設定 ⇒ 這次關閉只在本次執行有效。找不到方法（別的 SimpleTweaks 版本）才退回只翻旗標。
+        private static void SetTweakEnabled(object tweak, bool enabled)
+        {
+            var method = tweak.GetType().GetMethod(enabled ? "InternalEnable" : "InternalDisable",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, Type.EmptyTypes);
+            if (method != null)
+                method.Invoke(tweak, null);
+            else
+                tweak.SetFoP("Enabled", enabled);
+        }
+
+        // SimpleTweaks 設定的 EnabledTweaks 仍含這個 tweak＝使用者要它開；讀不到設定就當要。
+        private static bool StillWantedBySimpleTweaks()
+        {
+            try
+            {
+                if (DalamudReflector.TryGetDalamudPlugin("SimpleTweaksPlugin", out var tweaks, false, true) && tweaks != null
+                    && tweaks.GetFoP("Plugin")?.GetFoP("PluginConfig")?.GetFoP("EnabledTweaks") is IEnumerable<string> enabled)
+                    return enabled.Contains("ImprovedCraftingLog", StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                Svc.Log.Information($"[Artisan] 讀不到 SimpleTweaks 的已啟用清單（{ex.GetType().Name}），照 Artisan 關掉前的狀態還原。");
+            }
+            return true;
         }
 
         // 上一次 GetTweakById 解析到的 tweak 與當時的 SimpleTweaks 實例；只在框架執行緒讀寫。
@@ -80,7 +146,7 @@ namespace Artisan.IPC
             // 查不到就放掉快取，不讓已停用或移除的 SimpleTweaks 實例與 tweak 一直被留著。
             if (!DalamudReflector.TryGetDalamudPlugin("SimpleTweaksPlugin", out var tweaks, false, true) || tweaks == null)
             {
-                improvedLogOwner = improvedLogTweak = null;
+                improvedLogOwner = improvedLogTweak = disabledByArtisan = null;
                 return null;
             }
             if (ReferenceEquals(tweaks, improvedLogOwner) && improvedLogTweak != null && improvedLogTweak.GetFoP("IsDisposed") is false)
@@ -89,13 +155,15 @@ namespace Artisan.IPC
             var plugin = tweaks.GetFoP("Plugin");
             if (plugin == null)
             {
-                improvedLogOwner = improvedLogTweak = null;
+                improvedLogOwner = improvedLogTweak = disabledByArtisan = null;
                 return null;
             }
 
             var baseTweak = plugin.Call("GetTweakById", ["ImprovedCraftingLog", plugin.GetFoP("Tweaks")]);
             improvedLogOwner = tweaks;
             improvedLogTweak = baseTweak;
+            if (!ReferenceEquals(baseTweak, disabledByArtisan))
+                disabledByArtisan = null;
             return baseTweak;
         }
     }

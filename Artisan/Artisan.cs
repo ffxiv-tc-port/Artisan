@@ -260,21 +260,21 @@ public unsafe class Artisan : IDalamudPlugin
     private void OnFrameworkUpdate(IFramework framework)
     {
         // 「這扇窗按過了」守衛的解除點:放最前面、不受登入與任何開關限制(理由見 AddonPressGuard.Tick)。
-        AddonPressGuard.Tick();
+        Step("AddonPressGuard.Tick", AddonPressGuard.Tick);
         // Artisan.IsBusy 是別的外掛高頻輪詢的 IPC 端點,不能讓它從呼叫端執行緒直接讀
         // TaskManager 的裸 List,也不能用五秒逾時的閘門把呼叫端卡住 ⇒ 由這裡每幀推一份快照。
         // 🔴 放在登入檢查之前、不受任何開關限制:登出那一幀也要發佈,
         //    否則快照會永遠停在登出前的「忙」。
-        IPC.IPC.PublishBusySnapshot();
+        Step("PublishBusySnapshot", IPC.IPC.PublishBusySnapshot);
         // AllaganTools 的物品事件回呼跑在對方的執行緒上，只在那裡記筆數；真正的條件判斷與
         // 僱員快取清除在這裡做。放在登入檢查之前：排乾一定會發生，計數不會跨登入累積。
-        RetainerInfo.DrainInventoryEvents();
-        RetainerInfo.RefreshAToolsIfRequested();
-        WatchRecipeNote();
+        Step("RetainerInfo.DrainInventoryEvents", RetainerInfo.DrainInventoryEvents);
+        Step("RetainerInfo.RefreshAToolsIfRequested", RetainerInfo.RefreshAToolsIfRequested);
+        Step("WatchRecipeNote", WatchRecipeNote);
 
         if (!Svc.ClientState.IsLoggedIn)
         {
-            Endurance.ToggleEndurance(false);
+            Step("Endurance.ToggleEndurance(false)", static () => Endurance.ToggleEndurance(false));
             CraftingListUI.Processing = false;
             // 沒登入時 UpdateCharaStats 不會跑：在這裡放掉指向舊角色狀態表的部隊加成包裝。
             CharacterInfo.FCCraftsmanshipbuff = null;
@@ -288,25 +288,39 @@ public unsafe class Artisan : IDalamudPlugin
         if (Endurance.Enable || (CraftingListUI.Processing && !CraftingListFunctions.Paused))
             TataruPraiseIPC.ArmStopNotice();
 
-        CharacterInfo.UpdateCharaStats();
-        Crafting.Update();
-        SimpleTweaks.DisableImprovedLogTweak();
-        PreCrafting.Update();
-        Endurance.Update();
+        Step("CharacterInfo.UpdateCharaStats", CharacterInfo.UpdateCharaStats);
+        Step("Crafting.Update", Crafting.Update);
+        Step("SimpleTweaks.DisableImprovedLogTweak", SimpleTweaks.DisableImprovedLogTweak);
+        Step("PreCrafting.Update", PreCrafting.Update);
+        Step("Endurance.Update", Endurance.Update);
 
         if (cw.RepeatTrial && !Endurance.Enable)
         {
-            Operations.RepeatTrialCraft();
+            Step("Operations.RepeatTrialCraft", Operations.RepeatTrialCraft);
         }
 
         PluginUi.CraftingVisible = Crafting.CurState is not Crafting.State.IdleNormal and not Crafting.State.IdleBetween;
 
         if (!Endurance.Enable)
-            Endurance.DrawRecipeData();
+            Step("Endurance.DrawRecipeData", Endurance.DrawRecipeData);
 
         if (CraftingListUI.Processing && !CraftingListFunctions.Paused)
         {
             CraftingListFunctions.ListEndTime -= framework.UpdateDelta;
+        }
+    }
+
+    // 每步各自隔離：一步擲例外不讓同幀後面的步驟跳過，下一幀照樣重跑；同一步同一種例外只記一次。
+    // 傳入的都是靜態方法群組或不捕獲的 static lambda ⇒ 委派由編譯器快取，每幀不配置。
+    private static void Step(string name, Action step)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            FaultOnce.Report("OnFrameworkUpdate " + name, ex);
         }
     }
 

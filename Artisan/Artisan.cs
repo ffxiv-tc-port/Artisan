@@ -366,6 +366,7 @@ public unsafe class Artisan : IDalamudPlugin
             ECommons.GenericHelpers.Safe(IPC.IPC.Dispose);
         }
         ECommons.GenericHelpers.Safe(SimpleTweaks.RestoreImprovedLogTweak);
+        ECommons.GenericHelpers.Safe(RepairManager.Dispose);
         ECommons.GenericHelpers.Safe(AddonPressGuard.ForceTeardown);
         ECommonsMain.Dispose();
         P = null!;

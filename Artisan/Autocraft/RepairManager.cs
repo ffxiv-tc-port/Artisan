@@ -3,8 +3,11 @@ using Artisan.GameInterop;
 using Artisan.RawInformation;
 using Artisan.RawInformation.Character;
 using Artisan.UI;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Plugin.Services;
 using ECommons;
 using ECommons.Automation;
 using ECommons.DalamudServices;
@@ -352,12 +355,75 @@ namespace Artisan.Autocraft
 
             return false;
         }
+        // 修理 NPC 的選單（SelectIconString）由 Artisan 按；YesAlready 的清單功能會在選單 PostSetup 按同一扇 ⇒ 開選單前與選單 PreSetup 都請它暫停，
+        // 暫停連續生效 NpcMenuSettleMs 才按（之前它按下的那一扇有時間關完），問不到就不開也不按。以下只在框架執行緒讀寫。
+        private const int NpcMenuPauseMs = 5_000;
+        private const long NpcMenuRenewBeforeMs = 3_000;
+        private const long NpcMenuSettleMs = 500;
+        private const long NpcMenuInteractWindowMs = 5_000;
+        private static long _npcMenuClaimFrom;
+        private static long _npcMenuClaimUntil;
+        private static long _npcMenuInteractUntil;
+        private static long _nextNpcMenuFailLogAt;
+        private static bool _npcMenuListenerRegistered;
+        private static readonly IAddonLifecycle.AddonEventDelegate NpcMenuPreSetup = OnNpcMenuPreSetup;
+
+        /// <returns>true＝YesAlready 的選單功能現在確定讓開（暫停中、沒開或沒載入）。</returns>
+        private static bool ClaimNpcMenu(bool force)
+        {
+            var now = Environment.TickCount64;
+            if (!force && _npcMenuClaimUntil - now > NpcMenuRenewBeforeMs)
+                return true;
+
+            if (YesAlreadyBotherPause.Pause("SelectIconString", NpcMenuPauseMs) == YesAlreadyBotherPause.Result.Failed)
+            {
+                _npcMenuClaimUntil = 0;
+                if (now >= _nextNpcMenuFailLogAt)
+                {
+                    _nextNpcMenuFailLogAt = now + 30_000;
+                    Svc.Log.Information("[Artisan][修理] 無法請 YesAlready 暫停 NPC 選單（可能和它同時按到同一扇），這次不找修理 NPC，稍後再試。");
+                }
+                return false;
+            }
+
+            if (_npcMenuClaimUntil <= now)
+                _npcMenuClaimFrom = now;
+            _npcMenuClaimUntil = now + NpcMenuPauseMs;
+            return true;
+        }
+
+        private static void OnNpcMenuPreSetup(AddonEvent type, AddonArgs args)
+        {
+            if (Environment.TickCount64 < _npcMenuInteractUntil)
+                ClaimNpcMenu(force: true);
+        }
+
+        internal static void Dispose()
+        {
+            if (!_npcMenuListenerRegistered)
+                return;
+            _npcMenuListenerRegistered = false;
+            Svc.AddonLifecycle.UnregisterListener(AddonEvent.PreSetup, "SelectIconString", NpcMenuPreSetup);
+        }
+
         internal static bool InteractWithRepairNPC()
         {
             if (RepairNPCNearby(out IGameObject npc))
             {
+                if (!_npcMenuListenerRegistered)
+                {
+                    _npcMenuListenerRegistered = true;
+                    Svc.AddonLifecycle.RegisterListener(AddonEvent.PreSetup, "SelectIconString", NpcMenuPreSetup);
+                }
+                if (!ClaimNpcMenu(force: false))
+                    return false;
+
+                var now = Environment.TickCount64;
+                _npcMenuInteractUntil = now + NpcMenuInteractWindowMs;
                 TargetSystem.Instance()->OpenObjectInteraction(npc.Struct());
-                if (TryGetAddonByName<AddonSelectIconString>("SelectIconString", out var addonSelectIconString))
+                // 按前照名字重找；PreSetup 那次問不到會把暫停作廢，這一扇就不按。
+                if (_npcMenuClaimUntil > now && now - _npcMenuClaimFrom >= NpcMenuSettleMs
+                    && TryGetAddonByName<AddonSelectIconString>("SelectIconString", out var addonSelectIconString))
                 {
                     var index = GenericHelpers.IndexOf(Svc.Data.Excel.GetSheet<ENpcBase>().GetRow(npc.BaseId).ENpcData, x => x.RowId == 720915);
                     // 選了項目 SelectIconString 就會關;DebugTab 那條路徑把本函式當輪詢任務每幀重跑,同一扇關閉中的選單會被逐幀重按。

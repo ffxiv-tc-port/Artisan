@@ -617,6 +617,11 @@ namespace Artisan.UI
                     }
                 }
 
+                if (ImGui.Checkbox("Take Over the Synthesize Buttons When Clicked Manually".Loc(), ref P.Config.TakeOverManualCraftButtons))
+                    P.Config.Save();
+
+                ImGuiComponents.HelpMarker("When you click Synthesize, Quick Synthesis or Trial Synthesis in the Crafting Log (or Synthesize in the Cosmic Exploration recipe notebook) yourself, Artisan first switches job, equips required items and uses food, medicine and manuals, then starts the craft. Turn this off to leave those buttons to the game. Endurance, lists and crafts requested by other plugins are not affected.".Loc());
+
                 if (ImGui.Checkbox("Disable Automatically Equipping Required Items for Crafts".Loc(), ref P.Config.DontEquipItems))
                     P.Config.Save();
 

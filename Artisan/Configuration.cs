@@ -228,6 +228,9 @@ namespace Artisan
 
         public bool DontEquipItems = false;
 
+        // 關＝手動按製作手帳／宇宙製作筆記的「製作」時照遊戲原本行為，Artisan 不先換職業、換裝、用食物藥水。
+        public bool TakeOverManualCraftButtons = true;
+
         [NonSerialized]
         public int CraftX = 0;
 

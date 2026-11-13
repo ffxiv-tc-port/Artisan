@@ -75,7 +75,7 @@ public unsafe static class PreCrafting
     {
         try
         {
-            if (a2 == 25 && a3 == 0)
+            if (a2 == 25 && a3 == 0 && TakeOverManualCraftButtons)
             {
                 StartCraftingFromSynth(14);
                 return 0;
@@ -1320,9 +1320,12 @@ public unsafe static class PreCrafting
 
     // 接手按鈕時遊戲原函式不呼叫（Artisan 自己開始製作）；位址解不出或接手途中擲例外就交還遊戲、呼叫原函式恰好一次。
     // 受管理例外穿出 detour＝遊戲崩潰，所以這裡一律不讓它出去。
+    // 設定關掉時兩個手動按鈕都交還遊戲；設定還沒載入（P／Config 為 null）照預設接手。
+    private static bool TakeOverManualCraftButtons => P?.Config?.TakeOverManualCraftButtons != false;
+
     private static void ClickSynthButtons(void* thisPtr, AtkEventType eventType, int eventParam, AtkEvent* atkEvent, AtkEventData* atkEventData)
     {
-        if (eventType == AtkEventType.ButtonClick && eventParam is 14 or 15 or 16)
+        if (eventType == AtkEventType.ButtonClick && eventParam is 14 or 15 or 16 && TakeOverManualCraftButtons)
         {
             if (FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Addresses.Instance.Value != 0)
             {

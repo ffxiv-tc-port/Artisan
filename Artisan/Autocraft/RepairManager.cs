@@ -290,24 +290,55 @@ namespace Artisan.Autocraft
             return false;
         }
 
+        // 修裝條件成立時耐力模式／清單每幀都會問，完整掃描（走訪物件表＋逐個查 ENpcBase）最多每 500 ms 一次。
+        // 🔴 只記 GameObjectId＋BaseId，不留 IGameObject（物件表包裝跨幀會換人）：命中時當場重查、重驗種類／BaseId／距離。
+        private const long RepairNpcScanIntervalMs = 500;
+        private static long repairNpcNextScan;
+        private static ulong repairNpcId;
+        private static uint repairNpcBaseId;
+
         internal static bool RepairNPCNearby(out IGameObject npc)
         {
             npc = null;
-            if (Svc.Objects.LocalPlayer != null)
-            {
-                foreach (var obj in Svc.Objects.Where(x => x.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc))
-                {
-                    if (Svc.Data.Excel.GetSheet<ENpcBase>().TryGetRow(obj.BaseId, out var enpcsheet))
-                    {
-                        if (enpcsheet.ENpcData.Any(x => x.RowId == 720915))
-                        {
-                            var npcDistance = Vector3.Distance(obj.Position, Svc.Objects.LocalPlayer.Position);
-                            if (npcDistance > 7)
-                                continue;
+            var player = Svc.Objects.LocalPlayer;
+            if (player == null)
+                return false;
+            var playerPos = player.Position;
 
-                            npc = obj;
-                            return true;
-                        }
+            var now = Environment.TickCount64;
+            if (now < repairNpcNextScan)
+            {
+                if (repairNpcBaseId == 0)
+                    return false;
+                var cached = Svc.Objects.SearchById(repairNpcId);
+                if (cached != null
+                    && cached.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc
+                    && cached.BaseId == repairNpcBaseId
+                    && Vector3.Distance(cached.Position, playerPos) <= 7)
+                {
+                    npc = cached;
+                    return true;
+                }
+                // 走遠或消失了：不等節流到期，照原本的完整掃描重找。
+            }
+
+            repairNpcNextScan = now + RepairNpcScanIntervalMs;
+            repairNpcId = 0;
+            repairNpcBaseId = 0;
+            foreach (var obj in Svc.Objects.Where(x => x.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc))
+            {
+                if (Svc.Data.Excel.GetSheet<ENpcBase>().TryGetRow(obj.BaseId, out var enpcsheet))
+                {
+                    if (enpcsheet.ENpcData.Any(x => x.RowId == 720915))
+                    {
+                        var npcDistance = Vector3.Distance(obj.Position, playerPos);
+                        if (npcDistance > 7)
+                            continue;
+
+                        repairNpcId = obj.GameObjectId;
+                        repairNpcBaseId = obj.BaseId;
+                        npc = obj;
+                        return true;
                     }
                 }
             }

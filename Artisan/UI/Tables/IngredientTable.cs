@@ -513,7 +513,13 @@ namespace Artisan.UI.Tables
 
                     if (canTravel && ImGui.IsItemClicked())
                     {
-                        Chat.Instance.SendMessage($"/li {CheapestListings[item.Data.RowId].World} mb");
+                        var result = LifestreamIPC.TravelToMarketboard(CheapestListings[item.Data.RowId].World);
+                        if (result == LifestreamIPC.TravelResult.NoWorld)
+                            Notify.Error("No world has this item listed, so there is nowhere to travel.".Loc());
+                        else if (result == LifestreamIPC.TravelResult.NotLoaded)
+                            Notify.Error("Lifestream is not loaded, so Artisan cannot travel to the market board.".Loc());
+                        else if (result == LifestreamIPC.TravelResult.Failed)
+                            Notify.Error("Could not ask Lifestream to travel. See the log for details.".Loc());
                     }
                 }
                 else if (P.Config.UniversalisOnDemand && P.Config.UseUniversalis)

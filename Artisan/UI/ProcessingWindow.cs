@@ -84,12 +84,7 @@ namespace Artisan.UI
                 if (!CraftingListFunctions.Paused)
                 {
                     if (ImGui.Button("Pause".Loc()))
-                    {
-                        CraftingListFunctions.Paused = true;
-                        P.TM.Abort();
-                        CraftingListFunctions.CLTM.Abort();
-                        PreCrafting.Tasks.Clear();
-                    }
+                        PauseList();
                 }
                 else
                 {
@@ -107,15 +102,28 @@ namespace Artisan.UI
 
                 ImGui.SameLine();
                 if (ImGui.Button("Cancel".Loc()))
-                {
-                    CraftingListUI.Processing = false;
-                    CraftingListFunctions.Paused = false;
-                    P.TM.Abort();
-                    CraftingListFunctions.CLTM.Abort();
-                    PreCrafting.Tasks.Clear();
-                    Crafting.CraftFinished -= CraftingListUI.UpdateListTimer;
-                }
+                    CancelList();
             }
+        }
+
+        /// <summary>「暫停」鈕：暫停清單並清掉已排的任務（進行中那一件照常做完）。只在框架執行緒呼叫。</summary>
+        internal static void PauseList()
+        {
+            CraftingListFunctions.Paused = true;
+            P.TM.Abort();
+            CraftingListFunctions.CLTM.Abort();
+            PreCrafting.Tasks.Clear();
+        }
+
+        /// <summary>「取消」鈕：結束清單並清掉已排的任務（進行中那一件照常做完）。只在框架執行緒呼叫。</summary>
+        internal static void CancelList()
+        {
+            CraftingListUI.Processing = false;
+            CraftingListFunctions.Paused = false;
+            P.TM.Abort();
+            CraftingListFunctions.CLTM.Abort();
+            PreCrafting.Tasks.Clear();
+            Crafting.CraftFinished -= CraftingListUI.UpdateListTimer;
         }
 
         // 與「暫停」鈕做同樣的事；只在清單跑著且沒暫停時才停並說明，暫停中重擲（例如素材表建不起來）只進 log。

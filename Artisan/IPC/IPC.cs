@@ -134,11 +134,16 @@ namespace Artisan.IPC
             return CraftingListUI.Processing && CraftingListFunctions.Paused;
         }
 
+        // true＝與清單視窗「暫停」鈕相同（進行中那一件照常做完）；false＝照舊只放開暫停旗標。清單沒在跑時什麼都不做。
         static void SetListPause(bool s)
             => IpcFrameworkGate.Run("Artisan.SetListPause", () =>
             {
-                if (IsListPaused())
-                    CraftingListFunctions.Paused = s;
+                if (!CraftingListUI.Processing)
+                    return;
+                if (s && !CraftingListFunctions.Paused)
+                    UI.ProcessingWindow.PauseList();
+                else if (!s && CraftingListFunctions.Paused)
+                    CraftingListFunctions.Paused = false;
             });
 
         static bool GetStopRequest()

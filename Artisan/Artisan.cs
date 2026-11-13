@@ -72,6 +72,7 @@ public unsafe class Artisan : IDalamudPlugin
             "/artisan lists → Open Lists.".Loc() + "\n" +
             "/artisan lists <ID> → Opens specific list by ID.".Loc() + "\n" +
             "/artisan lists <ID> start → Starts specific list by ID.".Loc() + "\n" +
+            "/artisan lists stop → Cancels the running list (the craft in progress is finished first).".Loc() + "\n" +
             "/artisan macros → Open Macros.".Loc() + "\n" +
             "/artisan macros <ID> → Opens specific macro by ID.".Loc() + "\n" +
             "/artisan endurance → Open Endurance.".Loc() + "\n" +
@@ -392,6 +393,12 @@ public unsafe class Artisan : IDalamudPlugin
         {
             if (firstArg.ToLower() == "lists")
             {
+                if (subcommands[1].ToLower() is "stop")
+                {
+                    StopListByCommand();
+                    return;
+                }
+
                 if (!CraftingListUI.Processing)
                 {
                     if (int.TryParse(subcommands[1], out int id))
@@ -523,6 +530,22 @@ public unsafe class Artisan : IDalamudPlugin
     private void DrawConfigUI()
     {
         PluginUi.IsOpen = true;
+    }
+
+    // 與清單視窗「取消」相同，再加 StopCrafting（關簡易製作、中止補貨、離開製作）；不中止 CTM ⇒ 進行中那一件照常做完，不損失材料。
+    // 先取消再停：StopCrafting 記下的模式變成「無」，之後外部插件送恢復請求不會把已取消的清單叫回來。
+    private static void StopListByCommand()
+    {
+        if (!CraftingListUI.Processing)
+        {
+            DuoLog.Error("No crafting list is running.".Loc());
+            return;
+        }
+
+        DutyPause.Cancel("使用者以指令停止清單");
+        ProcessingWindow.CancelList();
+        StopCrafting();
+        Svc.Log.Information("[Artisan] 使用者以 /artisan lists stop 停止製作清單。");
     }
 
     internal static void StopCrafting()

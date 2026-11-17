@@ -1,7 +1,6 @@
 ﻿using Artisan.CraftingLists;
 using ECommons.DalamudServices;
 using ECommons.LanguageHelpers;
-using SharpDX.DirectWrite;
 using System.Collections.Generic;
 using System.Linq;
 using Condition = Artisan.CraftingLogic.CraftData.Condition;

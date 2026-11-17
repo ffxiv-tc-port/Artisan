@@ -115,15 +115,13 @@
 
   <ItemGroup>
     <PackageReference Include="DalamudPackager" Version="13.0.0" />
-    <PackageReference Include="Discord.Net.Webhook" Version="3.15.3" />
     <!-- Discord.Net 會把 Newtonsoft.Json 帶進輸出目錄；自帶一份的話 Dalamud 存設定時不認得本專案的 [JsonIgnore]／[JsonProperty]。只取編譯期參考，執行期用 Dalamud 那份。 -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" ExcludeAssets="runtime" />
-    <PackageReference Include="FuzzySharp" Version="2.0.2" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="4.10.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.10.0" />
+    <!-- Roslyn 只給休眠中的腳本解算器編譯用（ScriptSolverCompiler 的編譯執行緒沒啟動）：只取編譯期參考、不隨包出貨。
+         要重新啟用腳本解算器時，拿掉這兩行的 ExcludeAssets。 -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="4.10.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.10.0" ExcludeAssets="runtime" />
     <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="Reloaded.Memory" Version="9.4.2" />
-    <PackageReference Include="SharpDX.Direct2D1" Version="4.2.0" />
     <ProjectReference Include="..\ECommons\ECommons\ECommons.csproj" />
     <ProjectReference Include="..\OtterGui\OtterGui.csproj" />
     <ProjectReference Include="..\PunishLib\PunishLib\PunishLib.csproj" />

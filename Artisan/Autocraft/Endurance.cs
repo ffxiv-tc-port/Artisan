@@ -60,11 +60,6 @@ namespace Artisan.Autocraft
 
         internal static EnduranceIngredients[] SetIngredients = new EnduranceIngredients[6];
 
-        internal static readonly List<uint> UnableToCraftErrors = new List<uint>()
-        {
-            1134,1135,1136,1137,1138,1139,1140,1141,1142,1143,1144,1145,1146,1148,1149,1198,1199,1222,1223,1224,
-        };
-
         internal static bool Enable
         {
             get => enable;
@@ -539,23 +534,6 @@ namespace Artisan.Autocraft
         {
             if (Enable || (CraftingListUI.Processing && !CraftingListFunctions.Paused))
             {
-                //foreach (uint errorId in UnableToCraftErrors)
-                //{
-                //    if (message.ExtractText() == Svc.Data.GetExcelSheet<LogMessage>()?.First(x => x.RowId == errorId).Text.ExtractText())
-                //    {
-                //        Svc.Toasts.ShowError($"Current crafting mode has been {(Enable ? "disabled" : "paused")} due to unable to craft error.");
-                //        DuoLog.Error($"Current crafting mode has been {(Enable ? "disabled" : "paused")} due to unable to craft error.");
-                //        if (enable)
-                //            ToggleEndurance(false);
-                //        if (CraftingListUI.Processing)
-                //            CraftingListFunctions.Paused = true;
-                //        PreCrafting.Tasks.Add((() => PreCrafting.TaskExitCraft(), default));
-
-                //        P.TM.Abort();
-                //        CraftingListFunctions.CLTM.Abort();
-                //    }
-                //}
-
                 // 修理／精製被「製作狀態」拒絕是時機問題，兩邊都會等旗標清掉再按，不該把清單停掉。
                 var repairPressed = RepairManager.RecentlyPressedRepair;
                 if (repairPressed || Spiritbond.RecentlyPressedMaterialize)

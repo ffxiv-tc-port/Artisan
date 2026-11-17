@@ -356,20 +356,17 @@ public unsafe class Artisan : IDalamudPlugin
         ECommons.GenericHelpers.Safe(LuminaSheets.Dispose);
         ECommons.GenericHelpers.Safe(ItemVendorLocation.Dispose);
 
-        if (!DalamudInfo.IsOnStaging())
-        {
-            ECommons.GenericHelpers.Safe(CraftingListContextMenu.Dispose);
-            ECommons.GenericHelpers.Safe(() => UniversalsisClient.Dispose());
+        ECommons.GenericHelpers.Safe(CraftingListContextMenu.Dispose);
+        ECommons.GenericHelpers.Safe(() => UniversalsisClient.Dispose());
 
-            Svc.Condition.ConditionChange -= Condition_ConditionChange;
-            Svc.Framework.Update -= OnFrameworkUpdate;
-            Svc.ClientState.Logout -= DisableEndurance;
-            Svc.ClientState.Login -= DisableEndurance;
-            ECommons.GenericHelpers.Safe(Endurance.Dispose);
-            ECommons.GenericHelpers.Safe(RetainerInfo.Dispose);
-            ECommons.GenericHelpers.Safe(() => Sounds.SoundPlayer.Dispose());
-            ECommons.GenericHelpers.Safe(IPC.IPC.Dispose);
-        }
+        Svc.Condition.ConditionChange -= Condition_ConditionChange;
+        Svc.Framework.Update -= OnFrameworkUpdate;
+        Svc.ClientState.Logout -= DisableEndurance;
+        Svc.ClientState.Login -= DisableEndurance;
+        ECommons.GenericHelpers.Safe(Endurance.Dispose);
+        ECommons.GenericHelpers.Safe(RetainerInfo.Dispose);
+        ECommons.GenericHelpers.Safe(() => Sounds.SoundPlayer.Dispose());
+        ECommons.GenericHelpers.Safe(IPC.IPC.Dispose);
         ECommons.GenericHelpers.Safe(SimpleTweaks.RestoreImprovedLogTweak);
         ECommons.GenericHelpers.Safe(RepairManager.Dispose);
         ECommons.GenericHelpers.Safe(AddonPressGuard.ForceTeardown);

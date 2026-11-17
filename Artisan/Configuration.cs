@@ -258,6 +258,13 @@ namespace Artisan
 
         public static Configuration Load()
         {
+            // 首次安裝沒有設定檔是正常路徑，不記錯誤；回傳值與原本走 catch 的備援相同。
+            if (!File.Exists(Svc.PluginInterface.ConfigFile.FullName))
+            {
+                Svc.Log.Information("No config file yet; starting with defaults.");
+                return Svc.PluginInterface.GetPluginConfig() as Configuration ?? new();
+            }
+
             try
             {
                 var contents = File.ReadAllText(Svc.PluginInterface.ConfigFile.FullName);

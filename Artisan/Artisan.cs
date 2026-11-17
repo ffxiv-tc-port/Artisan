@@ -137,6 +137,10 @@ public unsafe class Artisan : IDalamudPlugin
 
     private void ConvertCraftingLists()
     {
+        // 沒有舊格式清單就沒有東西要轉，不必每次載入都存一次檔。
+        if (P.Config.CraftingLists.Count == 0)
+            return;
+
         foreach (var list in P.Config.CraftingLists)
         {
             if (!P.Config.NewCraftingLists.Any(x => x.ID == list.ID))

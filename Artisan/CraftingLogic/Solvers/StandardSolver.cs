@@ -13,7 +13,8 @@ namespace Artisan.CraftingLogic.Solvers
 
         public IEnumerable<ISolverDefinition.Desc> Flavours(CraftState craft)
         {
-            if (!craft.CraftExpert && craft.CraftHQ)
+            // 有必要品質的配方都不能 HQ，但品質不足會失敗：照上游也提供標準解算器，免得自動選到只管進展的僅進展解算器。
+            if (!craft.CraftExpert && (craft.CraftHQ || craft.CraftRequiredQuality > 0))
                 yield return new(this, 0, 2, "Standard Recipe Solver".Loc());
         }
 
@@ -262,7 +263,8 @@ namespace Artisan.CraftingLogic.Solvers
                     return new(Skills.TricksOfTrade);
             }
 
-            if ((maxQuality == 0 || P.Config.MaxPercentage == 0) && !craft.CraftCollectible)
+            // MaxPercentage 是 HQ 機率目標；必要品質是成敗門檻，不受它管。
+            if ((maxQuality == 0 || P.Config.MaxPercentage == 0) && !craft.CraftCollectible && craft.CraftRequiredQuality == 0)
             {
                 if (step.Index == 1 && Simulator.CanUseAction(craft, step, Skills.MuscleMemory)) return new(Skills.MuscleMemory);
                 if (CanFinishCraft(craft, step, act)) return new(act);

@@ -1,7 +1,9 @@
 ﻿using Artisan.Autocraft;
 using Artisan.CraftingLists;
+using Artisan.CraftingLogic;
 using Artisan.CraftingLogic.Solvers;
 using Artisan.GameInterop.CSExt;
+using Artisan.RawInformation;
 using Artisan.UI;
 using ECommons;
 using ECommons.Automation;
@@ -255,8 +257,9 @@ public static unsafe class Operations
         return false;
     }
 
+    /// <param name="recipeId">要開始的配方（必要品質閘門用）；0＝取製作手帳選著的（宇宙筆記則不判）。</param>
     /// <returns>true＝已送出開始製作；false＝這一幀還不能開始；null＝已經停止，中止呼叫端整條佇列。</returns>
-    public unsafe static bool? RepeatActualCraft()
+    public unsafe static bool? RepeatActualCraft(uint recipeId = 0)
     {
         // 排進佇列之後才按停止（或清單被暫停）時，不能照樣開始下一場；也不能走到下面的 PreCrafting.Tasks.Clear()，
         // 那會把停止時排的 TaskExitCraft 一起清掉。
@@ -283,6 +286,9 @@ public static unsafe class Operations
         {
             if (cosmicAddon == null)
                 return BlockedBy("WKSRecipeNotebook addon null");
+
+            if (GateRequiredQuality(recipeId) is var cosmicGate && cosmicGate != true)
+                return cosmicGate == false ? BlockedBy("RequiredQualityGate: waiting for Raphael") : null;
 
             // 開始製作不會關筆記(每一件都會再送 ⇒ 15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、
             // 它還在關閉中的那幾幀。回 false 與其他 BlockedBy 走同一條輪詢路徑。
@@ -316,6 +322,9 @@ public static unsafe class Operations
             if (addon == null)
                 return BlockedBy("RecipeNote addon null");
 
+            if (GateRequiredQuality(recipeId != 0 ? recipeId : recipe->RecipeId) is var gate && gate != true)
+                return gate == false ? BlockedBy("RequiredQualityGate: waiting for Raphael") : null;
+
             if (!AddonPressGuard.TryBeginPress("RecipeNote", &addon->AtkUnitBase, "T|8", AddonPressGuard.RoutineRePressEscapeFrames))
                 return BlockedBy("AddonPressGuard RecipeNote");
 
@@ -324,6 +333,13 @@ public static unsafe class Operations
             PreCrafting.Tasks.Clear();
             return true;
         }
+    }
+
+    private static bool? GateRequiredQuality(uint recipeId)
+    {
+        if (recipeId == 0 || LuminaSheets.RecipeSheet == null || !LuminaSheets.RecipeSheet.TryGetValue(recipeId, out var r))
+            return true;
+        return RequiredQualityGate.CheckBeforeStart(r);
     }
 
     // get recipe currently selected in recipenote, with all the necessary safety checks

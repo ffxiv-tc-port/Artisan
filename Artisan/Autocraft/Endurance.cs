@@ -496,7 +496,7 @@ namespace Artisan.Autocraft
                             else
                                 P.TM.Enqueue(() => CraftingListFunctions.SetIngredients(SetIngredients), "EnduranceSetIngredientsLayout");
 
-                            P.TM.Enqueue(() => Operations.RepeatActualCraft(), 500, "EnduranceNormalStart");
+                            P.TM.Enqueue(() => Operations.RepeatActualCraft(RecipeID), 500, "EnduranceNormalStart");
                             P.TM.Enqueue(() => Crafting.CurState is Crafting.State.WaitStart, 500, "EnduranceNormalWaitStart");
                             P.TM.Enqueue(() =>
                             {

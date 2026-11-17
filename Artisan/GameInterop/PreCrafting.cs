@@ -329,6 +329,8 @@ public unsafe static class PreCrafting
             Tasks.Add((() => TaskSelectRecipe(recipe), TimeSpan.FromMilliseconds(500)));
             timeWasteLoops = 1;
             Tasks.Add((() => TimeWasteLoop(), TimeSpan.FromMilliseconds(10))); //This is needed for controller players, else if they're near an NPC it will target them and exit the craft as the button is interpreted as target and not confirm.
+            if (type == CraftType.Normal)
+                Tasks.Add((() => TaskRequiredQualityGate(recipe), TimeSpan.FromMilliseconds(500)));
             Tasks.Add((() => TaskStartCraft(type), default));
 
             Update();
@@ -1241,6 +1243,14 @@ public unsafe static class PreCrafting
         }
         return TaskResult.Retry;
     }
+
+    // 換職業、用完食物藥水之後才判，能力值才是開工那一刻的。
+    public static TaskResult TaskRequiredQualityGate(Recipe recipe) => RequiredQualityGate.CheckBeforeStart(recipe) switch
+    {
+        true => TaskResult.Done,
+        false => TaskResult.Retry,
+        null => TaskResult.Abort,
+    };
 
     public static TaskResult TaskStartCraft(CraftType type)
     {

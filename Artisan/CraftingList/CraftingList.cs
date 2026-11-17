@@ -595,7 +595,8 @@ namespace Artisan.CraftingLists
                     {
                         CLTM.DelayNext((int)(Math.Min(P.Config.ListCraftThrottle2, 2) * 1000));
                         CLTM.Enqueue(() => SetIngredients(), "SettingIngredients");
-                        CLTM.Enqueue(() => Operations.RepeatActualCraft(), "ListCraft");
+                        var listRecipeId = recipe.RowId;
+                        CLTM.Enqueue(() => Operations.RepeatActualCraft(listRecipeId), "ListCraft");
                         CLTM.Enqueue(() => Crafting.CurState is Crafting.State.InProgress or Crafting.State.QuickCraft, 2000, "ListNormalWaitStart");
                         return;
 

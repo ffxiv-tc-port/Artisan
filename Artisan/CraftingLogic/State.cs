@@ -32,6 +32,9 @@ public record class CraftState
     public int CraftQualityMin2;
     public int CraftQualityMin3;
     public int CraftRequiredQuality;
+    // 配方表的最大品質（遊戲回報的品質上限）。CraftQualityMax 在有必要品質的配方上被改成門檻，Raphael 解的快取鍵也用它，所以另存。
+    public int CraftQualityCap;
+    public int QualityCeiling => CraftQualityCap > 0 ? CraftQualityCap : CraftQualityMax;
     public int CraftRecommendedCraftsmanship;
     //public int CraftRecommendedControl;
     public float[] CraftConditionProbabilities = { }; // TODO: this assumes that new condition does not depend on prev - this is what my preliminary findings suggest (except for forced transitions)

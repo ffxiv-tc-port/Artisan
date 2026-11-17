@@ -687,6 +687,33 @@ namespace Artisan.CraftingLogic.Solvers
 
         public static bool InProgressAny() => Tasks.Any();
 
+        /// <summary>
+        /// 必要品質閘門用：條件與配方視窗的自動產生相同（設定開、沒有臨時解算器、專家配方看 GenerateOnExperts），
+        /// 成立就送出求解。回傳之後是否有這一組在求解中。只在框架執行緒呼叫。
+        /// </summary>
+        internal static bool TryAutoBuild(CraftState craft)
+        {
+            var cfg = P.Config.RaphaelSolverConfig;
+            var recipeCfg = P.Config.RecipeConfigs.GetValueOrDefault(craft.RecipeId);
+            if (!cfg.AutoGenerate || (recipeCfg?.TempSolverType.Length ?? 0) > 0 || (craft.CraftExpert && !cfg.GenerateOnExperts) || !CLIExists())
+                return false;
+
+            var key = GetKey(craft);
+            if (!TempConfigs.TryGetValue(key, out var solveCfg))
+            {
+                solveCfg = new()
+                {
+                    EnsureReliability = cfg.AllowEnsureReliability,
+                    BackloadProgress = cfg.AllowBackloadProgress,
+                    HeartAndSoul = cfg.ShowSpecialistSettings && craft.Specialist,
+                    QuickInno = cfg.ShowSpecialistSettings && craft.Specialist,
+                };
+                TempConfigs[key] = solveCfg;
+            }
+            Build(craft, solveCfg);
+            return InProgress(craft);
+        }
+
         internal static bool CLIExists()
         {
             return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"));

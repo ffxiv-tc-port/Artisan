@@ -165,6 +165,9 @@ public static class Simulator
 
         }
 
+        if (craft.CraftRequiredQuality > 0 && step.Quality < craft.CraftRequiredQuality)
+            return CraftStatus.FailedMinQuality;
+
         if (craft.CraftHQ && !craft.CraftCollectible)
         {
             if (step.Quality >= craft.CraftQualityMax)
@@ -203,7 +206,7 @@ public static class Simulator
         {
             CraftStatus.InProgress => "製作未完成（解算器在完成之前未返回任何步驟）。",
             CraftStatus.FailedDurability => $"因耐久度不足導致製作失敗。(進展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品質：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
-            CraftStatus.FailedMinQuality => $"製作完成並達到滿品質，耗時（進展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品質：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
+            CraftStatus.FailedMinQuality => $"未達必要品質，製作會失敗。（進展：{(float)result.Progress / craft.CraftProgress * 100:f0}%，品質：{(float)result.Quality / craft.CraftQualityMax * 100:f0}%）",
             CraftStatus.SucceededQ1 => $"製作完成並達到第一個品質門檻，耗時 {time.TotalSeconds:f0} 秒。",
             CraftStatus.SucceededQ2 => $"製作完成並達到第二個品質門檻，耗時 {time.TotalSeconds:f0} 秒。",
             CraftStatus.SucceededQ3 => $"製作完成並達到第三個品質門檻，耗時 {time.TotalSeconds:f0} 秒！",
@@ -219,7 +222,7 @@ public static class Simulator
         // 📌 把這句話塞進快取鍵是刻意的:它每一幀都重算,而且內含解算器實際跑出來的
         //    進度/品質/耗時 —— 使用者改了巨集之類「不在鍵裡的東西」時,它會跟著變,
         //    等於免費得到一個失效偵測。
-        var qualityMatters = craft.CraftQualityMax > 0 && (craft.CraftHQ || craft.CraftCollectible || craft.CraftExpert);
+        var qualityMatters = craft.CraftQualityMax > 0 && (craft.CraftHQ || craft.CraftCollectible || craft.CraftExpert || craft.CraftRequiredQuality > 0);
         // 專家/收藏品的變異大,樣本要多一點;一般配方少一點就夠,免得白花時間。
         var target = craft.CraftExpert || craft.CraftCollectible ? 200 : 60;
         var key = $"{recipe.RowId}|{solverDesc.Def?.GetType().FullName}|{solverDesc.Flavour}|{solverDesc.Name}|" +
@@ -591,7 +594,7 @@ public static class Simulator
     public static int CalculateQuality(CraftState craft, StepState step, Skills action)
     {
         if (action == Skills.TrainedEye)
-            return craft.CraftQualityMax;
+            return craft.QualityCeiling;
 
         int potency = action switch
         {

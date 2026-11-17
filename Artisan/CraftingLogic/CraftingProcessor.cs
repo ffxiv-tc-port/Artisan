@@ -158,7 +158,22 @@ public static class CraftingProcessor
         if (_activeSolver == null)
         {
             // if we didn't provide an explicit solver, create one - but make sure if we have manually assigned one, it is actually supported
-            var autoSolver = GetSolverForRecipe(P.Config.RecipeConfigs.GetValueOrDefault(recipe.RowId), craft);
+            var recipeConfig = P.Config.RecipeConfigs.GetValueOrDefault(recipe.RowId);
+            var autoSolver = GetSolverForRecipe(recipeConfig, craft);
+            // 有必要品質的配方：開工前的閘門擋不到的入口（遊戲原生按鈕、接手關閉時）在這裡補判；試作不耗素材，不判。
+            if (!trial && RequiredQualityGate.Applies(craft))
+            {
+                var verdict = RequiredQualityGate.Evaluate(recipeConfig, craft, RaphaelCache.InProgress(craft));
+                if (verdict.Kind is RequiredQualityGate.Kind.WaitForRaphael or RequiredQualityGate.Kind.Blocked)
+                {
+                    SolverFailed?.Invoke(recipe, verdict.Reason);
+                    ActiveSolver = new("");
+                    return;
+                }
+                if (verdict.Reason.Length > 0)
+                    RequiredQualityGate.NoticeOnce(craft, verdict);
+                autoSolver = verdict.Solver;
+            }
             if (autoSolver.UnsupportedReason.Length > 0)
             {
                 SolverFailed?.Invoke(recipe, autoSolver.UnsupportedReason);

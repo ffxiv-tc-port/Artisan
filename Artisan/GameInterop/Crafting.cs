@@ -153,6 +153,7 @@ public static unsafe class Crafting
             CraftQualityModifier = lt.QualityModifier,
             CraftQualityMax = recipe.Number == 0 ? Calculations.RecipeMaxQuality(recipe, lt) : Calculations.RecipeMaxQuality(recipe),
             CraftRequiredQuality = (int)recipe.RequiredQuality,
+            CraftQualityCap = recipe.Number == 0 ? Calculations.RecipeMaxQuality(recipe, lt) : Calculations.RecipeMaxQuality(recipe),
             CraftRecommendedCraftsmanship = lt.SuggestedCraftsmanship,
             CraftHQ = recipe.CanHq,
             CollectableMetadataKey = recipe.CollectableMetadataKey,
@@ -820,7 +821,7 @@ public static unsafe class Crafting
                 _predictedNextStep.MaterialMiracleStepsLeft = MaterialMiracleStepsLeftFromClock(mmActive);
                 _predictedNextStep.MaterialMiracleActive = _predictedNextStep.MaterialMiracleStepsLeft > 0;
                 _predictedNextStep.Progress = Math.Min(_predictedNextStep.Progress, CurCraft.CraftProgress);
-                _predictedNextStep.Quality = Math.Min(_predictedNextStep.Quality, CurCraft.CraftQualityMax);
+                _predictedNextStep.Quality = Math.Min(_predictedNextStep.Quality, CurCraft.QualityCeiling);
                 _predictedNextStep.Durability = Math.Max(_predictedNextStep.Durability, 0);
                 // validate sim predictions
                 if (_predictedNextStep.Index != advancePayload->StepIndex)

@@ -70,6 +70,39 @@ namespace Artisan.CraftingLogic.Solvers
     internal static class RaphaelCache
     {
         internal static readonly ConcurrentDictionary<string, Tuple<CancellationTokenSource, Task>> Tasks = [];
+        private static readonly CancellationTokenSource Shutdown = new();
+
+        /// <summary>卸載時呼叫：之後不再寫設定，並取消所有進行中的求解（砍掉 raphael-cli）。</summary>
+        internal static void Dispose()
+        {
+            Shutdown.Cancel();
+            foreach (var t in Tasks.Values)
+                ECommons.GenericHelpers.Safe(t.Item1.Cancel);
+        }
+
+        /// <summary>
+        /// 在框架執行緒上執行 <paramref name="apply"/> 並等它做完；P.Config 不是執行緒安全的，背景工作只能從這裡寫。
+        /// 卸載後不執行、等待改擲 <see cref="OperationCanceledException"/>（延遲工作不隨插件卸載取消，所以自己判）。
+        /// </summary>
+        private static void ApplyOnFramework(Action apply)
+        {
+            var token = Shutdown.Token;
+            token.ThrowIfCancellationRequested();
+            var run = Svc.Framework.Run(() =>
+            {
+                if (!token.IsCancellationRequested && !Svc.Framework.IsFrameworkUnloading)
+                    apply();
+            }, token);
+            try
+            {
+                run.Wait(token);
+            }
+            catch (AggregateException ex) when (ex.InnerException is OperationCanceledException)
+            {
+                throw new OperationCanceledException(token);
+            }
+        }
+
         [NonSerialized]
         public static Dictionary<string, RaphaelSolutionConfig> TempConfigs = new();
 
@@ -267,6 +300,9 @@ namespace Artisan.CraftingLogic.Solvers
                         process.Start();
                         var output = process.StandardOutput.ReadToEnd();
                         var error = process.StandardError.ReadToEnd().Trim();
+                        // 卸載時 Dispose 砍掉 raphael-cli 的那一下不是求解失敗：不記失敗、不洗聊天、不碰耐力模式。
+                        if (Shutdown.IsCancellationRequested)
+                            return;
                         if (process.ExitCode != 0)
                         {
                             var failure = DescribeCliFailure(error, process.ExitCode);
@@ -277,15 +313,9 @@ namespace Artisan.CraftingLogic.Solvers
                             AbortWaitingAutomation();
                             return;
                         }
-                        var rng = new Random();
-                        var ID = rng.Next(50001, 10000000);
-                        while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
-                            ID = rng.Next(50001, 10000000);
-
                         var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
-                        P.Config.RaphaelSolverCacheV3[key] = new MacroSolverSettings.Macro()
+                        var macro = new MacroSolverSettings.Macro()
                         {
-                            ID = ID,
                             Name = key,
                             Steps = MacroUI.ParseMacro(cleansedOutput),
                             Options = new()
@@ -303,60 +333,85 @@ namespace Artisan.CraftingLogic.Solvers
                             }
                         };
 
+                        var solved = macro.Steps.Count > 0;
+                        // 相容配方掃描讀的是資料表，留在背景執行緒做；P.Config 的讀寫與存檔一律排回框架執行緒。
+                        List<CraftState>? crafts = null;
+                        if (solved && P.Config.RaphaelSolverConfig.AutoSwitch && P.Config.RaphaelSolverConfig.AutoSwitchOnAll && !cts.IsCancellationRequested)
+                        {
+                            // 產生這份解的配方本身一定要套用,不靠下面的相容性掃描把它找回來。
+                            crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId)
+                                .Append(craft)
+                                .DistinctBy(x => x.Recipe.RowId)
+                                .ToList();
+                        }
+
+                        var autoGenerateWas = false;
+                        ApplyOnFramework(() =>
+                        {
+                            var rng = new Random();
+                            var ID = rng.Next(50001, 10000000);
+                            while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
+                                ID = rng.Next(50001, 10000000);
+                            macro.ID = ID;
+                            P.Config.RaphaelSolverCacheV3[key] = macro;
+
+                            if (cts.IsCancellationRequested)
+                                return;
+                            if (!solved)
+                            {
+                                autoGenerateWas = P.Config.RaphaelSolverConfig.AutoGenerate;
+                                P.Config.RaphaelSolverConfig.AutoGenerate = false;
+                                return;
+                            }
+
+                            if (P.Config.RaphaelSolverConfig.AutoSwitch)
+                            {
+                                if (!P.Config.RaphaelSolverConfig.AutoSwitchOnAll)
+                                {
+                                    Svc.Log.Debug("Switching to Raphael solver");
+                                    var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
+                                    if (opt is not null)
+                                    {
+                                        var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
+                                        config.SolverType = opt?.Def.GetType().FullName!;
+                                        config.SolverFlavour = (int)(opt?.Flavour);
+                                        P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
+                                    }
+                                }
+                                else if (crafts != null)
+                                {
+                                    Svc.Log.Debug($"Applying solver to {crafts.Count()} recipes.");
+                                    var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
+                                    if (opt is not null)
+                                    {
+                                        var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
+                                        config.SolverType = opt?.Def.GetType().FullName!;
+                                        config.SolverFlavour = (int)(opt?.Flavour);
+                                        foreach (var c in crafts)
+                                        {
+                                            Svc.Log.Debug($"Switching {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) to Raphael solver");
+                                            P.Config.RecipeConfigs[c.Recipe.RowId] = config;
+                                        }
+                                    }
+                                }
+                            }
+                            // 成功了就讓這組條件恢復成「可以再試」。
+                            FailedSolves.TryRemove(failKey, out _);
+                            P.Config.Save();
+                        });
+
                         cts.Token.ThrowIfCancellationRequested();
-                        if (P.Config.RaphaelSolverCacheV3[key] == null || P.Config.RaphaelSolverCacheV3[key].Steps.Count == 0)
+                        if (!solved)
                         {
                             Svc.Log.Error($"Raphael failed to generate a valid macro. This could be one of the following reasons:" +
                                 $"\n- If you are not running Windows, Raphael may not be compatible with your OS." +
                                 $"\n- You cancelled the generation." +
-                                $"\n- Raphael just gave up after not finding a result.{(P.Config.RaphaelSolverConfig.AutoGenerate ? "\nAutomatic generation will be disabled as a result." : "")}");
-                            P.Config.RaphaelSolverConfig.AutoGenerate = false;
+                                $"\n- Raphael just gave up after not finding a result.{(autoGenerateWas ? "\nAutomatic generation will be disabled as a result." : "")}");
                             FailedSolves[failKey] = "Raphael 沒有產生可用的巨集(求解器放棄了,或求解被取消)。";
                             cts.Cancel();
                             AbortWaitingAutomation();
                             return;
                         }
-
-
-                        if (P.Config.RaphaelSolverConfig.AutoSwitch)
-                        {
-                            if (!P.Config.RaphaelSolverConfig.AutoSwitchOnAll)
-                            {
-                                Svc.Log.Debug("Switching to Raphael solver");
-                                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
-                                if (opt is not null)
-                                {
-                                    var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
-                                    config.SolverType = opt?.Def.GetType().FullName!;
-                                    config.SolverFlavour = (int)(opt?.Flavour);
-                                    P.Config.RecipeConfigs[craft.Recipe.RowId] = config;
-                                }
-                            }
-                            else
-                            {
-                                // 產生這份解的配方本身一定要套用,不靠下面的相容性掃描把它找回來。
-                                var crafts = AllValidCrafts(key, craft.Recipe.CraftType.RowId)
-                                    .Append(craft)
-                                    .DistinctBy(x => x.Recipe.RowId)
-                                    .ToList();
-                                Svc.Log.Debug($"Applying solver to {crafts.Count()} recipes.");
-                                var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
-                                if (opt is not null)
-                                {
-                                    var config = P.Config.RecipeConfigs.GetValueOrDefault(craft.Recipe.RowId) ?? new();
-                                    config.SolverType = opt?.Def.GetType().FullName!;
-                                    config.SolverFlavour = (int)(opt?.Flavour);
-                                    foreach (var c in crafts)
-                                    {
-                                        Svc.Log.Debug($"Switching {c.Recipe.RowId} ({c.Recipe.ItemResult.Value.Name}) to Raphael solver");
-                                        P.Config.RecipeConfigs[c.Recipe.RowId] = config;
-                                    }
-                                }
-                            }
-                        }
-                        // 成功了就讓這組條件恢復成「可以再試」。
-                        FailedSolves.TryRemove(failKey, out _);
-                        P.Config.Save();
                     }
                     catch (OperationCanceledException)
                     {
@@ -420,7 +475,7 @@ namespace Artisan.CraftingLogic.Solvers
         /// </summary>
         private static void AbortWaitingAutomation()
         {
-            if (!Endurance.Enable)
+            if (Shutdown.IsCancellationRequested || !Endurance.Enable)
                 return;
 
             // 這裡是解算工作的背景執行緒,而 ToggleEndurance 會動到 PreCrafting.Tasks 這種

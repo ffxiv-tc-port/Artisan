@@ -331,6 +331,7 @@ public unsafe class Artisan : IDalamudPlugin
         // 否則 CallGate 會握著委派、整個舊版本卸不掉。
         // 卸載不會取消已排的 RunOnTick：先作廢，延遲到期的恢復就什麼都不做。
         ECommons.GenericHelpers.Safe(() => DutyPause.Cancel("插件卸載"));
+        ECommons.GenericHelpers.Safe(CraftingLogic.Solvers.RaphaelCache.Dispose);
         ECommons.GenericHelpers.Safe(() => PluginUi.Dispose());
 
         Svc.Commands.RemoveHandler(commandName);

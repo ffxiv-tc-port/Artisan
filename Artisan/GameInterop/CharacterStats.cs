@@ -298,18 +298,8 @@ public unsafe struct CharacterStats
         Specialist |= slot == 13; // specialist == job crystal equipped
     }
 
-    public void AddConsumables(ConsumableStats food, ConsumableStats pot, Dalamud.Game.ClientState.Statuses.Status fcCraftBuff)
-        => AddConsumables(food, pot, fcCraftBuff != null ? fcCraftBuff.Param : 0);
-
-    /// <summary>
-    /// 與上面那個多載完全相同,只是部隊加成以<b>純量</b>傳入。
-    /// </summary>
-    /// <remarks>
-    /// 🔴 背景執行緒一律用這一個。另一個多載收的是 Dalamud 的 <c>Status</c> 包裝,
-    /// 而 <c>Status.Param</c> 的實作是 <c>this.Struct-&gt;Param</c> —— 那是原生解參考,
-    /// 只能在遊戲主執行緒上讀;而且 <c>CharacterInfo.FCCraftsmanshipbuff</c> 是
-    /// <b>跨幀保存</b>的包裝(每次 <c>UpdateCharaStats</c> 才換一次)。
-    /// </remarks>
+    /// <summary>加上食物、藥水與部隊加成(狀態 356 的 <c>Param</c>,純量;沒有就 0)。</summary>
+    /// <remarks>刻意不收 Dalamud 的 <c>Status</c> 包裝:它的 <c>Param</c> 是原生解參考,跨幀或在背景執行緒讀都不安全。</remarks>
     public void AddConsumables(ConsumableStats food, ConsumableStats pot, int fcCraftBuffParam)
     {
         Craftsmanship += food.EffectiveValue(CharacterStatsUtils.Stat.Craftsmanship, Craftsmanship) + pot.EffectiveValue(CharacterStatsUtils.Stat.Craftsmanship, Craftsmanship) + fcCraftBuffParam;
@@ -366,7 +356,7 @@ public sealed class CrafterStatsSnapshot
                 s.Level = CharacterInfo.JobLevel(job);
             stats[craftType] = s;
         }
-        return new CrafterStatsSnapshot(stats, CharacterInfo.FCCraftsmanshipbuff?.Param ?? 0);
+        return new CrafterStatsSnapshot(stats, CharacterInfo.FCCraftsmanshipParam);
     }
 
     private static CrafterStatsSnapshot? current;

@@ -1960,7 +1960,7 @@ internal class ListEditor : Window, IDisposable
         // 模擬器預覽要吃實際會用的那一份，否則勾了覆寫之後預覽與實際製作對不起來。
         var consumables = options.Override ?? config;
         var stats = CharacterStats.GetBaseStatsForClassHeuristic((Job)((uint)Job.CRP + recipe.CraftType.RowId));
-        stats.AddConsumables(new(consumables.RequiredFood, consumables.RequiredFoodHQ), new(consumables.RequiredPotion, consumables.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
+        stats.AddConsumables(new(consumables.RequiredFood, consumables.RequiredFoodHQ), new(consumables.RequiredPotion, consumables.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipParam);
         var craft = Crafting.BuildCraftStateForRecipe(stats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
         if (config.DrawSolver(craft))
         {

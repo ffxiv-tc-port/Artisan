@@ -15,10 +15,10 @@ namespace Artisan.RawInformation.Character
     {
         public static unsafe void UpdateCharaStats()
         {
-            // 部隊加成的包裝指著本機角色的狀態表：角色不在（登出、換區）就放掉，不留指向舊角色的包裝；其餘欄位照舊保留上一次的值。
+            // 角色不在（登出、換區）時部隊加成歸 0；其餘欄位照舊保留上一次的值。
             if (Svc.Objects.LocalPlayer is null)
             {
-                FCCraftsmanshipbuff = null;
+                FCCraftsmanshipParam = 0;
                 return;
             }
 
@@ -28,32 +28,29 @@ namespace Artisan.RawInformation.Character
             MaxCP = Svc.Objects.LocalPlayer.MaxCp;
             Craftsmanship = PlayerState.Instance()->Attributes[70];
             Control = PlayerState.Instance()->Attributes[71];
-            FCCraftsmanshipbuff = FindFcCraftsmanshipBuff(Svc.Objects.LocalPlayer);
+            FCCraftsmanshipParam = FindFcCraftsmanshipParam(Svc.Objects.LocalPlayer);
         }
 
         /// <summary>
-        /// 部隊「作業精度提高」(狀態 356)。與 <c>player.StatusList.FirstOrDefault(x =&gt; x.StatusId == 356)</c> 同一個答案:
-        /// 有效格數內第一個 356,沒有就 null。
+        /// 部隊「作業精度提高」(狀態 356)的 <c>Param</c>。與 <c>player.StatusList.FirstOrDefault(x =&gt; x.StatusId == 356)?.Param ?? 0</c> 同一個答案:
+        /// 有效格數內第一個 356,沒有就 0。
         /// </summary>
-        /// <remarks>
-        /// 每幀路徑:只有符合的那一格才建包裝,不建 StatusList、列舉器與其餘各格的包裝。
-        /// 位址是本幀剛從物件表拿到的,取狀態表走的是 Dalamud <c>BattleChara.StatusList</c> 內部同一個呼叫;不跨幀保存。
-        /// </remarks>
-        private static unsafe Dalamud.Game.ClientState.Statuses.Status? FindFcCraftsmanshipBuff(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter? player)
+        /// <remarks>位址是本幀剛從物件表拿到的,當場讀成純量;不建包裝、不保存任何指標。</remarks>
+        private static unsafe int FindFcCraftsmanshipParam(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter? player)
         {
-            if (player is null || player.Address == nint.Zero) return null;
+            if (player is null || player.Address == nint.Zero) return 0;
 
             var statuses = ((FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address)->GetStatusManager();
-            if (statuses == null) return null;
+            if (statuses == null) return 0;
 
             var slots = statuses->Status;
             for (var i = 0; i < statuses->NumValidStatuses; i++)
             {
                 if (slots[i].StatusId == 356)
-                    return StatusList.CreateStatusReference((nint)System.Runtime.CompilerServices.Unsafe.AsPointer(ref slots[i]));
+                    return slots[i].Param;
             }
 
-            return null;
+            return 0;
         }
 
         public static byte? CharacterLevel;
@@ -68,7 +65,8 @@ namespace Artisan.RawInformation.Character
 
         public static unsafe int Control;
 
-        public static unsafe Dalamud.Game.ClientState.Statuses.Status? FCCraftsmanshipbuff;
+        /// <summary>部隊「作業精度提高」(狀態 356)的 <c>Param</c>;沒有這個加成時為 0。每幀由 <see cref="UpdateCharaStats"/> 重讀。</summary>
+        public static int FCCraftsmanshipParam;
 
         /// <summary>
         /// 取得指定職業的等級。查無此列、或該職業沒有經驗值欄位時回 0(未知)。

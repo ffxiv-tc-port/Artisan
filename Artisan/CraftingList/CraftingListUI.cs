@@ -258,10 +258,9 @@ namespace Artisan.CraftingLists
         /// 與純計算的模擬器／求解器)。傳 <c>default</c> 等於「就地讀」,那只能在主執行緒上。
         /// </param>
         /// <remarks>
-        /// 🔴 不給快照時這支會解三處原生記憶體:
+        /// 🔴 不給快照時這支會解兩處原生記憶體:
         /// <c>GetBaseStatsForClassHeuristic</c> → <c>RaptureGearsetModule.Instance()-&gt;Entries</c>
         /// ／<c>InventoryManager.Instance()-&gt;GetInventoryContainer</c>;
-        /// <c>CharacterInfo.FCCraftsmanshipbuff.Param</c> → <c>Status.Struct-&gt;Param</c>;
         /// <c>BuildCraftStateForRecipe</c> → <c>PlayerState.Instance()-&gt;ClassJobLevels</c>。
         /// </remarks>
         public static TimeSpan GetCraftDuration(uint recipeId, bool qs, CrafterStatsSnapshot? statsSnapshot = null)
@@ -277,7 +276,7 @@ namespace Artisan.CraftingLists
             if (statsSnapshot is null)
             {
                 stats = CharacterStats.GetBaseStatsForClassHeuristic(job);
-                stats.AddConsumables(new(config.RequiredFood, config.RequiredFoodHQ), new(config.RequiredPotion, config.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
+                stats.AddConsumables(new(config.RequiredFood, config.RequiredFoodHQ), new(config.RequiredPotion, config.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipParam);
             }
             else
             {

@@ -331,7 +331,7 @@ namespace Artisan.UI
 
                 if (ImGui.CollapsingHeader("Gear"))
                 {
-                    ImGui.TextUnformatted($"In-game stats: {CharacterInfo.Craftsmanship}/{CharacterInfo.Control}/{CharacterInfo.MaxCP}/{CharacterInfo.FCCraftsmanshipbuff}");
+                    ImGui.TextUnformatted($"In-game stats: {CharacterInfo.Craftsmanship}/{CharacterInfo.Control}/{CharacterInfo.MaxCP}/{CharacterInfo.FCCraftsmanshipParam}");
                     DrawEquippedGear();
                     // 沒登入時 Instance() 合法回 null;直接 ->Entries 是解參考 null(AVE,攔不到)。
                     // 取不到就把「取不到」畫出來,不要畫成空清單 —— 空清單會被讀成「沒有裝備組」。

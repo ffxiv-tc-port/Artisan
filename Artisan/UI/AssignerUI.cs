@@ -60,7 +60,7 @@ namespace Artisan.UI
             ImGui.Spacing();
             var recipe = filteredRecipes.First();
             var stats = CharacterStats.GetBaseStatsForClassHeuristic((Job)((uint)Job.CRP + recipe.CraftType.RowId));
-            stats.AddConsumables(new(DummyConfig.RequiredFood, DummyConfig.RequiredFoodHQ), new(DummyConfig.RequiredPotion, DummyConfig.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipbuff);
+            stats.AddConsumables(new(DummyConfig.RequiredFood, DummyConfig.RequiredFoodHQ), new(DummyConfig.RequiredPotion, DummyConfig.RequiredPotionHQ), CharacterInfo.FCCraftsmanshipParam);
             var c = Crafting.BuildCraftStateForRecipe(stats, (Job)((uint)Job.CRP + recipe.CraftType.RowId), recipe);
 
             DummyConfig.DrawFood();

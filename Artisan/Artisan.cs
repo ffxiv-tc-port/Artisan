@@ -277,8 +277,8 @@ public unsafe class Artisan : IDalamudPlugin
         {
             Step("Endurance.ToggleEndurance(false)", static () => Endurance.ToggleEndurance(false));
             CraftingListUI.Processing = false;
-            // 沒登入時 UpdateCharaStats 不會跑：在這裡放掉指向舊角色狀態表的部隊加成包裝。
-            CharacterInfo.FCCraftsmanshipbuff = null;
+            // 沒登入時 UpdateCharaStats 不會跑：在這裡把部隊加成歸 0。
+            CharacterInfo.FCCraftsmanshipParam = 0;
             return;
         }
 

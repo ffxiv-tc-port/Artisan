@@ -32,18 +32,18 @@ namespace Artisan.RawInformation
             }
         }
 
-        public DropSources(uint ItemId, List<uint> monsterId)
+        public DropSources(uint itemId, List<uint> monsterId)
         {
-            ItemId = ItemId;
+            ItemId = itemId;
             MonsterId = monsterId;
-            CanObtainFromRetainer = Svc.Data.GetExcelSheet<RetainerTaskNormal>()!.Any(x => x.Item.RowId == ItemId);
-            UsedInRecipes = LuminaSheets.RecipeSheet.Values.Any(y => y.Ingredients().Any(x => x.Item.RowId == ItemId));
+            CanObtainFromRetainer = Svc.Data.GetExcelSheet<RetainerTaskNormal>()!.Any(x => x.Item.RowId == itemId);
+            UsedInRecipes = LuminaSheets.RecipeSheet.Values.Any(y => y.Ingredients().Any(x => x.Item.RowId == itemId));
         }
 
         // 與上面那支同值，但兩張表由呼叫端整批各走一次，不必每個道具都整表重掃配方。
-        // 刻意不設 ItemId：上面那支的 ItemId = ItemId 是參數自指定，屬性恆為 0，這裡照舊。
         private DropSources(uint itemId, List<uint> monsterId, HashSet<uint> retainerTaskItems, HashSet<uint> recipeIngredientItems)
         {
+            ItemId = itemId;
             MonsterId = monsterId;
             CanObtainFromRetainer = retainerTaskItems.Contains(itemId);
             UsedInRecipes = recipeIngredientItems.Contains(itemId);

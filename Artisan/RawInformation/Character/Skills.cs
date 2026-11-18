@@ -60,11 +60,13 @@ namespace Artisan.RawInformation.Character
     {
         private static Dictionary<uint, Skills> _actionToSkill = new();
         private static uint[,] _skillToAction = new uint[Enum.GetValues(typeof(Skills)).Length, 8];
+        // ActionId 在每幀繪製與模擬器裡被大量呼叫：同一份陣列只取一次、用泛型 IndexOf 免裝箱。只讀，不可外流。
+        private static readonly Skills[] _allSkills = (Skills[])Enum.GetValues(typeof(Skills));
 
         public static Skills ActionToSkill(uint actionId) => _actionToSkill.GetValueOrDefault(actionId);
 
         public static int Level(this Skills skill) => skill.ActionId(Job.CRP) >= 100000 ? LuminaSheets.CraftActions[skill.ActionId(Job.CRP)].ClassJobLevel : LuminaSheets.ActionSheet[skill.ActionId(Job.CRP)].ClassJobLevel;
-        public static uint ActionId(this Skills skill, Job job) => skill is Skills.MaterialMiracle ? (uint)Skills.MaterialMiracle : job is >= Job.CRP and <= Job.CUL ? _skillToAction[Math.Max(Array.IndexOf(Enum.GetValues(typeof(Skills)), skill), (int)Skills.None), job - Job.CRP] : 0;
+        public static uint ActionId(this Skills skill, Job job) => skill is Skills.MaterialMiracle ? (uint)Skills.MaterialMiracle : job is >= Job.CRP and <= Job.CUL ? _skillToAction[Math.Max(Array.IndexOf(_allSkills, skill), (int)Skills.None), job - Job.CRP] : 0;
 
         static SkillActionMap()
         {

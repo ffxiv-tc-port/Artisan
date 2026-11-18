@@ -344,7 +344,7 @@ namespace Artisan.CraftingLists
             return true;
         }
 
-        private static void FetchListShareItemsAsync(string uid, Action<List<(uint ItemId, int Amount, bool Precraft)>> onSuccess)
+        private static void FetchListShareItemsAsync(string uid, Action<List<(Recipe Recipe, int Amount, bool Precraft)>> onSuccess)
         {
             if (fetchingList)
             {
@@ -362,7 +362,9 @@ namespace Artisan.CraftingLists
                     var entries = new List<(uint ItemId, int Amount, bool Precraft)>();
                     AddShareArrayEntries(fields?["items"], true, entries);
                     AddShareArrayEntries(fields?["finalItems"], false, entries);
-                    await Svc.Framework.RunOnFrameworkThread(() => onSuccess(entries));
+                    // 每筆都要掃整張配方表，幾十筆就是幾十毫秒：在這裡查完，框架執行緒只剩併進清單與存檔。
+                    var resolved = ResolveShareEntries(entries, GenericHelpers.GetSheet<Recipe>());
+                    await Svc.Framework.RunOnFrameworkThread(() => onSuccess(resolved));
                 }
                 catch (Exception ex)
                 {
@@ -391,14 +393,23 @@ namespace Artisan.CraftingLists
 
         // Non-craftable entries (crystals, gathered materials) simply find no recipe and are
         // skipped; craftable entries from the "items" array become pre-crafts ahead of finals.
-        private static void MergeShareEntriesIntoList(List<(uint ItemId, int Amount, bool Precraft)> entries, NewCraftingList target, bool precraftQS, bool finalQS)
+        // 背景執行緒可用：只比對列編號、不讀字串欄位（RSV 字串解析不是執行緒安全的）。結果與逐筆 FindRow 相同、順序不變。
+        private static List<(Recipe Recipe, int Amount, bool Precraft)> ResolveShareEntries(List<(uint ItemId, int Amount, bool Precraft)> entries, IEnumerable<Recipe> recipes)
         {
+            var resolved = new List<(Recipe Recipe, int Amount, bool Precraft)>(entries.Count);
             foreach (var (itemId, amount, precraft) in entries)
             {
-                var recipe = GenericHelpers.FindRow<Recipe>(x => x.ItemResult.ValueNullable?.RowId == itemId);
+                var recipe = recipes.FirstOrNull(x => x.ItemResult.ValueNullable?.RowId == itemId);
                 if (recipe?.RowId > 0)
-                    AddRecipeToList(target, recipe.Value, amount, precraft ? precraftQS : finalQS);
+                    resolved.Add((recipe.Value, amount, precraft));
             }
+            return resolved;
+        }
+
+        private static void MergeShareEntriesIntoList(List<(Recipe Recipe, int Amount, bool Precraft)> entries, NewCraftingList target, bool precraftQS, bool finalQS)
+        {
+            foreach (var (recipe, amount, precraft) in entries)
+                AddRecipeToList(target, recipe, amount, precraft ? precraftQS : finalQS);
         }
 
         // Parses Teamcraft's import-link format (https://ffxivteamcraft.com/import/<base64>,

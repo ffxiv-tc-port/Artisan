@@ -178,7 +178,8 @@ namespace Artisan.CraftingLists
         {
             if (list.Recipes.Count == 0 && !isNew) return false;
 
-            list.Recipes.RemoveAll(x => LuminaSheets.RecipeSheet?.First(y => y.Value.RowId == x.ID).Value.Number == 0);
+            // 字典的鍵就是 RowId：直接查與逐項掃結果相同，查不到一樣擲例外。
+            list.Recipes.RemoveAll(x => LuminaSheets.RecipeSheet?[x.ID].Number == 0);
 
             list.SkipIfEnough = P.Config.DefaultListSkip;
             list.Materia = P.Config.DefaultListMateria;

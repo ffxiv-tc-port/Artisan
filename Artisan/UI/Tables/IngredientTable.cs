@@ -284,19 +284,23 @@ namespace Artisan.UI.Tables
                 }
 
                 if (ImGui.IsItemHovered())
-                {
-                    StringBuilder sb = new();
-                    foreach (var usedin in item.UsedInCrafts)
-                    {
-                        var recipe = LuminaSheets.RecipeSheet[usedin];
-                        var amountUsed = recipe.Ingredients().FirstOrDefault(x => x.Item.RowId == item.Data.RowId).Amount * item.OriginList.Recipes.First(x => x.ID == recipe.RowId).Quantity;
+                    DrawUsedInTooltip(item);
+            }
 
-                        sb.Append($"{usedin.NameOfRecipe()} - {amountUsed}\r\n");
-                    }
-                    ImGui.BeginTooltip();
-                    ImGui.Text("Used in:".Loc() + $"\n{sb}");
-                    ImGui.EndTooltip();
+            // 捕捉 item 的閉包放在這裡：留在 DrawColumn 會在方法入口配置，每幀每列一次。
+            private static void DrawUsedInTooltip(Ingredient item)
+            {
+                StringBuilder sb = new();
+                foreach (var usedin in item.UsedInCrafts)
+                {
+                    var recipe = LuminaSheets.RecipeSheet[usedin];
+                    var amountUsed = recipe.Ingredients().FirstOrDefault(x => x.Item.RowId == item.Data.RowId).Amount * item.OriginList.Recipes.First(x => x.ID == recipe.RowId).Quantity;
+
+                    sb.Append($"{usedin.NameOfRecipe()} - {amountUsed}\r\n");
                 }
+                ImGui.BeginTooltip();
+                ImGui.Text("Used in:".Loc() + $"\n{sb}");
+                ImGui.EndTooltip();
             }
         }
 
@@ -310,13 +314,24 @@ namespace Artisan.UI.Tables
 
             public override void DrawColumn(Ingredient item, int _)
             {
-                ImGuiUtil.Center($"{ToName(item)}");
+                CenterNumber(item.Required);
             }
 
             public override string ToName(Ingredient item)
             {
                 return item.Required.ToString();
             }
+        }
+
+        // 與 ImGuiUtil.Center(value.ToString()) 畫出同一串字、同一個位置（同樣用目前文化格式化），在堆疊上格式化、不配置字串。
+        private static void CenterNumber(int value)
+        {
+            Span<char> buf = stackalloc char[16];
+            value.TryFormat(buf, out var len);
+            ReadOnlySpan<char> text = buf[..len];
+            var offset = (ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(text).X) / 2;
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + offset);
+            ImGui.TextUnformatted(text);
         }
 
         public sealed class IdColumn : ColumnString<Ingredient>
@@ -330,6 +345,14 @@ namespace Artisan.UI.Tables
             public override string ToName(Ingredient item)
             {
                 return item.Data.RowId.ToString();
+            }
+
+            // 與基底的 ImGui.TextUnformatted(ToName(item)) 同字，在堆疊上格式化。
+            public override void DrawColumn(Ingredient item, int _)
+            {
+                Span<char> buf = stackalloc char[16];
+                item.Data.RowId.TryFormat(buf, out var len);
+                ImGui.TextUnformatted((ReadOnlySpan<char>)buf[..len]);
             }
         }
 
@@ -345,16 +368,20 @@ namespace Artisan.UI.Tables
 
             public override void DrawColumn(Ingredient item, int _)
             {
-                ImGuiUtil.Center($"{ToName(item)}");
+                CenterNumber(Count(item));
             }
 
-            public unsafe override string ToName(Ingredient item)
+            public override string ToName(Ingredient item)
+            {
+                return Count(item).ToString();
+            }
+
+            private unsafe int Count(Ingredient item)
             {
                 if (!HQOnlyCrafts || !item.CanBeCrafted)
-                    return item.Inventory.ToString();
+                    return item.Inventory;
 
-                int HQ = InventoryManager.Instance()->GetInventoryItemCount(item.Data.RowId, true, false, false);
-                return HQ.ToString();
+                return InventoryManager.Instance()->GetInventoryItemCount(item.Data.RowId, true, false, false);
             }
         }
 
@@ -369,16 +396,13 @@ namespace Artisan.UI.Tables
                 => lhs.RetainerCount.CompareTo(rhs.RetainerCount);
 
             public override void DrawColumn(Ingredient item, int _)
-                => ImGuiUtil.Center($"{ToName(item)}");
+                => CenterNumber(Count(item));
 
             public override string ToName(Ingredient item)
-            {
-                if (!HQOnlyCrafts || !item.CanBeCrafted)
-                    return item.RetainerCount.ToString();
+                => Count(item).ToString();
 
-                int retainerHQ = item.ReainterCountHQ;
-                return retainerHQ.ToString();
-            }
+            private int Count(Ingredient item)
+                => !HQOnlyCrafts || !item.CanBeCrafted ? item.RetainerCount : item.ReainterCountHQ;
         }
 
         public sealed class CraftableCountColumn : ColumnString<Ingredient>
@@ -390,7 +414,12 @@ namespace Artisan.UI.Tables
                 => lhs.TotalCraftable.CompareTo(rhs.TotalCraftable);
 
             public override void DrawColumn(Ingredient item, int _)
-                => ImGuiUtil.Center(ToName(item));
+            {
+                if (item.Sources.Contains(1))
+                    CenterNumber(item.TotalCraftable);
+                else
+                    ImGuiUtil.Center("N/A");
+            }
 
 
             public override string ToName(Ingredient item)
@@ -412,11 +441,49 @@ namespace Artisan.UI.Tables
                 return string.Join(", ", item.UsedInCrafts.Select(x => x.NameOfRecipe()));
             }
 
+            private readonly Dictionary<Ingredient, JoinedText> texts = new();
+
             public override void DrawColumn(Ingredient item, int _)
             {
-                ImGui.Text(ToName(item));
+                if (!texts.TryGetValue(item, out var text))
+                    texts[item] = text = new JoinedText();
+                var parts = text.Begin();
+                foreach (var id in item.UsedInCrafts)
+                    parts.Add(id.NameOfRecipe());
+                ImGui.Text(text.End());
             }
 
+        }
+
+        /// <summary>
+        /// 與 <c>string.Join(", ", 這一幀的各段)</c> 同值：各段與上一次逐一是同一個字串物件才沿用上次組好的字串。
+        /// 每幀先 <see cref="Begin"/> 填各段、再 <see cref="End"/> 取字；只在繪製執行緒用。
+        /// </summary>
+        private sealed class JoinedText
+        {
+            private readonly List<string> parts = new();
+            private readonly List<string> lastParts = new();
+            private string? text;
+
+            public List<string> Begin()
+            {
+                parts.Clear();
+                return parts;
+            }
+
+            public string End()
+            {
+                var same = text != null && parts.Count == lastParts.Count;
+                for (var i = 0; same && i < parts.Count; i++)
+                    same = ReferenceEquals(parts[i], lastParts[i]);
+                if (!same)
+                {
+                    text = string.Join(", ", parts);
+                    lastParts.Clear();
+                    lastParts.AddRange(parts);
+                }
+                return text!;
+            }
         }
 
         public sealed class CheapestServerColumn : ColumnString<Ingredient>
@@ -536,10 +603,18 @@ namespace Artisan.UI.Tables
                         return;
                     }
 
-                    using var smallBtnStyle = ImRaii.PushStyle(ImGuiStyleVar.FramePadding, new Vector2(ImGui.GetStyle().FramePadding.X, 0));
-                    if (ImGui.Button("Fetch Prices".Loc()))
+                    // 與 using ImRaii.PushStyle 推彈相同（到方法結束才彈），每幀每列不配置 Raii 物件。
+                    ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(ImGui.GetStyle().FramePadding.X, 0));
+                    try
                     {
-                        CheapestServerColumn.RequestPrice(item);
+                        if (ImGui.Button("Fetch Prices".Loc()))
+                        {
+                            CheapestServerColumn.RequestPrice(item);
+                        }
+                    }
+                    finally
+                    {
+                        ImGui.PopStyleVar();
                     }
                 }
             }
@@ -784,9 +859,13 @@ namespace Artisan.UI.Tables
             public override int Compare(Ingredient lhs, Ingredient rhs)
                 => string.Join(", ", lhs.Sources).CompareTo(string.Join(", ", rhs.Sources));
 
+            private readonly Dictionary<Ingredient, JoinedText> texts = new();
+
             public override void DrawColumn(Ingredient item, int idx)
             {
-                List<string> outputs = new();
+                if (!texts.TryGetValue(item, out var text))
+                    texts[item] = text = new JoinedText();
+                var outputs = text.Begin();
 
                 if (item.Sources.Contains(1)) outputs.Add("Crafted".Loc());
                 if (item.Sources.Contains(2)) outputs.Add("Gathered".Loc());
@@ -795,7 +874,7 @@ namespace Artisan.UI.Tables
                 if (item.Sources.Contains(5)) outputs.Add("Monster Drop".Loc());
                 if (item.Sources.Contains(-1)) outputs.Add("Unknown".Loc());
 
-                ImGui.Text($"{string.Join(", ", outputs)}");
+                ImGui.Text(text.End());
             }
 
             public override bool FilterFunc(Ingredient item)
@@ -812,15 +891,31 @@ namespace Artisan.UI.Tables
             }
         }
 
+        // 彈出視窗 ID 與 item.Data.RowId.ToString() 同字，在堆疊上格式化；推彈與 using ImRaii.Popup 相同（開著才 EndPopup）。
         private void OpenContextMenu(object? sender, Ingredient item)
         {
-            if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
-                ImGui.OpenPopup(item.Data.RowId.ToString());
+            Span<char> idBuf = stackalloc char[16];
+            item.Data.RowId.TryFormat(idBuf, out var idLen);
+            ReadOnlySpan<char> popupId = idBuf[..idLen];
 
-            using var popup = ImRaii.Popup(item.Data.RowId.ToString());
-            if (!popup)
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                ImGui.OpenPopup(popupId);
+
+            if (!ImGui.BeginPopup(popupId))
                 return;
 
+            try
+            {
+                DrawContextMenuItems(item);
+            }
+            finally
+            {
+                ImGui.EndPopup();
+            }
+        }
+
+        private void DrawContextMenuItems(Ingredient item)
+        {
             DrawGatherItem(item);
             DrawAddToAutoGather(item);
             DrawSearchItem(item.Data.RowId, item.Data.Name.ToString());

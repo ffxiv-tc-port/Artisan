@@ -58,6 +58,12 @@ namespace Artisan.Universalis
 
         public List<Listing> AllListings { get; set; } = new();
 
+        /// <summary>
+        /// <see cref="MarketboardPricing.GetCheapestWorldCost"/> 最近幾次的結果，只由它讀寫。
+        /// 契約：掛售清單建好、交出去之後不再改動（換清單物件或筆數變了就重算）。整個陣列替換、不就地改，別的執行緒讀到舊陣列只是少一次命中。
+        /// </summary>
+        internal CheapestMemo[]? CheapestMemos;
+
         /// <summary>這份資料是完整查詢還是降級查詢來的。</summary>
         public MarketboardSource Source { get; set; } = MarketboardSource.Unknown;
 

@@ -941,12 +941,37 @@ namespace Artisan.Universalis
 
     public readonly record struct CheapestWorldCost(string World, double Qty, double Cost);
 
+    internal readonly record struct CheapestMemo(List<Listing> Listings, int Count, double Quantity, CheapestWorldCost Result);
+
     public static class MarketboardPricing
     {
         // Finds the single world where buying `quantity` units is cheapest, summing listings
         // cheapest-first until the quantity is covered. Shared by the ingredient table's own
         // price column and the finished-product stock tab so both price the same way.
+        // 成品庫存頁與材料表每幀每列都問同一份資料、同一個數量 ⇒ 記住最近 4 組結果（下面那段 LINQ 每次約數百 B）。
         public static CheapestWorldCost GetCheapestWorldCost(MarketboardData data, double quantity)
+        {
+            var listings = data.AllListings;
+            var memos = Volatile.Read(ref data.CheapestMemos);
+            if (memos != null)
+            {
+                foreach (var m in memos)
+                {
+                    if (ReferenceEquals(m.Listings, listings) && m.Count == listings.Count && m.Quantity.Equals(quantity))
+                        return m.Result;
+                }
+            }
+
+            var result = ComputeCheapestWorldCost(data, quantity);
+            var next = new CheapestMemo[Math.Min((memos?.Length ?? 0) + 1, 4)];
+            next[0] = new CheapestMemo(listings, listings.Count, quantity, result);
+            if (memos != null)
+                Array.Copy(memos, 0, next, 1, next.Length - 1);
+            Volatile.Write(ref data.CheapestMemos, next);
+            return result;
+        }
+
+        private static CheapestWorldCost ComputeCheapestWorldCost(MarketboardData data, double quantity)
         {
             double currentWorldCost = 0;
             string currentWorld = "";

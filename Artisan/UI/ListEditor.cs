@@ -229,10 +229,18 @@ internal class ListEditor : Window, IDisposable
     private void DrawAddAllMissingToGatherBuddy()
     {
         var supported = GatherBuddyIPC.Supported;
-        using (ImRaii.Disabled(!supported))
+        // 與 using ImRaii.Disabled(!supported) 推彈相同，每幀不配置 Raii 物件（區塊內沒有 ImRaii.Enabled）。
+        if (!supported)
+            ImGui.BeginDisabled();
+        try
         {
             if (ImGui.Button("Add All Missing to Gatherbuddy".Loc()))
                 AddAllMissingToGatherBuddy();
+        }
+        finally
+        {
+            if (!supported)
+                ImGui.EndDisabled();
         }
 
         // 用 SetTooltip 不用 Tooltip：後者自己再判一次不帶 AllowWhenDisabled 的 hover，按鈕變灰時永遠不顯示。
@@ -647,17 +655,22 @@ internal class ListEditor : Window, IDisposable
                     ImGui.SetClipboardText(itemName);
                     Notify.Success("Name copied to clipboard".Loc());
                 }
+                // ID 字串直接寫進 ImU8String 的緩衝區（不另建 string）；推彈與 using ImRaii.Popup 相同（開著才 EndPopup）。
                 if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
                     ImGui.OpenPopup($"FinishedProductContextMenu{itemId}");
 
-                using (var popup = ImRaii.Popup($"FinishedProductContextMenu{itemId}"))
+                if (ImGui.BeginPopup($"FinishedProductContextMenu{itemId}"))
                 {
-                    if (popup)
+                    try
                     {
                         IngredientTable.DrawSearchItem(itemId, itemName);
                         IngredientTable.DrawItemVendorLookup(itemId, itemName);
                         IngredientTable.DrawMonsterLootLookup(itemId, itemName);
                         IngredientTable.DrawMarketBoardLookup(itemId, itemName);
+                    }
+                    finally
+                    {
+                        ImGui.EndPopup();
                     }
                 }
                 ImGui.TableNextColumn();
@@ -707,39 +720,8 @@ internal class ListEditor : Window, IDisposable
                     if (lookup.Data != null)
                     {
                         var cheapest = MarketboardPricing.GetCheapestWorldCost(lookup.Data, required);
-                        var bestCost = cheapest.Cost;
-                        var label = "?? - Cost ??, Qty ??".Loc(cheapest.World, $"{cheapest.Cost:N0}", cheapest.Qty);
-                        var isSelfCraft = false;
-
-                        // 降級來源（aggregated 端點）只知道最低單價，不知道買 N 件的總價 ⇒ 標在列上。
                         var degraded = lookup.Data.Source == MarketboardSource.Aggregated;
-                        if (degraded)
-                            label = "?? (approx.)".Loc(label);
-
-                        // 契約:市價不可比時它不參加勝負比較,只並列「沒有市場價時本來就會顯示的
-                        //    那個選項」——與下面 lookup.FetchFailed 那條分支同一套優先序。
-                        if (!lookup.Data.IsUsableForComparison)
-                        {
-                            if (hasNpc)
-                                label = "?? (or NPC shop: ?? each)".Loc(label, $"{npcUnitPrice:N0}");
-                            else if (hasMaterialCost)
-                                label = "?? (or craft yourself)".Loc(label);
-                        }
-                        else
-                        {
-                            if (hasMaterialCost && materialCost < bestCost)
-                            {
-                                bestCost = materialCost;
-                                label = "Craft Yourself".Loc();
-                                isSelfCraft = true;
-                            }
-
-                            if (hasNpc && (double)npcUnitPrice * required < bestCost)
-                            {
-                                label = "NPC Shop - Cost ??, Qty unlimited".Loc($"{npcUnitPrice:N0}");
-                                isSelfCraft = false;
-                            }
-                        }
+                        var (label, isSelfCraft) = FinishedProductPriceLabel(itemId, lookup.Data, cheapest, required, hasNpc, npcUnitPrice, hasMaterialCost, materialCost);
 
                         ImGui.Text(label);
                         if (isSelfCraft && ImGui.IsItemHovered())
@@ -765,9 +747,9 @@ internal class ListEditor : Window, IDisposable
                         else
                             ImGui.Text("Unable to fetch prices".Loc());
                     }
-                    else if (ImGui.Button("Fetch Prices".Loc() + $"###Price{itemId}"))
+                    else if (ImGui.Button($"{"Fetch Prices".Loc()}###Price{itemId}"))
                     {
-                        MarketboardFetch.Fetch(itemId, onFailed: () => lookup.FetchFailed = true, onComplete: data => lookup.Data = data);
+                        FetchFinishedProductPrice(itemId, lookup);
                     }
                 }
             }
@@ -775,6 +757,64 @@ internal class ListEditor : Window, IDisposable
             ImGui.EndTable();
         }
     }
+
+    // 價格欄文字：組字用到的輸入（含各句在地化文字與目前文化）都和上一幀相同就沿用，免得每幀每列重組字串。
+    private readonly record struct PriceLabelKey(MarketboardData Data, MarketboardSource Source, bool Usable, CheapestWorldCost Cheapest, int Required,
+        bool HasNpc, uint NpcUnitPrice, bool HasMaterialCost, double MaterialCost, System.Globalization.CultureInfo Culture,
+        string L1, string L2, string L3, string L4, string L5, string L6);
+
+    private readonly Dictionary<uint, (PriceLabelKey Key, string Label, bool IsSelfCraft)> finishedPriceLabels = new();
+
+    private (string Label, bool IsSelfCraft) FinishedProductPriceLabel(uint itemId, MarketboardData data, CheapestWorldCost cheapest, int required,
+        bool hasNpc, uint npcUnitPrice, bool hasMaterialCost, double materialCost)
+    {
+        var key = new PriceLabelKey(data, data.Source, data.IsUsableForComparison, cheapest, required, hasNpc, npcUnitPrice, hasMaterialCost, materialCost,
+            System.Globalization.CultureInfo.CurrentCulture, "?? - Cost ??, Qty ??".Loc(), "?? (approx.)".Loc(), "?? (or NPC shop: ?? each)".Loc(),
+            "?? (or craft yourself)".Loc(), "Craft Yourself".Loc(), "NPC Shop - Cost ??, Qty unlimited".Loc());
+        if (finishedPriceLabels.TryGetValue(itemId, out var hit) && hit.Key.Equals(key))
+            return (hit.Label, hit.IsSelfCraft);
+
+        var bestCost = cheapest.Cost;
+        var label = "?? - Cost ??, Qty ??".Loc(cheapest.World, $"{cheapest.Cost:N0}", cheapest.Qty);
+        var isSelfCraft = false;
+
+        // 降級來源（aggregated 端點）只知道最低單價，不知道買 N 件的總價 ⇒ 標在列上。
+        var degraded = data.Source == MarketboardSource.Aggregated;
+        if (degraded)
+            label = "?? (approx.)".Loc(label);
+
+        // 契約:市價不可比時它不參加勝負比較,只並列「沒有市場價時本來就會顯示的
+        //    那個選項」——與 DrawFinishedProductStock 的 lookup.FetchFailed 分支同一套優先序。
+        if (!data.IsUsableForComparison)
+        {
+            if (hasNpc)
+                label = "?? (or NPC shop: ?? each)".Loc(label, $"{npcUnitPrice:N0}");
+            else if (hasMaterialCost)
+                label = "?? (or craft yourself)".Loc(label);
+        }
+        else
+        {
+            if (hasMaterialCost && materialCost < bestCost)
+            {
+                bestCost = materialCost;
+                label = "Craft Yourself".Loc();
+                isSelfCraft = true;
+            }
+
+            if (hasNpc && (double)npcUnitPrice * required < bestCost)
+            {
+                label = "NPC Shop - Cost ??, Qty unlimited".Loc($"{npcUnitPrice:N0}");
+                isSelfCraft = false;
+            }
+        }
+
+        finishedPriceLabels[itemId] = (key, label, isSelfCraft);
+        return (label, isSelfCraft);
+    }
+
+    // 捕捉 lookup 的閉包放在這裡：留在列迴圈裡會在每列的區塊入口配置，沒按按鈕的每一幀也配置。
+    private static void FetchFinishedProductPrice(uint itemId, MarketboardLookup lookup)
+        => MarketboardFetch.Fetch(itemId, onFailed: () => lookup.FetchFailed = true, onComplete: data => lookup.Data = data);
 
     // Sums the cheapest way to buy every ingredient needed for `craftQuantity` crafts of this
     // recipe (NPC vendor price if the ingredient has one and it's cheaper, otherwise the cheapest
@@ -1483,6 +1523,30 @@ internal class ListEditor : Window, IDisposable
             }
         }
     }
+    private readonly LocFormat1 hqOnlyHelpText = new();
+    private readonly LocFormat1 inventoryLegendText = new();
+
+    /// <summary>
+    /// 與 <c>template.Loc(arg)</c> 同值：在地化表查到的那筆與 <paramref name="arg"/> 都還是上一次那個字串物件就沿用上次的結果。
+    /// 只在繪製執行緒用。
+    /// </summary>
+    private sealed class LocFormat1
+    {
+        private string? locRef, argRef, text;
+
+        public string Get(string template, string arg)
+        {
+            var loc = template.Loc();
+            if (text == null || !ReferenceEquals(loc, locRef) || !ReferenceEquals(arg, argRef))
+            {
+                text = template.Loc(arg);
+                locRef = loc;
+                argRef = arg;
+            }
+            return text;
+        }
+    }
+
     private void DrawTotalIngredientsTable()
     {
         if (Table == null && RegenerateTask?.IsCompleted == true)
@@ -1511,7 +1575,7 @@ internal class ListEditor : Window, IDisposable
 
         ImGui.Checkbox("Only show HQ crafts".Loc(), ref HQSubcraftsOnly);
 
-        ImGuiComponents.HelpMarker("For ingredients that can be crafted, this will only show inventory?? counts that are HQ.".Loc(RetainerInfo.ATools ? " and retainer".Loc() : ""));
+        ImGuiComponents.HelpMarker(hqOnlyHelpText.Get("For ingredients that can be crafted, this will only show inventory?? counts that are HQ.", RetainerInfo.ATools ? " and retainer".Loc() : ""));
 
         ImGui.SameLine();
         ImGui.Checkbox("Enable Colour Validation".Loc(), ref ColourValidation);
@@ -1594,7 +1658,7 @@ internal class ListEditor : Window, IDisposable
             ImGui.PopStyleColor();
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() - 7);
-            ImGui.Text(" - Inventory has all required items ??".Loc(SelectedList.SkipIfEnough && SelectedList.SkipLiteral ? "" : "or is not required due to owning crafted materials using this ingredient".Loc()));
+            ImGui.Text(inventoryLegendText.Get(" - Inventory has all required items ??", SelectedList.SkipIfEnough && SelectedList.SkipLiteral ? "" : "or is not required due to owning crafted materials using this ingredient".Loc()));
 
             if (RetainerInfo.ATools)
             {

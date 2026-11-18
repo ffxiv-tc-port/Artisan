@@ -714,10 +714,32 @@ namespace Artisan.CraftingLogic.Solvers
             return InProgress(craft);
         }
 
+        // 組件位置在這次載入期間不變，只記路徑；檔案在不在照舊每次問（中途刪掉或補回都跟得上）。
+        private static string? cliPath;
+
         internal static bool CLIExists()
         {
-            return File.Exists(Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"));
+            return File.Exists(cliPath ??= Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"));
         }
+
+        /// <summary>勾選框標籤（在地化文字＋<c>##鍵</c>）：文字與鍵都沒變就沿用上一次組好的字串。只在繪製執行緒用。</summary>
+        private sealed class LabelCache(string suffix)
+        {
+            private string? loc, key, label;
+
+            public string Get(string locText, string solutionKey)
+            {
+                if (!ReferenceEquals(locText, loc) || solutionKey != key)
+                {
+                    label = locText + $"##{solutionKey}{suffix}";
+                    loc = locText;
+                    key = solutionKey;
+                }
+                return label!;
+            }
+        }
+
+        private static readonly LabelCache ReliabilityLabel = new("Reliability"), ProgressLabel = new("Progress"), HeartSoulLabel = new("HS"), QuickInnoLabel = new("QI");
 
         public static bool DrawRaphaelDropdown(CraftState craft, bool liveStats = true)
         {
@@ -739,7 +761,17 @@ namespace Artisan.CraftingLogic.Solvers
 
                 if (hasSolution)
                 {
-                    var opt = CraftingProcessor.GetAvailableSolversForRecipe(craft, true).FirstOrNull(x => x.Name == "Raphael Recipe Solver".Loc());
+                    // 與 FirstOrNull(名稱相符) 同一個答案（第一個相符的），只是不必每幀配置委派與閉包。
+                    ISolverDefinition.Desc? opt = null;
+                    var raphaelName = "Raphael Recipe Solver".Loc();
+                    foreach (var d in CraftingProcessor.GetAvailableSolversForRecipe(craft, true))
+                    {
+                        if (d.Name == raphaelName)
+                        {
+                            opt = d;
+                            break;
+                        }
+                    }
                     var solverIsRaph = config.SolverType == opt?.Def.GetType().FullName!;
                     var curStats = CharacterStats.GetCurrentStats();
                     //Svc.Log.Debug($"{curStats.Craftsmanship}/{craft.StatCraftsmanship} - {curStats.Control}/{craft.StatControl} - {curStats.CP}/{craft.StatCP}");
@@ -798,20 +830,21 @@ namespace Artisan.CraftingLogic.Solvers
                 }
 
                 ImGui.Separator();
-                var inProgress = InProgress(craft);
+                // key 就是 GetKey(craft)：上面沒有任何一步會改 craft，不必再組一次。
+                var inProgress = Tasks.ContainsKey(key);
                 var raphChanges = false;
 
                 if (inProgress)
                     ImGui.BeginDisabled();
 
                 if (P.Config.RaphaelSolverConfig.AllowEnsureReliability)
-                    raphChanges |= ImGui.Checkbox("Ensure reliability".Loc() + $"##{key}Reliability", ref TempConfigs[key].EnsureReliability);
+                    raphChanges |= ImGui.Checkbox(ReliabilityLabel.Get("Ensure reliability".Loc(), key), ref TempConfigs[key].EnsureReliability);
                 if (P.Config.RaphaelSolverConfig.AllowBackloadProgress)
-                    raphChanges |= ImGui.Checkbox("Backload progress".Loc() + $"##{key}Progress", ref TempConfigs[key].BackloadProgress);
+                    raphChanges |= ImGui.Checkbox(ProgressLabel.Get("Backload progress".Loc(), key), ref TempConfigs[key].BackloadProgress);
                 if (P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist)
-                    raphChanges |= ImGui.Checkbox("Allow heart and soul usage".Loc() + $"##{key}HS", ref TempConfigs[key].HeartAndSoul);
+                    raphChanges |= ImGui.Checkbox(HeartSoulLabel.Get("Allow heart and soul usage".Loc(), key), ref TempConfigs[key].HeartAndSoul);
                 if (P.Config.RaphaelSolverConfig.ShowSpecialistSettings && craft.Specialist)
-                    raphChanges |= ImGui.Checkbox("Allow quick innovation usage".Loc() + $"##{key}QI", ref TempConfigs[key].QuickInno);
+                    raphChanges |= ImGui.Checkbox(QuickInnoLabel.Get("Allow quick innovation usage".Loc(), key), ref TempConfigs[key].QuickInno);
 
                 changed |= raphChanges;
 

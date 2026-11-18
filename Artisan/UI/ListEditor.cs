@@ -1746,12 +1746,14 @@ internal class ListEditor : Window, IDisposable
             NeedsToRefreshTable = true;
         }
 
-        if (SelectedList.Recipes.First(x => x.ID == selectedListItem).ListItemOptions is null)
+        // 三次 First 找到的是同一列（中間只改 ListItemOptions），找一次即可；找不到照樣擲。
+        var selectedEntry = SelectedList.Recipes.First(x => x.ID == selectedListItem);
+        if (selectedEntry.ListItemOptions is null)
         {
-            SelectedList.Recipes.First(x => x.ID == selectedListItem).ListItemOptions = new();
+            selectedEntry.ListItemOptions = new();
         }
 
-        var options = SelectedList.Recipes.First(x => x.ID == selectedListItem).ListItemOptions;
+        var options = selectedEntry.ListItemOptions;
 
         if (recipe.CanQuickSynth)
         {
@@ -1787,9 +1789,10 @@ internal class ListEditor : Window, IDisposable
         }
 
         // Retrieve the list of recipes matching the selected recipe name from the preprocessed lookup table.
-        var matchingRecipes = LuminaSheets.recipeLookup[selectedListItem.NameOfRecipe()].ToList();
+        // 查表結果建好後不變，直接用分組本身，不必每幀複製成清單。
+        var matchingRecipes = LuminaSheets.recipeLookup[selectedListItem.NameOfRecipe()];
 
-        if (matchingRecipes.Count > 1)
+        if (matchingRecipes.Count() > 1)
         {
             var pre = $"{LuminaSheets.ClassJobSheet[recipe.CraftType.RowId + 8].Abbreviation.ToString()}";
             ImGui.TextWrapped("Switch crafted job".Loc());
@@ -2153,7 +2156,10 @@ internal class RecipeSelector : ItemSelector<ListItem>
             P.Config.Save();
         }
 
-        using (var col = ImRaii.PushColor(ImGuiCol.Text, itemCount == 0 || ItemId.ListItemOptions.Skipping ? ImGuiColors.DalamudRed : ImGuiColors.DalamudWhite))
+        // 與 using ImRaii.PushColor 相同（推一個、離開時彈一個），每列少配置一個 Raii 物件；
+        // 沒登記進 ImRaii 的顏色堆疊只影響 ImRaii.DefaultColors，Artisan 沒有用到它。
+        ImGui.PushStyleColor(ImGuiCol.Text, itemCount == 0 || ItemId.ListItemOptions.Skipping ? ImGuiColors.DalamudRed : ImGuiColors.DalamudWhite);
+        try
         {
             var res = ImGui.Selectable(label, idx == CurrentIdx);
             ImGuiEx.Tooltip("Right click for options.".Loc());
@@ -2181,6 +2187,10 @@ internal class RecipeSelector : ItemSelector<ListItem>
             }
 
             return res;
+        }
+        finally
+        {
+            ImGui.PopStyleColor();
         }
     }
 

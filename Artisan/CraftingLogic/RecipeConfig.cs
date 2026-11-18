@@ -108,15 +108,27 @@ public class RecipeConfig
 
 
     [JsonIgnore]
-    public string FoodName => requiredFood == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.FoodName) : RequiredFood == Disabled ? "Disabled".Loc() :$"{(RequiredFoodHQ ? " " : "")}{ConsumableChecker.Food.FirstOrDefault(x => x.Id == RequiredFood).Name}";
+    public string FoodName => requiredFood == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.FoodName) : RequiredFood == Disabled ? "Disabled".Loc() :$"{(RequiredFoodHQ ? " " : "")}{NameOf(ConsumableChecker.Food, RequiredFood)}";
     [JsonIgnore]
-    public string PotionName => requiredPotion == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.PotionName) : RequiredPotion == Disabled ? "Disabled".Loc() :$"{(RequiredPotionHQ ? " " : "")}{ConsumableChecker.Pots.FirstOrDefault(x => x.Id == RequiredPotion).Name}";
+    public string PotionName => requiredPotion == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.PotionName) : RequiredPotion == Disabled ? "Disabled".Loc() :$"{(RequiredPotionHQ ? " " : "")}{NameOf(ConsumableChecker.Pots, RequiredPotion)}";
     [JsonIgnore]
-    public string ManualName => requiredManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.ManualName) : RequiredManual == Disabled ? "Disabled".Loc() :$"{ConsumableChecker.Manuals.FirstOrDefault(x => x.Id == RequiredManual).Name}";
+    public string ManualName => requiredManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.ManualName) : RequiredManual == Disabled ? "Disabled".Loc() :$"{NameOf(ConsumableChecker.Manuals, RequiredManual)}";
     [JsonIgnore]
-    public string SquadronManualName => requiredSquadronManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.SquadronManualName) : RequiredSquadronManual == Disabled ? "Disabled".Loc() :$"{ConsumableChecker.SquadronManuals.FirstOrDefault(x => x.Id == RequiredSquadronManual).Name}";
+    public string SquadronManualName => requiredSquadronManual == Default ? "?? (Default)".Loc(P.Config.DefaultConsumables.SquadronManualName) : RequiredSquadronManual == Disabled ? "Disabled".Loc() :$"{NameOf(ConsumableChecker.SquadronManuals, RequiredSquadronManual)}";
 
 
+
+    // 下拉預覽每幀都會叫：與 FirstOrDefault(x => x.Id == id).Name 同答案（第一個相符的名字，沒有就 null，陣列 null 同樣擲 ArgumentNullException），不配置委派與閉包。
+    private static string? NameOf((uint Id, string Name)[] items, uint id)
+    {
+        ArgumentNullException.ThrowIfNull(items, "source");
+        foreach (var x in items)
+        {
+            if (x.Id == id)
+                return x.Name;
+        }
+        return null;
+    }
 
     public bool Draw(uint recipeId)
     {

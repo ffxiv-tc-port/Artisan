@@ -12,6 +12,10 @@ namespace Artisan.UI
     {
         private static string _search = string.Empty;
         private static bool _oldVersion = false;
+        // 閉包放在這裡：寫在迴圈裡的話，捕捉迴圈變數 m 讓每一列都配置一份，即使沒有點。
+        private static bool HasEditorWindow(int id)
+            => P.ws.Windows.Any(x => x.WindowName.Contains(id.ToString()));
+
         internal static void Draw()
         {
             ImGui.TextWrapped("This tab will allow you to view macros in the Raphael integration cache.".Loc());
@@ -38,13 +42,14 @@ namespace Artisan.UI
                 if (ImGui.BeginChild("##selector", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 32f.Scale()), true))
                 {
                     ImGuiEx.TextUnderlined("Level/Progress/Quality/Durability-Craftsmanship/Control/CP-Type/Initial Quality".Loc());
-                    foreach (var key in P.Config.RaphaelSolverCacheV3.Keys)
+                    // 與走訪 .Keys 再查表同順序、同內容（寫入都在框架執行緒，畫的時候不會變），只是不必每幀複製一份鍵陣列。
+                    foreach (var entry in P.Config.RaphaelSolverCacheV3)
                     {
-                        var m = P.Config.RaphaelSolverCacheV3[key];
+                        var m = entry.Value;
                         if (!m.Name.Contains(_search, System.StringComparison.CurrentCultureIgnoreCase)) continue;
                         var selected = ImGui.Selectable($"{m.Name}###{m.ID}");
 
-                        if (selected && !P.ws.Windows.Any(x => x.WindowName.Contains(m.ID.ToString())))
+                        if (selected && !HasEditorWindow(m.ID))
                         {
                             new MacroEditor(m, true);
                         }
@@ -60,13 +65,13 @@ namespace Artisan.UI
                 if (ImGui.BeginChild("##selector", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetContentRegionAvail().Y - 32f.Scale()), true))
                 {
                     ImGuiEx.TextUnderlined("Level/Progress/Quality/Durability-Craftsmanship/Control/CP-Type".Loc());
-                    foreach (var key in P.Config.RaphaelSolverCacheV2.Keys)
+                    foreach (var entry in P.Config.RaphaelSolverCacheV2)
                     {
-                        var m = P.Config.RaphaelSolverCacheV2[key];
+                        var m = entry.Value;
                         if (!m.Name.Contains(_search, System.StringComparison.CurrentCultureIgnoreCase)) continue;
                         var selected = ImGui.Selectable($"{m.Name}###{m.ID}");
 
-                        if (selected && !P.ws.Windows.Any(x => x.WindowName.Contains(m.ID.ToString())))
+                        if (selected && !HasEditorWindow(m.ID))
                         {
                             new MacroEditor(m, true);
                         }

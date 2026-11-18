@@ -565,6 +565,50 @@ internal class ListEditor : Window, IDisposable
         return new FinishedProductPriceSortKey(true, cheapest.World, cheapest.Cost, cheapest.Qty);
     }
 
+    private readonly List<FinishedProductPriceSortKey> priceSortKeys = new();
+    private readonly List<ListItem> priceSortInputRows = new();
+    private readonly List<FinishedProductPriceSortKey> priceSortInputKeys = new();
+    private List<ListItem>? priceSortedRows;
+
+    /// <summary>
+    /// 依價格排序：結果只由各列（參考與順序）與各列的排序鍵決定，兩者都和上次排序時相同就沿用上次的結果，否則照原式重排。
+    /// 回傳的清單在下次呼叫前不可修改；只在繪製執行緒用。
+    /// </summary>
+    private List<ListItem> SortFinishedProductsByPrice(List<ListItem> rows)
+    {
+        priceSortKeys.Clear();
+        foreach (var rec in rows)
+            priceSortKeys.Add(GetFinishedProductPriceSortKey(rec));
+
+        var same = priceSortedRows != null && rows.Count == priceSortInputRows.Count;
+        for (var i = 0; same && i < rows.Count; i++)
+            same = ReferenceEquals(rows[i], priceSortInputRows[i]) && priceSortKeys[i].Equals(priceSortInputKeys[i]);
+        if (same)
+            return priceSortedRows!;
+
+        var sortKeys = new Dictionary<ListItem, FinishedProductPriceSortKey>(rows.Count);
+        for (var i = 0; i < rows.Count; i++)
+            sortKeys.Add(rows[i], priceSortKeys[i]);
+        var worldFrequency = sortKeys.Values
+            .Where(k => k.HasPrice)
+            .GroupBy(k => k.World)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var sorted = rows
+            .OrderByDescending(rec => sortKeys[rec].HasPrice)
+            .ThenByDescending(rec => sortKeys[rec].HasPrice ? worldFrequency[sortKeys[rec].World] : 0)
+            .ThenByDescending(rec => sortKeys[rec].Cost)
+            .ThenByDescending(rec => sortKeys[rec].Qty)
+            .ToList();
+
+        priceSortInputRows.Clear();
+        priceSortInputRows.AddRange(rows);
+        priceSortInputKeys.Clear();
+        priceSortInputKeys.AddRange(priceSortKeys);
+        priceSortedRows = sorted;
+        return sorted;
+    }
+
     private void DrawFinishedProductStock()
     {
         bool showPrice = P.Config.UseUniversalis && P.Config.UniversalisOnDemand;
@@ -624,20 +668,7 @@ internal class ListEditor : Window, IDisposable
             }
 
             if (showPrice && _sortFinishedProductsByPrice)
-            {
-                var sortKeys = recipesToShow.ToDictionary(rec => rec, GetFinishedProductPriceSortKey);
-                var worldFrequency = sortKeys.Values
-                    .Where(k => k.HasPrice)
-                    .GroupBy(k => k.World)
-                    .ToDictionary(g => g.Key, g => g.Count());
-
-                recipesToShow = recipesToShow
-                    .OrderByDescending(rec => sortKeys[rec].HasPrice)
-                    .ThenByDescending(rec => sortKeys[rec].HasPrice ? worldFrequency[sortKeys[rec].World] : 0)
-                    .ThenByDescending(rec => sortKeys[rec].Cost)
-                    .ThenByDescending(rec => sortKeys[rec].Qty)
-                    .ToList();
-            }
+                recipesToShow = SortFinishedProductsByPrice(recipesToShow);
 
             foreach (var rec in recipesToShow)
             {

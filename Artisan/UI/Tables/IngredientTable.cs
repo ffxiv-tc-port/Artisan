@@ -19,6 +19,7 @@ using OtterGui.Raii;
 using OtterGui.Table;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using System.Text;
@@ -491,6 +492,12 @@ namespace Artisan.UI.Tables
             public override float Width => _cheapestColumnWidth;
             public Dictionary<uint, (string World, double Qty, double Cost)> CheapestListings = new();
 
+            // 價格文字：組字用到的輸入（含各句在地化文字、參數符號與目前文化）都和上次相同就沿用，免得查到價格後每幀每列重組字串。
+            private readonly record struct ListingTextKey(string World, double Qty, double Cost, bool NpcWins, uint NpcUnitPrice, bool Aggregated,
+                CultureInfo Culture, string Symbol, string L1, string L2, string L3);
+
+            private readonly Dictionary<Ingredient, (ListingTextKey Key, string Text)> listingTexts = new();
+
             public static void RequestPrice(Ingredient item)
             {
                 MarketboardFetch.Fetch(item.Data.RowId,
@@ -535,19 +542,33 @@ namespace Artisan.UI.Tables
 
                     // 契約:市價不可比時勝負不落在這一格 —— 不比 NPC、只畫約略價。
                     //    NPC 那個精確價改由 DrawColumn 的 tooltip 講。
-                    if ((item.MarketboardData?.IsUsableForComparison ?? false)
-                        && MarketboardPricing.TryGetNpcPrice(item.Data, out var npcUnitPrice)
-                        && (double)npcUnitPrice * item.Remaining < listing.Cost)
-                        return "NPC Shop - Cost ??, Qty unlimited".Loc(npcUnitPrice.ToString("N0"));
+                    uint npcUnitPrice = 0;
+                    var npcWins = (item.MarketboardData?.IsUsableForComparison ?? false)
+                        && MarketboardPricing.TryGetNpcPrice(item.Data, out npcUnitPrice)
+                        && (double)npcUnitPrice * item.Remaining < listing.Cost;
+                    var aggregated = item.MarketboardData?.Source == MarketboardSource.Aggregated;
 
-                    var text = "?? - Cost ??, Qty ??".Loc(listing.World, listing.Cost.ToString("N0"), listing.Qty);
+                    var key = new ListingTextKey(listing.World, listing.Qty, listing.Cost, npcWins, npcWins ? npcUnitPrice : 0, aggregated,
+                        CultureInfo.CurrentCulture, Localization.PararmeterSymbol,
+                        "NPC Shop - Cost ??, Qty unlimited".Loc(), "?? - Cost ??, Qty ??".Loc(), "?? (approx.)".Loc());
+                    if (listingTexts.TryGetValue(item, out var hit) && hit.Key.Equals(key))
+                        return hit.Text;
 
-                    // 🔴 降級來源（aggregated 端點）只知道「最低單價」與「在哪個世界」，
-                    //    算不出「買 N 件要多少錢」⇒ 必須在列上就看得出這是約略值。
-                    //    把它畫成一個普通的價格會被當成精確報價。
-                    if (item.MarketboardData?.Source == MarketboardSource.Aggregated)
-                        text = "?? (approx.)".Loc(text);
+                    string text;
+                    if (npcWins)
+                        text = "NPC Shop - Cost ??, Qty unlimited".Loc(npcUnitPrice.ToString("N0"));
+                    else
+                    {
+                        text = "?? - Cost ??, Qty ??".Loc(listing.World, listing.Cost.ToString("N0"), listing.Qty);
 
+                        // 🔴 降級來源（aggregated 端點）只知道「最低單價」與「在哪個世界」，
+                        //    算不出「買 N 件要多少錢」⇒ 必須在列上就看得出這是約略值。
+                        //    把它畫成一個普通的價格會被當成精確報價。
+                        if (aggregated)
+                            text = "?? (approx.)".Loc(text);
+                    }
+
+                    listingTexts[item] = (key, text);
                     return text;
 
                 }
@@ -641,21 +662,36 @@ namespace Artisan.UI.Tables
                 {
                     var qty = item.MarketboardData.TotalQuantityOfUnits;
                     var listings = item.MarketboardData.TotalNumberOfListings;
+                    var truncated = item.MarketboardData.ListingsTruncated;
 
+                    var key = new ForSaleTextKey(qty, listings, truncated, CultureInfo.CurrentCulture, Localization.PararmeterSymbol,
+                        "?? listings - ?? total items".Loc());
+                    if (texts.TryGetValue(item, out var hit) && hit.Key.Equals(key))
+                        return hit.Text;
+
+                    string text;
                     // 🔴 「不知道」不可以畫成 0 —— 降級來源（aggregated 端點）根本沒有這兩個數字，
                     //    而 $"{null:N0}" 會產生空字串，看起來像「查到了，結果是空的」。
                     if (qty == null || listings == null)
-                        return "?? listings - ?? total items".Loc("?", "?");
+                        text = "?? listings - ?? total items".Loc("?", "?");
 
                     // 🔴 被 listings=N 截斷時，Universalis 回的那兩個數字算的是「回傳的那幾筆」，
                     //    不是市場真實總數 ⇒ 只能當下界講。
-                    if (item.MarketboardData.ListingsTruncated)
-                        return "?? listings - ?? total items".Loc($"{listings:N0}+", $"{qty:N0}+");
+                    else if (truncated)
+                        text = "?? listings - ?? total items".Loc($"{listings:N0}+", $"{qty:N0}+");
+                    else
+                        text = "?? listings - ?? total items".Loc($"{listings:N0}", $"{qty:N0}");
 
-                    return "?? listings - ?? total items".Loc($"{listings:N0}", $"{qty:N0}");
+                    texts[item] = (key, text);
+                    return text;
                 }
                 return "";
             }
+
+            // 文字只由這些輸入決定（含在地化文字、參數符號與目前文化）；都和上次相同就沿用，免得每幀每列重組字串。
+            private readonly record struct ForSaleTextKey(double? Qty, double? Listings, bool Truncated, CultureInfo Culture, string Symbol, string L1);
+
+            private readonly Dictionary<Ingredient, (ForSaleTextKey Key, string Text)> texts = new();
 
             public override void DrawColumn(Ingredient item, int _)
             {

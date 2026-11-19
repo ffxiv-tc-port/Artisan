@@ -145,7 +145,7 @@ public class ExpertSolver : Solver
         var progressDeficit = remainingProgress - estCarefulSynthProgress; // if >0, we need more progress before we can start finisher
         var cpAvailableForQuality = step.RemainingCP - reservedCPForProgress;
 
-        var qualityTarget = craft.IshgardExpert && cfg.MaxIshgardRecipes ? craft.CraftQualityMax : craft.CraftQualityMin3; // TODO: reconsider, this is a bit of a hack
+        var qualityTarget = (craft.IshgardExpert && cfg.MaxIshgardRecipes) || (craft.IsCosmic && craft.CraftCollectible && cfg.MaxCosmicRecipes) ? craft.CraftQualityMax : craft.CraftQualityMin3; // TODO: reconsider, this is a bit of a hack
         if (step.Index == 1)
         {
             // always open with special action

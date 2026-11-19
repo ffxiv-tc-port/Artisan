@@ -14,6 +14,9 @@ namespace Artisan.CraftingLogic.Solvers;
 public class ExpertSolverSettings
 {
     public bool MaxIshgardRecipes;
+    // 宇宙探索的評價在第三突破點之後仍隨品質線性上升,停在第三突破點會拿不到金星。
+    // 與上游同名設定一致預設 true;能力值打不滿的高難配方追滿品質反而可能掉到第三突破點以下。
+    public bool MaxCosmicRecipes = true;
     public bool UseReflectOpener;
     public bool MuMeIntensiveGood = true; // if true, we allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs
     public bool MuMeIntensiveMalleable = false; // if true and we have malleable during mume, use intensive rather than hoping for rapid
@@ -118,6 +121,8 @@ public class ExpertSolverSettings
         ImGui.Unindent();
         changed |= ImGui.Checkbox("Max out Ishgard Restoration recipes instead of just hitting max breakpoint".Loc(), ref MaxIshgardRecipes);
         ImGuiComponents.HelpMarker("This will try to maximise quality to earn more Skyward points.".Loc());
+        changed |= ImGui.Checkbox("Max out Cosmic Exploration recipes instead of hitting third breakpoint".Loc(), ref MaxCosmicRecipes);
+        ImGuiComponents.HelpMarker("Cosmic Exploration mission scores keep rising with quality past the third breakpoint; gold often needs full quality.".Loc());
         changed |= ImGui.Checkbox("Finisher: use ?? to try baiting ?? ?? for ??".Loc(Skills.CarefulObservation.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString, Skills.ByregotsBlessing.NameOfAction()), ref FinisherBaitGoodByregot);
         changed |= ImGui.Checkbox("Emergency: use ?? to try baiting ?? ?? for ?? if really low on CP".Loc(Skills.CarefulObservation.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString, Skills.TricksOfTrade.NameOfAction()), ref EmergencyCPBaitGood);
         changed |= ImGui.Checkbox("Use Material Miracle in Cosmic Exploration".Loc(), ref UseMaterialMiracle);

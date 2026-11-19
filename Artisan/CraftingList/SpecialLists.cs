@@ -38,7 +38,8 @@ namespace Artisan.CraftingLists
         private static string Contains = string.Empty;
 
         private static Dictionary<int, bool> Yields = LuminaSheets.RecipeSheet.Values.DistinctBy(x => x.AmountResult).OrderBy(x => x.AmountResult).ToDictionary(x => (int)x.AmountResult, x => false);
-        private static Dictionary<string, bool> Stars = LuminaSheets.RecipeLevelTableSheet.Values.DistinctBy(x => x.Stars).ToDictionary(x => "★".Repeat(x.Stars), x => false);
+        // 鍵＝星數本身，過濾端直接比對；有 0 星的列，標籤不可拿星號字串當 ID（會是空字串）。
+        private static Dictionary<int, bool> Stars = LuminaSheets.RecipeLevelTableSheet.Values.Select(x => (int)x.Stars).Distinct().Order().ToDictionary(x => x, x => false);
         private static Dictionary<int, bool> Stats = LuminaSheets.RecipeSheet.Values.SelectMany(x => x.ItemResult.Value.BaseParam).DistinctBy(x => x.Value.RowId).Where(x => x.RowId > 0).OrderBy(x => x.RowId).ToDictionary(x => (int)x.RowId, x => false);
 
         private static float DurY = 0f;
@@ -302,7 +303,8 @@ namespace Artisan.CraftingLists
                 foreach (var star in Stars)
                 {
                     var val = star.Value;
-                    if (ImGui.Checkbox($"{star.Key}", ref val))
+                    var starLabel = star.Key == 0 ? "No stars".Loc() : "★".Repeat(star.Key);
+                    if (ImGui.Checkbox($"{starLabel}###Star{star.Key}", ref val))
                     {
                         Stars[star.Key] = val;
                     }
@@ -595,7 +597,7 @@ namespace Artisan.CraftingLists
                 {
                     if (!v.Value)
                     {
-                        recipes.RemoveAll(x => x.RecipeLevelTable.Value.Stars == v.Key.Length);
+                        recipes.RemoveAll(x => x.RecipeLevelTable.Value.Stars == v.Key);
                     }
                 }
             }

@@ -1059,6 +1059,11 @@ namespace Artisan.UI
 
                         ImGuiComponents.HelpMarker("Caps how much of the market board Universalis sends back per item. Lowering it makes responses smaller, but the \"listings\" / \"total items\" counts and the cheapest-world calculation are computed from whatever was sent, so a low cap makes those numbers smaller than reality (truncated rows are marked). 0 means no limit.".Loc());
                     }
+
+                    if (ImGui.Checkbox("Don't ask before sending timed-node ingredients to GatherBuddy".Loc(), ref P.Config.SkipTimedGatherConfirm))
+                        P.Config.Save();
+
+                    ImGuiComponents.HelpMarker("Normally \"Add All Missing to Gatherbuddy\" first lists the missing ingredients that come from timed (unspoiled / legendary / ephemeral) gathering points, with their market price and GatherBuddy's estimated gathering time, so you can untick the ones you would rather buy. Tick this to send everything straight away without that list.".Loc());
                 }
 
                 ImGui.Unindent();

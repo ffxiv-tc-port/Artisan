@@ -221,6 +221,9 @@ namespace Artisan
         /// </remarks>
         public int UniversalisCacheMinutes = 10;
 
+        // 開＝「缺料全部加進 GatherBuddy」不先列出限時採集點素材讓使用者取消勾選，直接照舊全部送出。
+        public bool SkipTimedGatherConfirm = false;
+
         public int SolverCollectibleMode = 3;
         public ItemFilter ShowItemsV1 { get; set; } = ItemFilter.All;
 

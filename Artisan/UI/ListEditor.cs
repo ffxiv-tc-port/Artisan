@@ -263,7 +263,13 @@ internal class ListEditor : Window, IDisposable
         ImGuiEx.SetTooltip(help + "\n" + "With GatherBuddy's 'Check Retainer Inventories' off, it only counts your own inventory.".Loc());
     }
 
-    private void AddAllMissingToGatherBuddy()
+    private readonly TimedGatherConfirm _timedGatherConfirm = new();
+
+    /// <param name="excluded">
+    /// <see langword="null"/>＝使用者剛按下按鈕，有限時採集點素材時先跳確認面板；
+    /// 非 null＝面板按了送出，裡面是取消勾選的道具 id。缺料清單在送出那一刻重算，不沿用面板打開時的快照。
+    /// </param>
+    private void AddAllMissingToGatherBuddy(HashSet<uint>? excluded = null)
     {
         if (Table == null)
             return;
@@ -274,6 +280,19 @@ internal class ListEditor : Window, IDisposable
         {
             Notify.Info("Nothing gatherable is missing.".Loc());
             return;
+        }
+
+        if (excluded == null && !P.Config.SkipTimedGatherConfirm && _timedGatherConfirm.TryOffer(missing))
+            return;
+
+        if (excluded is { Count: > 0 })
+        {
+            missing.RemoveAll(x => excluded.Contains(x.Data.RowId));
+            if (missing.Count == 0)
+            {
+                Notify.Info("Nothing was sent to Gatherbuddy: every missing ingredient was unticked.".Loc());
+                return;
+            }
         }
 
         if (GatherBuddyIPC.SupportsSetQuantity)
@@ -1674,6 +1693,8 @@ internal class ListEditor : Window, IDisposable
 
         ImGui.SameLine();
         DrawAddAllMissingToGatherBuddy();
+        if (_timedGatherConfirm.Draw(out var excludedFromGatherBuddy))
+            AddAllMissingToGatherBuddy(excludedFromGatherBuddy);
         GatherBuddyStartButton.Draw(inContextMenu: false, sameLine: true);
 
         ImGui.SameLine();

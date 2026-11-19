@@ -27,6 +27,9 @@ namespace Artisan.IPC
         /// <summary>SetAutoGatherListQuantity／GetAutoGatherListQuantity 從對方的 IPC 版本 4 起才有。</summary>
         private const int SetQuantityIpcVersion = 4;
 
+        /// <summary>GetTimedGatherEstimate 從對方的 IPC 版本 6 起才有。</summary>
+        private const int TimedEstimateIpcVersion = 6;
+
         /// <summary>問不到清單件數或目標數量時回這個，畫面上要顯示成「?」而不是 0。</summary>
         internal const int UnknownCount = -1;
 
@@ -55,6 +58,51 @@ namespace Artisan.IPC
 
         /// <summary>對方在不在、而且版本夠新。</summary>
         internal static bool Supported => CachedVersion >= RequiredIpcVersion;
+
+        /// <summary>對方這一刻真的載入著（版本號有一秒快取，期間對方可能剛被停用）。</summary>
+        private static bool IsLoadedNow()
+        {
+            foreach (var plugin in Svc.PluginInterface.InstalledPlugins)
+            {
+                if (plugin.InternalName == PluginInternalName && plugin.IsLoaded)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>對方 GetTimedGatherEstimate 的回傳；欄位意義見 <see cref="UI.TimedGatherConfirmRules"/>。</summary>
+        internal readonly record struct TimedEstimate(int Status, int NodeType, int Rounds, double Seconds, double YieldPerWindow,
+            int WindowsPerEorzeaDay, string Reason);
+
+        /// <summary>
+        /// 限時採集點道具還要採 <paramref name="quantity"/> 個大約要多久（對方只讀、不動清單）。只在繪製執行緒呼叫：
+        /// 對方走主執行緒閘門，從這裡呼叫是就地執行；別的執行緒呼叫會阻塞。
+        /// </summary>
+        /// <returns><see langword="null"/>＝問不到（沒載入、版本太舊、呼叫失敗），畫面上顯示「?」。</returns>
+        internal static TimedEstimate? GetTimedGatherEstimate(uint itemId, int quantity)
+        {
+            if (itemId == 0 || CachedVersion < TimedEstimateIpcVersion || !IsLoadedNow())
+                return null;
+
+            try
+            {
+                // 🔴 元素型別與順序必須和對方簽章逐一相同：ValueTuple 兩邊是同一個型別才不會走 JSON 轉換。
+                var r = Svc.PluginInterface
+                    .GetIpcSubscriber<uint, int, (int, int, int, double, double, int, string)>($"{IpcPrefix}.GetTimedGatherEstimate")
+                    .InvokeFunc(itemId, quantity);
+                return new TimedEstimate(r.Item1, r.Item2, r.Item3, r.Item4, r.Item5, r.Item6, r.Item7 ?? string.Empty);
+            }
+            catch (IpcError)
+            {
+                return null;
+            }
+            catch (Exception e)
+            {
+                PluginLog.Warning($"[Artisan] 問不到 {IpcPrefix}.GetTimedGatherEstimate({itemId}, {quantity})：{e.Message}");
+                return null;
+            }
+        }
 
         /// <summary>對方有「設定目標數量」的端點；沒有就只能走累加的舊路徑。</summary>
         internal static bool SupportsSetQuantity => CachedVersion >= SetQuantityIpcVersion;

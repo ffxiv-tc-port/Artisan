@@ -21,6 +21,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using static ECommons.GenericHelpers;
@@ -1308,7 +1310,7 @@ namespace Artisan.IPC
             var diag = BellInteractRangeDiag.TrySample();
             foreach (var x in Svc.Objects)
             {
-                if ((x.ObjectKind == ObjectKind.Housing || x.ObjectKind == ObjectKind.EventObj) && x.Name.ToString().EqualsIgnoreCaseAny(BellName, "リテイナーベル"))
+                if ((x.ObjectKind == ObjectKind.Housing || x.ObjectKind == ObjectKind.EventObj) && IsBellName(x))
                 {
                     if (diag && x.IsTargetable())
                         BellInteractRangeDiag.Compare(x, nameof(GetReachableRetainerBell));
@@ -1337,9 +1339,28 @@ namespace Artisan.IPC
             }
         }
 
-        internal static string BellName
+        private const string BellNameJa = "リテイナーベル";
+        private static string? bellName;
+
+        // 只取決於資料表（同一場遊戲語言不變）⇒ 第一次讀到就記住；查表擲例外的那次不記，下次照舊重查。
+        internal static string BellName => bellName ??= Svc.Data.GetExcelSheet<EObjName>().GetRow(2000401).Singular.ToString();
+
+        /// <summary>與 <c>obj.Name.ToString().EqualsIgnoreCaseAny(BellName, "リテイナーベル")</c> 同值。</summary>
+        /// <remarks>
+        /// 主視窗清單頁每幀對物件表裡每個房屋／事件物件問一次 ⇒ 純文字名字直接在堆疊上解碼比對、不配置；
+        /// 含 payload 的名字照原式解析。只在框架執行緒呼叫，不保存 <paramref name="obj"/>。
+        /// 不內聯：stackalloc 要在每次呼叫結束時釋放，不能被併進物件表迴圈裡越疊越深。
+        /// </remarks>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static unsafe bool IsBellName(IGameObject obj)
         {
-            get => Svc.Data.GetExcelSheet<EObjName>().GetRow(2000401).Singular.ToString();
+            ReadOnlySpan<byte> raw = obj.Struct()->Name;
+            Span<char> text = stackalloc char[Encoding.UTF8.GetMaxCharCount(raw.Length)];
+            if (!PlainSeStringText.TryDecode(raw, text, out var written))
+                return obj.Name.ToString().EqualsIgnoreCaseAny(BellName, BellNameJa);
+            ReadOnlySpan<char> name = text[..written];
+            return MemoryExtensions.Equals(name, BellName, StringComparison.OrdinalIgnoreCase)
+                || MemoryExtensions.Equals(name, BellNameJa, StringComparison.OrdinalIgnoreCase);
         }
 
         public unsafe static bool IsTargetable(this IGameObject o)

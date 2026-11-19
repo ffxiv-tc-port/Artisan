@@ -212,7 +212,7 @@ public static class CraftingProcessor
         // 同一個解算器也被配方視窗的提示取樣器拿去跑上百次模擬(見 SolverHintSampler),
         // 在裡面記會把 log 洗掉;而這裡保證是實機的那一場製作。
         // Information 級:要使用者回報的診斷。
-        if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.LastGateExplanation is { Length: > 0 } mmWhy)
+        if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.ConsumeGateExplanation() is { Length: > 0 } mmWhy)
             Svc.Log.Information($"[MaterialMiracle] {mmWhy}");
         if (Simulator.CannotUseAction(craft, initialStep, _nextRec.Action, out string reason))
             DuoLog.Error($"Unable to use {_nextRec.Action.NameOfAction()}: {reason}");
@@ -234,6 +234,8 @@ public static class CraftingProcessor
         // 讀走即清 ⇒ 一場製作只會印一行。Information 級:要使用者回報的診斷。
         if (_activeSolver is Solvers.StandardSolver stdSolver && stdSolver.ConsumeGateExplanation() is { Length: > 0 } stdWhy)
             Svc.Log.Information($"[MaterialMiracle] {stdWhy}");
+        if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.ConsumeGateExplanation() is { Length: > 0 } mmWhy)
+            Svc.Log.Information($"[MaterialMiracle] {mmWhy}");
         Svc.Log.Debug($"Next rec is: {_nextRec.Action}");
         if (Simulator.CannotUseAction(craft, step, _nextRec.Action, out string reason))
             DuoLog.Error($"Unable to use {_nextRec.Action.NameOfAction()}: {reason}");

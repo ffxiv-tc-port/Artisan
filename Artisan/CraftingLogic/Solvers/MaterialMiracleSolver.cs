@@ -36,6 +36,16 @@ public class MaterialMiracleSolver : Solver, ICraftValidator
     ///     <c>Crafting.CurCraft</c> —— 但那會觸發 <c>Crafting</c> 的靜態建構式(它會掛遊戲 hook)。
     /// </summary>
     public string LastGateExplanation { get; private set; } = "";
+    private bool _explanationPending;
+
+    /// <summary>閘門每判定一次只交出一次理由;閘門常在製作中途才第一次判定,呼叫端每一步都要問。</summary>
+    public string ConsumeGateExplanation()
+    {
+        if (!_explanationPending)
+            return "";
+        _explanationPending = false;
+        return LastGateExplanation;
+    }
 
     public MaterialMiracleSolver(Solver plan) => _plan = plan;
 
@@ -87,12 +97,32 @@ public class MaterialMiracleSolver : Solver, ICraftValidator
         // 次數與等級由 CanUseAction 把關(實機的次數來自 DutyActionManager,模擬器來自任務資料)。
         if (!Simulator.CanUseAction(craft, step, Skills.MaterialMiracle))
             return false;
+        if (_gate == false)
+            return false;
+        // 奇蹟之材會中斷加工連擊;計畫下一步正吃著連擊時先不按,連擊做完再判。
+        if (InterruptsPendingCombo(craft, step))
+            return false;
 
         // 🔴 閘門只算一次。呼叫端(配方視窗提示的取樣器)是**每一幀**在跑解算器的,
         //    每一步都重算兩次完整 rollout 會讓那條路慢上一個數量級。
         //    而且「這一步不划算」在後面的步數只會更不划算(剩餘視窗更短),重算沒有意義。
         _gate ??= EvaluateGate(craft, step);
         return _gate.Value;
+    }
+
+    /// <summary>
+    /// 計畫的下一步在「連擊被奇蹟之材打斷」後會不會變貴或少疊內靜。
+    /// 只看最內層的固定計畫:機會性偏離那層的 Solve 會寫 log,不拿來試算。
+    /// </summary>
+    private bool InterruptsPendingCombo(CraftState craft, StepState step)
+    {
+        var plan = _plan is OpportunisticSolver opp ? opp.Inner : _plan;
+        var next = plan.Clone().Solve(craft, step).Action;
+        if (next == Skills.None || !Simulator.CanUseAction(craft, step, next))
+            return false;
+        var (_, kept) = Simulator.Execute(craft, step, next, 0, 1);
+        var (_, broken) = Simulator.Execute(craft, step with { PrevComboAction = Skills.MaterialMiracle }, next, 0, 1);
+        return kept.RemainingCP != broken.RemainingCP || kept.IQStacks != broken.IQStacks || kept.Quality != broken.Quality;
     }
 
     /// <summary>
@@ -120,6 +150,7 @@ public class MaterialMiracleSolver : Solver, ICraftValidator
                   : worst == null || worst.Progress < craft.CraftProgress
                       ? "「全程大進展」的最壞情況下剩餘計畫跑不完。"
                       : $"「全程大進展」會讓製作提早結束、截掉品質階段(最終品質 {EffectiveQuality(craft, baseline)} -> {EffectiveQuality(craft, worst!)})。");
+        _explanationPending = true;
 
         return ok;
     }

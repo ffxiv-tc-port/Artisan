@@ -946,6 +946,21 @@ namespace Artisan.UI
                     P.Config.Save();
                 ImGuiComponents.HelpMarker("When a list item would be skipped for missing materials, Artisan first crafts the missing intermediate materials it can make from what is in your bag (going down up to 5 levels), just enough for the remaining crafts of that item, then continues with it. Those crafts use the same settings as any other list item. Only recipes your crafters have the level, gearset and master recipe book for are used, and nothing is ever bought or taken from retainers. Turn this off to skip such items as before.".Loc());
 
+                if (ImGui.Checkbox("Show how many bag slots a crafting list needs".Loc(), ref P.Config.ShowListInventoryEstimate))
+                    P.Config.Save();
+                ImGuiComponents.HelpMarker("The list editor and the running list window show \"Bag about N slot(s) short\" when the finished products still to be made will not fit in your bag; hover it for the 3 products that take the most slots. \"?\" means your bag can't be read right now. The estimate counts one slot per non-stacking product and one per stacking product you don't already have, and does not subtract slots freed as intermediate materials get used up, so it is an upper bound. Display only: nothing about the list changes.".Loc());
+
+                // SetNextItemWidth：外圍這段推了寬度沒彈，這裡另外配對推彈會讓後面錯位。
+                ImGui.SetNextItemWidth(200f);
+                if (ImGui.SliderInt("Pause the list when only this many bag slots are left".Loc(), ref P.Config.ListPauseAtFreeSlots, 0, 30))
+                {
+                    if (P.Config.ListPauseAtFreeSlots < 0)
+                        P.Config.ListPauseAtFreeSlots = 0;
+                }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                    P.Config.Save();
+                ImGuiComponents.HelpMarker("Before each craft (including materials inserted by \"Craft missing materials first\"), if your bag has this many free slots or fewer and the product can't stack onto a stack you already have, the list pauses the same way the Pause button does, and plays the error sound and TataruPraise's \"needs help\" line if you have those turned on. 0 keeps the old behaviour: keep crafting until the game refuses because the bag is full.\n\nSuggested value: the same as AutoRetainer's \"Multi Mode/Retainers\" > \"Minimum inventory slots to continue operation\" (2 by default). AutoRetainer only takes over for retainers while at least that many slots are free, so pausing here keeps your ventures going while the list waits for you.\n\nWhen AutoRetainer has finished with your retainers it resumes the list; if the bag is still too full the list pauses again straight away. That is expected, not flickering. The sound and TataruPraise only go off once until the bag has more free slots than this setting again; each pause still writes one chat line.".Loc());
+
                 if (ImGui.Checkbox("Use AutoRetainer's fast item retrieval".Loc(), ref P.Config.UseDirectRetainerRetrieval))
                     P.Config.Save();
                 ImGuiComponents.HelpMarker("When AutoRetainer is installed, restocking asks it to send the game's own retrieve command for each stack instead of clicking through the retainer window and its quantity dialog, which is several times faster. Whole stacks are taken rather than exact amounts. Turn this off to always drive the retainer window. Has no effect if AutoRetainer is missing or too old - the retainer window is used automatically in that case.".Loc());

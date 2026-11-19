@@ -432,6 +432,10 @@ namespace Artisan.CraftingLists
                 return;
             }
 
+            // 放在先做素材之後：插進來的中間素材輪到時也走這裡；放在換職業之前：要停就不先換套裝。
+            if (ListInventorySlots.PauseIfReserveReached(selectedList, recipe, type == PreCrafting.CraftType.Quick))
+                return;
+
             if (Svc.Objects.LocalPlayer.ClassJob.RowId != recipe.CraftType.Value.RowId + 8)
             {
                 PreCrafting.equipGearsetLoops = 0;

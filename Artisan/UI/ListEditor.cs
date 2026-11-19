@@ -103,10 +103,13 @@ internal class ListEditor : Window, IDisposable
 
     private bool hqSim = false;
 
+    private readonly ListInventorySlots.Line slotLine;
+
     public ListEditor(int listId)
         : base($"List Editor###{listId}")
     {
         SelectedList = P.Config.NewCraftingLists.First(x => x.ID == listId);
+        slotLine = new(() => ListInventorySlots.EditorCrafts(SelectedList));
         RecipeSelector = new RecipeSelector(SelectedList.ID);
         RecipeSelector.ItemAdded += RefreshTable;
         RecipeSelector.ItemDeleted += RefreshTable;
@@ -520,6 +523,8 @@ internal class ListEditor : Window, IDisposable
             if (RetainerInfo.AToolsEnabled)
                 ImGuiEx.Text(ImGuiColors.DalamudYellow, "You have turned off Allagan Tools integration.".Loc());
         }
+
+        slotLine.Draw(sameLine: true);
 
         if (ImGui.BeginTabBar("CraftingListEditor", ImGuiTabBarFlags.None))
         {

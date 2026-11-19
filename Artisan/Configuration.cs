@@ -166,6 +166,12 @@ namespace Artisan
         /// <remarks>Load 走 JObject.ToObject：舊設定檔沒有這個鍵時保留這裡的初始值（開）。</remarks>
         public bool PrecraftMissingIngredients = true;
 
+        /// <summary>清單編輯器與執行中清單視窗顯示「背包約差 K 格」，開始時記一行預估；只顯示，不改流程。</summary>
+        public bool ShowListInventoryEstimate = true;
+
+        /// <summary>背包剩這麼多格（或更少）、而且下一件放不進現有的疊時暫停清單；0＝關（照舊做到遊戲拒絕為止）。</summary>
+        public int ListPauseAtFreeSlots = 0;
+
         /// <summary>
         /// Whether retainer restocking may ask AutoRetainer to fire the game's retrieve command directly at a
         /// slot instead of driving the retainer window. Defaults on because that is the whole point of the

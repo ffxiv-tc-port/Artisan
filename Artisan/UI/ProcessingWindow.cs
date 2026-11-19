@@ -13,6 +13,9 @@ namespace Artisan.UI
 {
     internal class ProcessingWindow : Window
     {
+        private static readonly ListInventorySlots.Line SlotLine =
+            new(() => ListInventorySlots.RemainingCrafts(CraftingListUI.selectedList, CraftingListFunctions.CurrentIndex));
+
         public ProcessingWindow() : base("Processing List".Loc() + "###ProcessingList", ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoCollapse)
         {
             IsOpen = true;
@@ -80,6 +83,8 @@ namespace Artisan.UI
                 {
                     FaultOnce.Report("ProcessingWindow 進度文字", ex);
                 }
+
+                SlotLine.Draw(sameLine: false);
 
                 if (!CraftingListFunctions.Paused)
                 {

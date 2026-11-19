@@ -1885,9 +1885,11 @@ internal class ListEditor : Window, IDisposable
 
         // Retrieve the list of recipes matching the selected recipe name from the preprocessed lookup table.
         // 查表結果建好後不變，直接用分組本身，不必每幀複製成清單。
+        // 依名稱分組會混進同名不同道具（台服兩種「奶油」），選單只列成品與目前配方相同的。
         var matchingRecipes = LuminaSheets.recipeLookup[selectedListItem.NameOfRecipe()];
+        var currentResultId = LuminaSheets.RecipeSheet!.TryGetValue(selectedListItem, out var currentRecipe) ? currentRecipe.ItemResult.RowId : 0u;
 
-        if (matchingRecipes.Count() > 1)
+        if (CountSameResult(matchingRecipes, currentResultId) > 1)
         {
             var pre = $"{LuminaSheets.ClassJobSheet[recipe.CraftType.RowId + 8].Abbreviation.ToString()}";
             ImGui.TextWrapped("Switch crafted job".Loc());
@@ -1896,8 +1898,15 @@ internal class ListEditor : Window, IDisposable
             {
                 foreach (var altJob in matchingRecipes)
                 {
+                    if (altJob.ItemResult.RowId != currentResultId) continue;
                     var altJ = $"{LuminaSheets.ClassJobSheet[altJob.CraftType.RowId + 8].Abbreviation.ToString()}";
-                    if (ImGui.Selectable($"{altJ}"))
+                    // 目前的職業只畫不給點：下面的合併分支會命中項目自己（數量翻倍後把自己刪掉）。
+                    if (altJob.RowId == selectedListItem)
+                    {
+                        ImGui.Selectable($"{altJ}###SwitchJob{altJob.RowId}", true, ImGuiSelectableFlags.Disabled);
+                        continue;
+                    }
+                    if (ImGui.Selectable($"{altJ}###SwitchJob{altJob.RowId}"))
                     {
                         try
                         {
@@ -2084,6 +2093,21 @@ internal class ListEditor : Window, IDisposable
         }
         else
             ImGuiEx.TextWrapped(SharedText.RunInSimulatorForResults.Loc());
+    }
+
+    // 每幀都會呼叫：查表分組本身是 IList，走索引不配置列舉器。
+    private static int CountSameResult(IEnumerable<Recipe> recipes, uint resultItemId)
+    {
+        var n = 0;
+        if (recipes is IList<Recipe> list)
+        {
+            for (var i = 0; i < list.Count; i++)
+                if (list[i].ItemResult.RowId == resultItemId) n++;
+            return n;
+        }
+        foreach (var r in recipes)
+            if (r.ItemResult.RowId == resultItemId) n++;
+        return n;
     }
 
     private void DrawRecipeSettingsHeader()

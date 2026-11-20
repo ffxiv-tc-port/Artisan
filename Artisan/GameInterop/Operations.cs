@@ -278,6 +278,10 @@ public static unsafe class Operations
         if (RaphaelCache.InProgressAny())
             return BlockedBy("RaphaelCache.InProgressAny()");
 
+        // 確認框出現前就排進佇列的那一次也擋下：送出去只會換來一則拒絕。
+        if (DutyPause.PopPending)
+            return BlockedBy("任務確認框在畫面上");
+
         // 🔴 宇宙製作(WKSRecipeNotebook)絕對不能套用底下那段「素材指派完成了嗎」的閘門:
         // 那段讀的是一般製作手帳的資料(GetSelectedRecipeEntry()),只有 OpenRecipeByRecipeId 會填;
         // 宇宙筆記的選取是 Callback.Fire 做的,不會更新它 ⇒ 等於拿另一個配方的陳舊狀態當閘門。

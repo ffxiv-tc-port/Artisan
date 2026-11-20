@@ -42,6 +42,9 @@ namespace Artisan.Autocraft
         internal static CircularBuffer<long> Errors = new(5);
         static CircularBuffer<long> FailedStarts = new(5);
 
+        // 等解算的上限只決定多久重走一次「選配方→按素材」；解算失敗由 AbortWaitingAutomation 關掉耐力模式。
+        private const int RaphaelWaitMs = 60_000;
+
         internal static List<int>? HQData = null;
 
         internal static ushort RecipeID
@@ -366,6 +369,7 @@ namespace Artisan.Autocraft
         public static void Update()
         {
             if (!Enable) return;
+            if (DutyPause.HoldForPop()) return;
             var needToRepair = P.Config.Repair && RepairManager.GetMinEquippedPercent() < P.Config.RepairPercent && (RepairManager.CanRepairAny() || RepairManager.RepairNPCNearby(out _));
             if ((Crafting.CurState == Crafting.State.QuickCraft && Crafting.QuickSynthCompleted) || needToRepair ||
                 (P.Config.Materia && Spiritbond.IsSpiritbondReadyAny() && CharacterInfo.MateriaExtractionUnlocked()))
@@ -491,11 +495,13 @@ namespace Artisan.Autocraft
                             else
                                 P.TM.Enqueue(() => CraftingListFunctions.SetIngredients(SetIngredients), "EnduranceSetIngredientsLayout");
 
+                            // 素材指派好之後才等解算：指派會改初始品質、觸發對應的解算；等的期間不重選配方、不重按素材。
+                            P.TM.Enqueue(() => !Enable || !RaphaelCache.InProgressAny(), RaphaelWaitMs, "EnduranceWaitRaphael");
                             P.TM.Enqueue(() => Operations.RepeatActualCraft(RecipeID), 500, "EnduranceNormalStart");
                             P.TM.Enqueue(() => Crafting.CurState is Crafting.State.WaitStart, 500, "EnduranceNormalWaitStart");
                             P.TM.Enqueue(() =>
                             {
-                                if (!RaphaelCache.InProgressAny())
+                                if (!RaphaelCache.InProgressAny() && !DutyPause.PopPending)
                                 {
                                     if (FailedStarts.Count() >= 5 && FailedStarts.All(x => x > Environment.TickCount64 - (10 * 1000)))
                                     {
@@ -544,6 +550,13 @@ namespace Artisan.Autocraft
                         Svc.Log.Information($"[Artisan][{(repairPressed ? "修理" : "精製")}] 遊戲拒絕了操作（{text}）：製作狀態還沒完全結束，稍後再按；不計入「十秒內連續五次錯誤」。");
                         return;
                     }
+                }
+
+                // 任務確認框在畫面上時遊戲一律拒絕，不是製作本身出錯；確認框關掉後由 DutyPause 決定停或繼續。
+                if (DutyPause.PopPending)
+                {
+                    Svc.Log.Information($"[DutyPause] 任務確認中遊戲拒絕了操作（{message}），不計入「十秒內連續五次錯誤」");
+                    return;
                 }
 
                 Errors.PushBack(Environment.TickCount64);

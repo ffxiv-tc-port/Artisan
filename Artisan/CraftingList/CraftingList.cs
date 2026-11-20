@@ -360,6 +360,9 @@ namespace Artisan.CraftingLists
                 return;
             }
 
+            if (DutyPause.HoldForPop())
+                return;
+
             if (recipe.SecretRecipeBook.RowId != 0)
             {
                 if (!PlayerState.Instance()->IsSecretRecipeBookUnlocked(recipe.SecretRecipeBook.RowId))

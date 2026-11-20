@@ -28,6 +28,33 @@ namespace Artisan.Autocraft
         internal static bool AutomationRunning
             => Endurance.Enable || (CraftingListUI.Processing && !CraftingListFunctions.Paused);
 
+        // 排到任務到進場（或確認框取消、過期）之間為真；這段期間遊戲拒絕開始製作。
+        internal static bool PopPending => Svc.Condition[ConditionFlag.WaitingForDutyFinder];
+
+        // 確認框出現時自動化還在跑（沒開「排到任務就停止」）：先擋著不開始，進了那場任務才停。
+        private static bool heldForPop;
+
+        /// <summary>開始製作前呼叫；回 true＝確認框在畫面上，這一幀不要開始。</summary>
+        internal static bool HoldForPop()
+        {
+            if (PopPending)
+            {
+                if (!heldForPop)
+                {
+                    heldForPop = true;
+                    Svc.Log.Information("[DutyPause] 任務確認框在畫面上，先不開始製作；進了這場任務才停下，取消或過期就繼續");
+                }
+                return true;
+            }
+
+            if (heldForPop && !Svc.Condition[ConditionFlag.BoundByDuty])
+            {
+                heldForPop = false;
+                Svc.Log.Information("[DutyPause] 任務確認框已關、沒有進任務，繼續製作");
+            }
+            return false;
+        }
+
         /// <summary>在「排到任務就停止」剛停下自動化之後呼叫，記下要恢復的模式。</summary>
         internal static void Arm()
         {
@@ -57,6 +84,17 @@ namespace Artisan.Autocraft
 
         internal static void OnEnterDuty()
         {
+            if (heldForPop)
+            {
+                heldForPop = false;
+                if (AutomationRunning && (PopPending || Environment.TickCount64 - popClosedAt <= EnterWindowMs))
+                {
+                    Svc.Log.Information("[DutyPause] 進了排到的任務，停止製作");
+                    Endurance.NotifyForcedStopIfRunning("進了排到的任務");
+                    StopCrafting();
+                }
+            }
+
             if (stage != Stage.Queued)
                 return;
 

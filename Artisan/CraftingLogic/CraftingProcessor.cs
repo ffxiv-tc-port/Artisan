@@ -121,6 +121,9 @@ public static class CraftingProcessor
                     "The solver assigned to this recipe is not available right now.".Loc());
         }
 
+        if (configuredType.Length == 0 && CosmicRaphaelGate.PreferRaphael(craft) is { } raphael)
+            return raphael;
+
         // 單趟取第一個 Priority 最大的（分隔用的 default 也參與比較），與 Count() > 0 再 MaxBy 同一個答案，
         // 只是每個定義的 Flavours 少走一遍；一個都沒有時回 default。
         var best = default(ISolverDefinition.Desc);
@@ -174,6 +177,8 @@ public static class CraftingProcessor
                     RequiredQualityGate.NoticeOnce(craft, verdict);
                 autoSolver = verdict.Solver;
             }
+            if (!trial)
+                CosmicRaphaelGate.NoticeAtStart(recipeConfig, craft, autoSolver);
             if (autoSolver.UnsupportedReason.Length > 0)
             {
                 SolverFailed?.Invoke(recipe, autoSolver.UnsupportedReason);

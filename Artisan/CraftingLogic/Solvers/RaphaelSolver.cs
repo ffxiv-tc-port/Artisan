@@ -1,6 +1,7 @@
 ﻿using Artisan.Autocraft;
 using Artisan.GameInterop;
 using Artisan.RawInformation;
+using Artisan.RawInformation.Character;
 using Artisan.UI;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Components;
@@ -193,7 +194,11 @@ namespace Artisan.CraftingLogic.Solvers
             return null;
         }
 
-        public static void Build(CraftState craft, RaphaelSolutionConfig config)
+        /// <param name="fallbackDeadline">
+        /// 非 null＝呼叫端在等這份解、求不出來就改用別的解算器（<see cref="CosmicRaphaelGate"/>）：逾時改用這個期限，
+        /// 失敗、逾時、取消都只記進 <see cref="FailedSolves"/> 並寫 Information，不關耐力模式、不關自動產生。
+        /// </param>
+        public static void Build(CraftState craft, RaphaelSolutionConfig config, TimeSpan? fallbackDeadline = null)
         {
             var key = GetKey(craft);
 
@@ -287,7 +292,11 @@ namespace Artisan.CraftingLogic.Solvers
                         Tasks.TryRemove(key, out _);
                     }
                 });
-                cts.CancelAfter(TimeSpan.FromMinutes(P.Config.RaphaelSolverConfig.TimeOutMins));
+                var timeout = TimeSpan.FromMinutes(P.Config.RaphaelSolverConfig.TimeOutMins);
+                var fallbackMode = fallbackDeadline != null;
+                if (fallbackDeadline is { } deadline && deadline < timeout)
+                    timeout = deadline;
+                cts.CancelAfter(timeout);
 
                 // 🔴 這個工作必須「先登記進 Tasks,再開始跑」。Task.Run(...) 之後才 TryAdd 的話:
                 //    快速失敗的路徑(raphael-cli 一啟動就非零離開)可以在 TryAdd 之前就把 key 移掉,
@@ -303,14 +312,25 @@ namespace Artisan.CraftingLogic.Solvers
                         // 卸載時 Dispose 砍掉 raphael-cli 的那一下不是求解失敗：不記失敗、不洗聊天、不碰耐力模式。
                         if (Shutdown.IsCancellationRequested)
                             return;
+                        // 被砍掉的 raphael-cli 離開碼也是非零；等候中的呼叫端要的是「沒解、改用別的」，不是故障。
+                        if (fallbackMode && cts.IsCancellationRequested)
+                        {
+                            FailedSolves[failKey] = $"Raphael 在 {timeout.TotalSeconds:0} 秒內沒算完（或被手動取消），已停止求解";
+                            Svc.Log.Information($"Raphael:{FailedSolves[failKey]}(配方 {craft.RecipeId},{key})。");
+                            return;
+                        }
                         if (process.ExitCode != 0)
                         {
                             var failure = DescribeCliFailure(error, process.ExitCode);
                             // 記下來:同一組條件在這個 session 內不再重複 spawn。
                             FailedSolves[failKey] = failure;
-                            DuoLog.Error(failure);
+                            if (fallbackMode)
+                                Svc.Log.Information($"Raphael 求解失敗(配方 {craft.RecipeId}):{failure}");
+                            else
+                                DuoLog.Error(failure);
                             cts.Cancel();
-                            AbortWaitingAutomation();
+                            if (!fallbackMode)
+                                AbortWaitingAutomation();
                             return;
                         }
                         var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
@@ -359,6 +379,9 @@ namespace Artisan.CraftingLogic.Solvers
                                 return;
                             if (!solved)
                             {
+                                // 等候中的呼叫端有 FailedSolves 擋重送；關掉自動產生會讓之後的開工前求解也靜默失效。
+                                if (fallbackMode)
+                                    return;
                                 autoGenerateWas = P.Config.RaphaelSolverConfig.AutoGenerate;
                                 P.Config.RaphaelSolverConfig.AutoGenerate = false;
                                 return;
@@ -409,7 +432,8 @@ namespace Artisan.CraftingLogic.Solvers
                                 $"\n- Raphael just gave up after not finding a result.{(autoGenerateWas ? "\nAutomatic generation will be disabled as a result." : "")}");
                             FailedSolves[failKey] = "Raphael 沒有產生可用的巨集(求解器放棄了,或求解被取消)。";
                             cts.Cancel();
-                            AbortWaitingAutomation();
+                            if (!fallbackMode)
+                                AbortWaitingAutomation();
                             return;
                         }
                     }
@@ -424,7 +448,10 @@ namespace Artisan.CraftingLogic.Solvers
                         //    使用者唯一看得到的現象是「Artisan 從此不再開工」而且一句話都沒有。
                         Svc.Log.Error(ex, "Raphael solution generation threw");
                         DuoLog.Error("Raphael solution generation failed: ??".Loc(ex.Message));
-                        AbortWaitingAutomation();
+                        if (fallbackMode)
+                            FailedSolves[failKey] = ex.Message;
+                        else
+                            AbortWaitingAutomation();
                     }
                     finally
                     {
@@ -576,6 +603,7 @@ namespace Artisan.CraftingLogic.Solvers
                     solKey.Control <= craft.StatControl &&
                     solKey.Initial == craft.InitialQuality &&
                     solKey.CP <= craft.StatCP &&
+                    (craft.Specialist || !UsesSpecialistActions(solution.Value)) &&
                     (raphaelSolutionConfig == null || solKey.Control > bestControl))
                 {
                     raphaelSolutionConfig = solution.Value;
@@ -583,6 +611,17 @@ namespace Artisan.CraftingLogic.Solvers
                 }
             }
             return raphaelSolutionConfig != null;
+        }
+
+        /// <summary>
+        /// 快取鍵不含「是不是專家」：別的職業求出的解可能用到專家專用技能，非專家拿去跑，序列會在那一步斷掉。
+        /// </summary>
+        internal static bool UsesSpecialistActions(MacroSolverSettings.Macro macro)
+        {
+            foreach (var step in macro.Steps)
+                if (step is { Action: Skills.HeartAndSoul or Skills.QuickInnovation or Skills.CarefulObservation })
+                    return true;
+            return false;
         }
 
         /// <summary>
@@ -599,6 +638,7 @@ namespace Artisan.CraftingLogic.Solvers
             // 每幀路徑：先只用數字挑出距離最近的那一筆（同距離取列舉順序在前的），只替那一筆組說明文字。
             string? bestKey = null;
             var bestDistance = long.MaxValue;
+            var bestSpecialistOnly = false;
 
             foreach (var solution in P.Config.RaphaelSolverCacheV3)
             {
@@ -639,6 +679,12 @@ namespace Artisan.CraftingLogic.Solvers
                     ignored = true;
                     distance += 1;
                 }
+                var specialistOnly = !craft.Specialist && UsesSpecialistActions(solution.Value);
+                if (specialistOnly)
+                {
+                    ignored = true;
+                    distance += 1;
+                }
 
                 // Not ignored means HasSolution would have accepted it.
                 if (!ignored) continue;
@@ -647,10 +693,17 @@ namespace Artisan.CraftingLogic.Solvers
                 {
                     bestDistance = distance;
                     bestKey = solution.Key;
+                    bestSpecialistOnly = specialistOnly;
                 }
             }
 
-            return bestKey == null ? "" : DescribeMismatch(KeyParts(bestKey), craft);
+            if (bestKey == null)
+                return "";
+            var why = DescribeMismatch(KeyParts(bestKey), craft);
+            if (!bestSpecialistOnly)
+                return why;
+            var specialist = "The cached solution uses specialist-only actions (Careful Observation, Heart and Soul, Quick Innovation), but this job is not a specialist.".Loc();
+            return why.Length == 0 ? specialist : why + "\n" + specialist;
         }
 
         /// <summary><see cref="DescribeIgnoredSolution"/> 挑中的那一筆被拒的理由，一行一個；條件與上面逐項相同。</summary>
@@ -691,7 +744,7 @@ namespace Artisan.CraftingLogic.Solvers
         /// 必要品質閘門用：條件與配方視窗的自動產生相同（設定開、沒有臨時解算器、專家配方看 GenerateOnExperts），
         /// 成立就送出求解。回傳之後是否有這一組在求解中。只在框架執行緒呼叫。
         /// </summary>
-        internal static bool TryAutoBuild(CraftState craft)
+        internal static bool TryAutoBuild(CraftState craft, TimeSpan? fallbackDeadline = null)
         {
             var cfg = P.Config.RaphaelSolverConfig;
             var recipeCfg = P.Config.RecipeConfigs.GetValueOrDefault(craft.RecipeId);
@@ -710,7 +763,7 @@ namespace Artisan.CraftingLogic.Solvers
                 };
                 TempConfigs[key] = solveCfg;
             }
-            Build(craft, solveCfg);
+            Build(craft, solveCfg, fallbackDeadline);
             return InProgress(craft);
         }
 
@@ -822,7 +875,7 @@ namespace Artisan.CraftingLogic.Solvers
 
                     // 臨時解算器生效中就不要自動產生 Raphael 解:那是別的外掛透過 IPC 指定的,
                     // 自動產生會在使用者沒看畫面時把設定檔的解算器解算起來、蓋掉臨時指定的意圖。
-                    if (config.TempSolverType.Length == 0 && liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
+                    if (config.TempSolverType.Length == 0 && liveStats && P.Config.RaphaelSolverConfig.AutoGenerate && !CosmicRaphaelGate.OwnsAutoBuild(config, craft) && CraftingProcessor.GetAvailableSolversForRecipe(craft, true).Any())
                     {
                         if (!craft.CraftExpert || (craft.CraftExpert && P.Config.RaphaelSolverConfig.GenerateOnExperts))
                             Build(craft, TempConfigs[key]);
@@ -909,6 +962,7 @@ namespace Artisan.CraftingLogic.Solvers
         // the craft silently runs on whatever solver has the highest priority, i.e. the standard solver.
         // Turning this off makes that case raise SolverFailed instead, so the craft stops and says why.
         public bool AllowFallbackToStandard = true;
+        public bool CosmicUnassignedRaphael = true;
 
         public bool Draw()
         {
@@ -945,6 +999,8 @@ namespace Artisan.CraftingLogic.Solvers
             {
                 ImGui.Indent();
                 changed |= ImGui.Checkbox("Apply to all valid crafts".Loc(), ref AutoSwitchOnAll);
+                changed |= ImGui.Checkbox("Cosmic Exploration: use Raphael on recipes with no assigned solver".Loc(), ref CosmicUnassignedRaphael);
+                ImGuiComponents.HelpMarker("Uses a Raphael solution that matches your current stats even if it was generated on another job. When another plugin (e.g. ICE) starts the craft and automatic generation is on, a solution is first generated with your current stats (waits up to ?? seconds). If that fails or times out, the craft starts on the usual solver and the log says why.".Loc(CosmicRaphaelGate.WaitLimit.TotalSeconds));
                 ImGui.Unindent();
             }
 

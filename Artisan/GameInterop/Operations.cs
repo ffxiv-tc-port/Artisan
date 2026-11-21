@@ -294,6 +294,9 @@ public static unsafe class Operations
             if (GateRequiredQuality(recipeId) is var cosmicGate && cosmicGate != true)
                 return cosmicGate == false ? BlockedBy("RequiredQualityGate: waiting for Raphael") : null;
 
+            if (!CosmicRaphaelGate.CheckBeforeStart(recipeId))
+                return BlockedBy("CosmicRaphaelGate: waiting for Raphael");
+
             // 開始製作不會關筆記(每一件都會再送 ⇒ 15 幀逃生口);要擋的是 TaskExitCraft 對這一扇送過 Fire(-1) 之後、
             // 它還在關閉中的那幾幀。回 false 與其他 BlockedBy 走同一條輪詢路徑。
             if (!AddonPressGuard.TryBeginPress("WKSRecipeNotebook", cosmicAddon, "T|6", AddonPressGuard.RoutineRePressEscapeFrames))

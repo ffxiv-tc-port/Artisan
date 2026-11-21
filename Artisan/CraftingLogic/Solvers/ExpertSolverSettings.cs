@@ -46,6 +46,8 @@ public class ExpertSolverSettings
     public bool MidGSBeforeInno = true; // if true, we start quality combos with gs+inno rather than just inno
     public bool MidFinishProgressBeforeQuality = false; // if true, at 10 iq we first finish progress before starting on quality
     public bool MidObserveGoodOmenForTricks = false; // if true, we'll observe on good omen where otherwise we'd use tricks on good
+    public bool GoodIntensiveWhenProgressFirst = true; // if true, when finishing progress first, spend good condition on intensive rather than rapid
+    public bool GoodPrepUnderTrainedPerfection = true; // if true, under trained perfection with innovation up, spend good condition on prep touch rather than great strides first
     public bool MidDaringAfterHasty = true; // if true, while building iq we spend expedience (after a successful hasty touch) on daring touch rather than a non-pliant repair or another touch
     public bool FinisherBaitGoodByregot = true; // if true, use careful observations to try baiting good byregot
     public bool EmergencyCPBaitGood = false; // if true, we allow spending careful observations to try baiting good for tricks when we really lack cp
@@ -121,6 +123,8 @@ public class ExpertSolverSettings
             changed |= ImGui.Checkbox("Consider ?? a good move under ?? ?? + ??, assuming we have enough ??".Loc(Skills.PreparatoryTouch.NameOfAction(), Condition.Sturdy.ToLocalizedString(), ConditionString, Buffs.Innovation.NameOfBuff(), DurabilityString), ref MidAllowSturdyPrep);
             changed |= ImGui.Checkbox("Use ?? before ?? + ?? combos".Loc(Skills.GreatStrides.NameOfAction(), Skills.Innovation.NameOfAction(), QualityString), ref MidGSBeforeInno);
             changed |= ImGui.Checkbox("Finish ?? before starting ?? phase".Loc(ProgressString, QualityString), ref MidFinishProgressBeforeQuality);
+            changed |= ImGui.Checkbox("When finishing ?? first, spend ?? ?? on ?? instead of ??".Loc(ProgressString, Condition.Good.ToLocalizedString(), ConditionString, Skills.IntensiveSynthesis.NameOfAction(), Skills.RapidSynthesis.NameOfAction()), ref GoodIntensiveWhenProgressFirst);
+            changed |= ImGui.Checkbox("Under ?? with ?? active, spend ?? ?? on ?? right away instead of ?? first".Loc(Skills.TrainedPerfection.NameOfAction(), Buffs.Innovation.NameOfBuff(), Condition.Good.ToLocalizedString(), ConditionString, Skills.PreparatoryTouch.NameOfAction(), Skills.GreatStrides.NameOfAction()), ref GoodPrepUnderTrainedPerfection);
             changed |= ImGui.Checkbox("?? on ?? ?? if we would otherwise use ?? on ?? ??".Loc(Skills.Observe.NameOfAction(), Condition.GoodOmen.ToLocalizedString(), ConditionString, Skills.TricksOfTrade.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString), ref MidObserveGoodOmenForTricks);
         }
         ImGui.Unindent();

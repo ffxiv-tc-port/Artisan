@@ -283,7 +283,10 @@ public class ExpertSolver : Solver
         var allowObserveOnLowDura = venerationActive ? cfg.MidKeepHighDuraVeneration : cfg.MidKeepHighDuraUnbuffed;
         var allowIntensive = venerationActive ? cfg.MidAllowIntensiveVeneration : cfg.MidAllowIntensiveUnbuffed;
         var allowPrecise = cfg.MidAllowPrecise && (!allowObserveOnLowDura || step.ManipulationLeft > 0 || step.Durability > 25) /*&& !venerationActive*/;
-        if (progressDeficit > 0 && SolveMidHighPriorityProgress(craft, step, allowIntensive, cfg.MidFinishProgressBeforeQuality) is var highPrioProgress && highPrioProgress != Skills.None)
+        // 先顧進度時，下面那條在任何狀態都回急速製作，高品質（好兆頭的下一步必定是它）原本就沒拿去疊內靜；
+        // 改放必成的集中製作不會搶走 MidAllowIntensive* 想保留給內靜的高品質。
+        var allowGoodIntensive = allowIntensive || cfg.MidFinishProgressBeforeQuality && cfg.GoodIntensiveWhenProgressFirst;
+        if (progressDeficit > 0 && SolveMidHighPriorityProgress(craft, step, allowGoodIntensive, cfg.MidFinishProgressBeforeQuality) is var highPrioProgress && highPrioProgress != Skills.None)
             return new(SafeCraftAction(craft, step, highPrioProgress), "mid pre quality: high-prio progress");
         // 高效狀態的半價補耐久比冒進值得;其餘(含 Primed 掌握、不急的補耐久)延後一步。
         var allowDaring = cfg.MidDaringAfterHasty && step.ExpedienceLeft > 0
@@ -722,6 +725,9 @@ public class ExpertSolver : Solver
             return Skills.TrainedPerfection;
         if (step.TrainedPerfectionActive && step.InnovationLeft == 0 && CU(craft, step, Skills.Innovation))
             return Skills.Innovation;
+        // 改革已在身上時，高品質坯料加工（宇宙工具 1.75 倍）不輸先放闊步再在通常狀態加工，還省下闊步的 CP。
+        if (cfg.GoodPrepUnderTrainedPerfection && step.TrainedPerfectionActive && step.Condition == Condition.Good && step.InnovationLeft > 0 && CU(craft, step, Skills.PreparatoryTouch))
+            return Skills.PreparatoryTouch;
         if (step.TrainedPerfectionActive && step.GreatStridesLeft == 0 && CU(craft, step, Skills.GreatStrides))
             return Skills.GreatStrides;
         if (step.GreatStridesLeft > 1 && step.InnovationLeft > 1 && step.Condition is not Condition.Good)

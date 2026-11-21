@@ -69,8 +69,15 @@ internal static class CosmicRaphaelGate
 
         var craft = Crafting.BuildCraftStateForRecipe(CharacterStats.GetCurrentStats(), job, recipe);
         craft.InitialQuality = Simulator.GetStartingQuality(recipe, false, craft.StatLevel);
-        if (!Enabled(craft) || !QualityMatters(craft) || RaphaelCache.HasSolution(craft, out _))
+        if (!Enabled(craft) || !QualityMatters(craft))
             return true;
+        if (RaphaelCache.HasSolution(craft, out var cached))
+        {
+            // 舊解可能是後置進展下求的閒靜起手：等一次重求（同樣最多 WaitLimit），求不出來就用舊解開工。
+            if (RaphaelCache.FreeOpenerRefreshInProgress(craft) || RaphaelCache.TryRefreshFreeOpener(craft, cached!, null, WaitLimit))
+                return false;
+            return true;
+        }
         if (RaphaelCache.InProgress(craft))
             return false;
 

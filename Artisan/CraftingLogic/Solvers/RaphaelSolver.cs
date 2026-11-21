@@ -196,13 +196,62 @@ namespace Artisan.CraftingLogic.Solvers
             return null;
         }
 
+        /// <summary>
+        /// 品質需求很低：第 1 步閒靜（含起始品質）就達到送給 raphael-cli 的品質上限。
+        /// 這時帶 --backload-progress 等於強迫閒靜起手；不帶，Raphael 自己挑（堅信比較好時選堅信）。
+        /// </summary>
+        internal static bool ReflectFillsQuality(CraftState craft)
+            => P.Config.RaphaelSolverConfig.LowQualityFreeOpener
+            && Simulator.ReflectReaches(craft, Simulator.CreateInitial(craft, craft.InitialQuality), Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable));
+
+        // 每個鍵每次載入只判一次、最多重求一次（0＝判過不必、1＝送出重求）：配方視窗每幀呼叫，判準要配置模擬狀態。
+        // 成功後解帶 RaphaelNoBackload 不會再判舊；失敗、逾時就沿用舊解。
+        private static readonly ConcurrentDictionary<string, byte> FreeOpenerChecked = new();
+
+        /// <summary>
+        /// 快取的解用閒靜起手、可能是在後置進展下求的，而現在求解會改成不後置 ⇒ 值得重求一次。
+        /// 重求後 Raphael 仍選閒靜，解帶 <see cref="MacroSolverSettings.MacroOptions.RaphaelNoBackload"/>，之後不再判舊。
+        /// </summary>
+        internal static bool NeedsFreeOpenerRefresh(CraftState craft, MacroSolverSettings.Macro solution, string? key = null)
+            => !solution.Options.RaphaelNoBackload
+            && solution.Steps is [{ Action: Skills.Reflect }, ..]
+            && (TempConfigs.TryGetValue(key ?? GetKey(craft), out var c) ? c.BackloadProgress : P.Config.RaphaelSolverConfig.AllowBackloadProgress)
+            && ReflectFillsQuality(craft);
+
+        /// <summary>
+        /// 符合 <see cref="NeedsFreeOpenerRefresh"/> 就照自動產生的條件重求（舊解留著，成功才換掉）。回傳這次有沒有送出。
+        /// <paramref name="key"/> 是 <see cref="GetKey"/>(craft)，呼叫端有現成的就傳（配方視窗每幀呼叫）。只在框架執行緒呼叫。
+        /// </summary>
+        internal static bool TryRefreshFreeOpener(CraftState craft, MacroSolverSettings.Macro solution, string? key = null, TimeSpan? fallbackDeadline = null)
+        {
+            if (solution.Options.RaphaelNoBackload || solution.Steps is not [{ Action: Skills.Reflect }, ..])
+                return false;
+            key ??= GetKey(craft);
+            if (Tasks.ContainsKey(key) || !FreeOpenerChecked.TryAdd(key, 0) || !NeedsFreeOpenerRefresh(craft, solution, key))
+                return false;
+            FreeOpenerChecked[key] = 1;
+            if (!TryAutoBuild(craft, fallbackDeadline, solution))
+                return false;
+            Svc.Log.Information($"Raphael:配方 {craft.RecipeId} 的快取解用閒靜起手、可能是在後置進展下求的，品質需求很低，重求一次（舊解留著，求出來才換掉）。");
+            return true;
+        }
+
+        /// <summary>這組條件正在跑 <see cref="TryRefreshFreeOpener"/> 送出的重求。</summary>
+        internal static bool FreeOpenerRefreshInProgress(CraftState craft)
+        {
+            var key = GetKey(craft);
+            return Tasks.ContainsKey(key) && FreeOpenerChecked.TryGetValue(key, out var state) && state == 1;
+        }
+
         /// <param name="fallbackDeadline">
         /// 非 null＝呼叫端在等這份解、求不出來就改用別的解算器（<see cref="CosmicRaphaelGate"/>）：逾時改用這個期限，
         /// 失敗、逾時、取消都只記進 <see cref="FailedSolves"/> 並寫 Information，不關耐力模式、不關自動產生。
         /// </param>
-        public static void Build(CraftState craft, RaphaelSolutionConfig config, TimeSpan? fallbackDeadline = null)
+        /// <param name="replaces">非 null＝重求這份還在用的舊解：先不刪、求出來才換掉（連同它在別的鍵下的那筆）；失敗比照 fallbackDeadline 只記 Information。</param>
+        public static void Build(CraftState craft, RaphaelSolutionConfig config, TimeSpan? fallbackDeadline = null, MacroSolverSettings.Macro? replaces = null)
         {
             var key = GetKey(craft);
+            var refresh = replaces != null;
 
             if (CLIExists() && !Tasks.ContainsKey(key))
             {
@@ -221,7 +270,8 @@ namespace Artisan.CraftingLogic.Solvers
                     return;
                 }
 
-                P.Config.RaphaelSolverCacheV3.TryRemove(key, out _);
+                if (!refresh)
+                    P.Config.RaphaelSolverCacheV3.TryRemove(key, out _);
 
                 Svc.Log.Information("Spawning Raphael process");
 
@@ -239,7 +289,13 @@ namespace Artisan.CraftingLogic.Solvers
                     extraArgsBuilder.Append($"--adversarial "); // must always have a space after
                 }
 
-                if (config.BackloadProgress)
+                var backload = config.BackloadProgress;
+                if (backload && ReflectFillsQuality(craft))
+                {
+                    backload = false;
+                    Svc.Log.Information($"Raphael:配方 {craft.RecipeId} 第 1 步閒靜就能補滿品質（上限 {Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable)}），這次不後置進展，由 Raphael 自己選起手。");
+                }
+                if (backload)
                 {
                     extraArgsBuilder.Append($"--backload-progress "); // must always have a space after
                 }
@@ -295,7 +351,7 @@ namespace Artisan.CraftingLogic.Solvers
                     }
                 });
                 var timeout = TimeSpan.FromMinutes(P.Config.RaphaelSolverConfig.TimeOutMins);
-                var fallbackMode = fallbackDeadline != null;
+                var fallbackMode = fallbackDeadline != null || refresh;
                 if (fallbackDeadline is { } deadline && deadline < timeout)
                     timeout = deadline;
                 cts.CancelAfter(timeout);
@@ -352,6 +408,7 @@ namespace Artisan.CraftingLogic.Solvers
                                 MinCP = craft.StatCP,
                                 MinControl = craft.StatControl,
                                 MinCraftsmanship = craft.StatCraftsmanship,
+                                RaphaelNoBackload = !backload,
                             }
                         };
 
@@ -370,12 +427,18 @@ namespace Artisan.CraftingLogic.Solvers
                         var autoGenerateWas = false;
                         ApplyOnFramework(() =>
                         {
+                            if (refresh && !solved)
+                                return; // 舊解照用
                             var rng = new Random();
                             var ID = rng.Next(50001, 10000000);
                             while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
                                 ID = rng.Next(50001, 10000000);
                             macro.ID = ID;
                             P.Config.RaphaelSolverCacheV3[key] = macro;
+                            if (refresh)
+                                foreach (var old in P.Config.RaphaelSolverCacheV3)
+                                    if (old.Key != key && ReferenceEquals(old.Value, replaces))
+                                        P.Config.RaphaelSolverCacheV3.TryRemove(old.Key, out _);
 
                             if (cts.IsCancellationRequested)
                                 return;
@@ -746,7 +809,7 @@ namespace Artisan.CraftingLogic.Solvers
         /// 必要品質閘門用：條件與配方視窗的自動產生相同（設定開、沒有臨時解算器、專家配方看 GenerateOnExperts），
         /// 成立就送出求解。回傳之後是否有這一組在求解中。只在框架執行緒呼叫。
         /// </summary>
-        internal static bool TryAutoBuild(CraftState craft, TimeSpan? fallbackDeadline = null)
+        internal static bool TryAutoBuild(CraftState craft, TimeSpan? fallbackDeadline = null, MacroSolverSettings.Macro? replaces = null)
         {
             var cfg = P.Config.RaphaelSolverConfig;
             var recipeCfg = P.Config.RecipeConfigs.GetValueOrDefault(craft.RecipeId);
@@ -765,7 +828,7 @@ namespace Artisan.CraftingLogic.Solvers
                 };
                 TempConfigs[key] = solveCfg;
             }
-            Build(craft, solveCfg, fallbackDeadline);
+            Build(craft, solveCfg, fallbackDeadline, replaces);
             return InProgress(craft);
         }
 
@@ -828,6 +891,9 @@ namespace Artisan.CraftingLogic.Solvers
                         }
                     }
                     var solverIsRaph = config.SolverType == opt?.Def.GetType().FullName!;
+                    // 重求成功會照自動切換改配方的解算器：指定了別的解算器的配方不碰。
+                    if (liveStats && (solverIsRaph || config.CurrentSolverType.Length == 0) && !CosmicRaphaelGate.OwnsAutoBuild(config, craft))
+                        TryRefreshFreeOpener(craft, solution!, key);
                     var curStats = CharacterStats.GetCurrentStats();
                     //Svc.Log.Debug($"{curStats.Craftsmanship}/{craft.StatCraftsmanship} - {curStats.Control}/{craft.StatControl} - {curStats.CP}/{craft.StatCP}");
                     if (liveStats && craft.StatCraftsmanship != curStats.Craftsmanship && solverIsRaph)
@@ -950,6 +1016,7 @@ namespace Artisan.CraftingLogic.Solvers
     {
         public bool AllowEnsureReliability = false;
         public bool AllowBackloadProgress = false;
+        public bool LowQualityFreeOpener = true;
         public bool ShowSpecialistSettings = false;
         public bool ExactCraftsmanship = false;
         public bool AutoGenerate = false;
@@ -987,6 +1054,14 @@ namespace Artisan.CraftingLogic.Solvers
             ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "Ensuring reliability may not always work and is very CPU and RAM intensive, suggested RAM at least 16GB+ spare. NO SUPPORT SHALL BE GIVEN IF YOU HAVE THIS ON".Loc());
             ImGui.PopTextWrapPos();
             changed |= ImGui.Checkbox("Allow backloading of progress in macro generation".Loc(), ref AllowBackloadProgress);
+            if (AllowBackloadProgress)
+            {
+                ImGui.Indent();
+                var reflect = Skills.Reflect.NameOfAction();
+                changed |= ImGui.Checkbox("Don't backload progress when one ?? fills quality; let Raphael pick the opener (usually ??)".Loc(reflect, Skills.MuscleMemory.NameOfAction()), ref LowQualityFreeOpener);
+                ImGuiComponents.HelpMarker("With backloading, every quality action comes before progress, so any craft that needs quality has to open with ??. When ?? on the first step already reaches max quality, that solve leaves backloading off and Raphael picks the opener itself. With automatic generation on, a cached solution that opens with ?? is re-solved once (the old one stays in use until the new one is ready); if Raphael still opens with ??, that solution is kept.".Loc(reflect, reflect, reflect, reflect));
+                ImGui.Unindent();
+            }
             changed |= ImGui.Checkbox("Show specialist options when available".Loc(), ref ShowSpecialistSettings);
             changed |= ImGui.Checkbox("Automatically generate a solution if a valid one hasn't been created.".Loc(), ref AutoGenerate);
 

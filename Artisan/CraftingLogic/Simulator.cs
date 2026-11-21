@@ -445,6 +445,10 @@ public static class Simulator
         _ => true
     } && craft.StatLevel >= MinLevel(action) && step.RemainingCP >= GetCPCost(step, action);
 
+    /// <summary>這一步放閒靜（含已有品質）就達到 <paramref name="target"/>；閒靜不能用或 target ≤ 0（讀不到上限）回 false。</summary>
+    public static bool ReflectReaches(CraftState craft, StepState step, int target)
+        => target > 0 && CanUseAction(craft, step, Skills.Reflect) && step.Quality + CalculateQuality(craft, step, Skills.Reflect) >= target;
+
     public static bool CannotUseAction(CraftState craft, StepState step, Skills action, out string reason)
     {
         if (!CanUseAction(craft, step, action))

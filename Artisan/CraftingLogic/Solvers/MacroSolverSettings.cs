@@ -24,6 +24,8 @@ public class MacroSolverSettings
         public int ExactCraftsmanship = 0;
         public int MinControl = 0;
         public int MinCP = 0;
+        /// <summary>Raphael 求這份解時沒帶 --backload-progress。舊快取沒有這欄（false）＝不知道，可能是後置進展下求的。</summary>
+        public bool RaphaelNoBackload = false;
     }
 
     public class MacroStep

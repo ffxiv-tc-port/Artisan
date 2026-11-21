@@ -1,5 +1,6 @@
 ﻿using Artisan.CraftingLists;
 using ECommons.DalamudServices;
+using System;
 using ECommons.LanguageHelpers;
 using System.Collections.Generic;
 using System.Linq;
@@ -34,8 +35,10 @@ public class MacroSolver : Solver, ICraftValidator
 
     /// 品質到這個值以上就跳過剩下的純品質步驟(0＝不跳)。只由程式設定、不進巨集設定檔 ⇒ 快取裡的舊解也吃得到。
     /// 與 <see cref="MacroSolverSettings.MacroOptions.SkipQualityIfMet"/>(門檻是第三突破點)是兩回事。
-    public int SkipQualityAtOrAbove { get; init; }
+    public int SkipQualityAtOrAbove { get => _skipQualityAt; init => _skipQualityAt = value; }
+    private int _skipQualityAt;
     private bool _skipUnchecked; // 驗證跳過用的分身:不再巢狀驗證
+    private HashSet<int>? _pulled; // 已被 OpportunisticSolver 提前放掉的計畫步驟,輪到時跳過
     private const int SkipCheckStepLimit = 100;
 
     public MacroSolver(MacroSolverSettings.Macro m, CraftState craft)
@@ -48,6 +51,7 @@ public class MacroSolver : Solver, ICraftValidator
     {
         var res = (MacroSolver)MemberwiseClone();
         res._fallback = _fallback?.Clone();
+        res._pulled = _pulled is null ? null : new(_pulled);
         return res;
     }
 
@@ -57,6 +61,11 @@ public class MacroSolver : Solver, ICraftValidator
 
         while (_nextStep < _macro.Steps.Count)
         {
+            if (_pulled?.Contains(_nextStep) == true)
+            {
+                ++_nextStep;
+                continue;
+            }
             var s = _macro.Steps[_nextStep++];
             var action = s.Action;
             if ((s.ExcludeNormal && step.Condition == Condition.Normal) ||
@@ -171,7 +180,34 @@ public class MacroSolver : Solver, ICraftValidator
         return cur.Progress >= craft.CraftProgress;
     }
 
-    private Skills NextPlannedAction() => _nextStep < _macro.Steps.Count ? _macro.Steps[_nextStep].Action : Skills.None;
+    private Skills NextPlannedAction() => FindPlanned(_nextStep, _ => true) is var i and >= 0 ? _macro.Steps[i].Action : Skills.None;
+
+    /// 從 <paramref name="from"/> 起第一個還沒被提前、動作符合條件的計畫步驟索引;沒有回 -1。
+    internal int FindPlanned(int from, Func<Skills, bool> match)
+    {
+        for (var i = Math.Max(from, 0); i < _macro.Steps.Count; ++i)
+            if (_pulled?.Contains(i) != true && match(_macro.Steps[i].Action))
+                return i;
+        return -1;
+    }
+
+    internal int NextIndex => _nextStep;
+
+    /// 不跳過品質步驟的分身:檢查「這條路是不是只有靠之後跳過才做得完」。
+    internal MacroSolver CloneWithoutQualitySkip()
+    {
+        var res = (MacroSolver)Clone();
+        res._skipQualityAt = 0;
+        return res;
+    }
+    internal Skills PlannedAt(int index) => _macro.Steps[index].Action;
+
+    /// 把第 <paramref name="index"/> 步提前到現在放;輪到它時跳過。
+    internal Skills Pull(int index)
+    {
+        (_pulled ??= []).Add(index);
+        return _macro.Steps[index].Action;
+    }
 
     private static bool ActionIsUpgradeableQuality(Skills skill) => skill is Skills.HastyTouch or Skills.PreparatoryTouch or Skills.AdvancedTouch or Skills.StandardTouch or Skills.BasicTouch;
     private static bool ActionIsUpgradeableProgress(Skills skill) => skill is Skills.Groundwork or Skills.PrudentSynthesis or Skills.CarefulSynthesis or Skills.BasicSynthesis;

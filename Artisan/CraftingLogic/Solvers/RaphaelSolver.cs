@@ -966,6 +966,7 @@ namespace Artisan.CraftingLogic.Solvers
         public bool AllowFallbackToStandard = true;
         public bool CosmicUnassignedRaphael = true;
         public bool SkipQualityWhenMaxed = true;
+        public bool OpportunisticReorder = true;
 
         public bool Draw()
         {
@@ -1009,6 +1010,14 @@ namespace Artisan.CraftingLogic.Solvers
 
             changed |= ImGui.Checkbox("依製作狀態機會性偏離解算結果", ref OpportunisticDeviation);
             ImGuiComponents.HelpMarker("Raphael 產生的是固定步驟,本身看不到「高品質／最高品質／低品質」。開啟後,遇到這些狀態時會先用模擬器把候選動作連同剩下的巨集整段跑完,只有在「仍然完成製作」且「最終品質確實更高」時才偏離,否則照原計畫走。不會動用能工巧匠圖紙。");
+
+            ImGui.Indent();
+            var good = CraftData.Condition.Good.ToLocalizedString();
+            var excellent = CraftData.Condition.Excellent.ToLocalizedString();
+            var poor = CraftData.Condition.Poor.ToLocalizedString();
+            changed |= ImGui.Checkbox("Reorder plan steps around ?? / ?? / ?? conditions".Loc(good, excellent, poor), ref OpportunisticReorder);
+            ImGuiComponents.HelpMarker("On ?? or ??, the next planned quality action is used first and the planned buff or repair moves one step later (?? is always followed by ??). On ??, the next planned non-quality action is used first and the touch moves to the next step. Only done when simulating the rest of the plan still finishes the craft with at least the same quality; on a tie the shorter craft wins, but only if it would still finish without skipping quality actions.".Loc(good, excellent, excellent, poor, poor));
+            ImGui.Unindent();
 
             changed |= ImGui.Checkbox("Skip the remaining quality actions once quality is maxed".Loc(), ref SkipQualityWhenMaxed);
             ImGuiComponents.HelpMarker("When good conditions or deviations fill quality earlier than planned, the rest of the plan's touches, ??, ??, ?? and ?? are skipped and the craft goes straight on to progress. Repairs and progress buffs are kept. Saves steps and avoids spending Delineations on ??.".Loc(Skills.ByregotsBlessing.NameOfAction(), Skills.Innovation.NameOfAction(), Skills.GreatStrides.NameOfAction(), Skills.QuickInnovation.NameOfAction(), Skills.QuickInnovation.NameOfAction()));

@@ -70,15 +70,16 @@ namespace Artisan.CraftingLogic.Solvers
         }
     }
 
-    internal static class RaphaelCache
+    internal static partial class RaphaelCache
     {
         internal static readonly ConcurrentDictionary<string, Tuple<CancellationTokenSource, Task>> Tasks = [];
         private static readonly CancellationTokenSource Shutdown = new();
 
-        /// <summary>卸載時呼叫：之後不再寫設定，並取消所有進行中的求解（砍掉 raphael-cli）。</summary>
+        /// <summary>卸載時呼叫：之後不再寫設定，並取消所有進行中的求解（砍掉 raphael-cli，含背景求解）。</summary>
         internal static void Dispose()
         {
             Shutdown.Cancel();
+            ECommons.GenericHelpers.Safe(StopBackground);
             foreach (var t in Tasks.Values)
                 ECommons.GenericHelpers.Safe(t.Item1.Cancel);
         }
@@ -275,57 +276,9 @@ namespace Artisan.CraftingLogic.Solvers
 
                 Svc.Log.Information("Spawning Raphael process");
 
-                var manipulation = craft.UnlockedManipulation ? "--manipulation" : "";
-                var itemText = RecipeArgs(craft, out var explicitFallback);
-                if (explicitFallback != null)
-                    Svc.Log.Information($"Raphael:{explicitFallback}(配方 {craft.RecipeId}),改用 raphael-cli 內建配方表(--recipe-id)。");
-                var extraArgsBuilder = new StringBuilder();
-
-                extraArgsBuilder.Append($"--initial {craft.InitialQuality} "); // must always have a space after
-
-                if (config.EnsureReliability)
-                {
-                    Svc.Log.Error("Ensuring reliability is enabled, this may take a while. NO SUPPORT GIVEN IF ENABLED.");
-                    extraArgsBuilder.Append($"--adversarial "); // must always have a space after
-                }
-
-                var backload = config.BackloadProgress;
-                if (backload && ReflectFillsQuality(craft))
-                {
-                    backload = false;
-                    Svc.Log.Information($"Raphael:配方 {craft.RecipeId} 第 1 步閒靜就能補滿品質（上限 {Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable)}），這次不後置進展，由 Raphael 自己選起手。");
-                }
-                if (backload)
-                {
-                    extraArgsBuilder.Append($"--backload-progress "); // must always have a space after
-                }
-
-                if (config.HeartAndSoul)
-                {
-                    extraArgsBuilder.Append($"--heart-and-soul "); // must always have a space after
-                }
-
-                if (config.QuickInno)
-                {
-                    extraArgsBuilder.Append($"--quick-innovation "); // must always have a space after
-                }
-
-                if (P.Config.RaphaelSolverConfig.MaximumThreads > 0)
-                {
-                    extraArgsBuilder.Append($"--threads {P.Config.RaphaelSolverConfig.MaximumThreads} "); // must always have a space after
-                }
-
                 var process = new Process()
                 {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"),
-                        Arguments = $"solve {itemText} {manipulation} --level {craft.StatLevel} --stats {craft.StatCraftsmanship} {craft.StatControl} {craft.StatCP} {extraArgsBuilder} --output-variables ids", // Command to execute
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
+                    StartInfo = CliStartInfo(SolveArguments(craft, config, false, P.Config.RaphaelSolverConfig.MaximumThreads, out var backload)),
                 };
 
                 Svc.Log.Information(process.StartInfo.Arguments);
@@ -391,26 +344,7 @@ namespace Artisan.CraftingLogic.Solvers
                                 AbortWaitingAutomation();
                             return;
                         }
-                        var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
-                        var macro = new MacroSolverSettings.Macro()
-                        {
-                            Name = key,
-                            Steps = MacroUI.ParseMacro(cleansedOutput),
-                            Options = new()
-                            {
-                                SkipQualityIfMet = false,
-                                // 🔴 這兩個維持 false 是刻意的,
-                                //    原因是 Raphael 的解把 CP 與耐久算得剛剛好,把某一步換成
-                                //    集中加工/集中製作會改變消耗,整份計畫的預算就崩了。
-                                //    要在好/高品質狀態撿便宜,正確做法是 OpportunisticSolver。
-                                UpgradeProgressActions = false,
-                                UpgradeQualityActions = false,
-                                MinCP = craft.StatCP,
-                                MinControl = craft.StatControl,
-                                MinCraftsmanship = craft.StatCraftsmanship,
-                                RaphaelNoBackload = !backload,
-                            }
-                        };
+                        var macro = NewSolution(key, craft, output, backload);
 
                         var solved = macro.Steps.Count > 0;
                         // 相容配方掃描讀的是資料表，留在背景執行緒做；P.Config 的讀寫與存檔一律排回框架執行緒。
@@ -429,16 +363,7 @@ namespace Artisan.CraftingLogic.Solvers
                         {
                             if (refresh && !solved)
                                 return; // 舊解照用
-                            var rng = new Random();
-                            var ID = rng.Next(50001, 10000000);
-                            while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
-                                ID = rng.Next(50001, 10000000);
-                            macro.ID = ID;
-                            P.Config.RaphaelSolverCacheV3[key] = macro;
-                            if (refresh)
-                                foreach (var old in P.Config.RaphaelSolverCacheV3)
-                                    if (old.Key != key && ReferenceEquals(old.Value, replaces))
-                                        P.Config.RaphaelSolverCacheV3.TryRemove(old.Key, out _);
+                            StoreSolution(key, macro, replaces);
 
                             if (cts.IsCancellationRequested)
                                 return;
@@ -486,6 +411,8 @@ namespace Artisan.CraftingLogic.Solvers
                             // 成功了就讓這組條件恢復成「可以再試」。
                             FailedSolves.TryRemove(failKey, out _);
                             P.Config.Save();
+                            if (backload)
+                                QueueBackgroundSolve(craft, key, macro, config);
                         });
 
                         cts.Token.ThrowIfCancellationRequested();
@@ -526,6 +453,8 @@ namespace Artisan.CraftingLogic.Solvers
                 }, cts.Token, TaskCreationOptions.DenyChildAttach);
 
                 Tasks.TryAdd(key, new(cts, task));
+                // 先登記再讓路：背景工作在 BgLock 內看 Tasks 是否為空才開跑（見 RaphaelBackgroundSolve.cs）。
+                PreemptBackground();
                 try
                 {
                     task.Start(TaskScheduler.Default);
@@ -537,6 +466,107 @@ namespace Artisan.CraftingLogic.Solvers
                     Tasks.TryRemove(key, out _);
                 }
             }
+        }
+
+        /// <summary>
+        /// 求解參數（<c>solve</c> 之後整串）。<paramref name="backload"/>＝實際有沒有帶 --backload-progress
+        /// （品質需求很低時就算設定要後置也不帶）。<paramref name="threads"/> ≤ 0＝不限。<paramref name="quiet"/>＝背景求解，不寫說明行。
+        /// </summary>
+        private static string SolveArguments(CraftState craft, RaphaelSolutionConfig config, bool quiet, int threads, out bool backload)
+        {
+            var manipulation = craft.UnlockedManipulation ? "--manipulation" : "";
+            var itemText = RecipeArgs(craft, out var explicitFallback);
+            if (explicitFallback != null && !quiet)
+                Svc.Log.Information($"Raphael:{explicitFallback}(配方 {craft.RecipeId}),改用 raphael-cli 內建配方表(--recipe-id)。");
+            var extraArgsBuilder = new StringBuilder();
+
+            extraArgsBuilder.Append($"--initial {craft.InitialQuality} "); // must always have a space after
+
+            if (config.EnsureReliability)
+            {
+                if (!quiet)
+                    Svc.Log.Error("Ensuring reliability is enabled, this may take a while. NO SUPPORT GIVEN IF ENABLED.");
+                extraArgsBuilder.Append($"--adversarial "); // must always have a space after
+            }
+
+            backload = config.BackloadProgress;
+            if (backload && ReflectFillsQuality(craft))
+            {
+                backload = false;
+                if (!quiet)
+                    Svc.Log.Information($"Raphael:配方 {craft.RecipeId} 第 1 步閒靜就能補滿品質（上限 {Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable)}），這次不後置進展，由 Raphael 自己選起手。");
+            }
+            if (backload)
+            {
+                extraArgsBuilder.Append($"--backload-progress "); // must always have a space after
+            }
+
+            if (config.HeartAndSoul)
+            {
+                extraArgsBuilder.Append($"--heart-and-soul "); // must always have a space after
+            }
+
+            if (config.QuickInno)
+            {
+                extraArgsBuilder.Append($"--quick-innovation "); // must always have a space after
+            }
+
+            if (threads > 0)
+            {
+                extraArgsBuilder.Append($"--threads {threads} "); // must always have a space after
+            }
+
+            return $"solve {itemText} {manipulation} --level {craft.StatLevel} --stats {craft.StatCraftsmanship} {craft.StatControl} {craft.StatCP} {extraArgsBuilder} --output-variables ids";
+        }
+
+        private static ProcessStartInfo CliStartInfo(string arguments) => new()
+        {
+            FileName = Path.Join(Path.GetDirectoryName(Svc.PluginInterface.AssemblyLocation.FullName), "raphael-cli.exe"),
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        /// <summary>raphael-cli 的 <c>--output-variables ids</c> 輸出 → 快取用的巨集（還沒配 ID）。</summary>
+        private static MacroSolverSettings.Macro NewSolution(string key, CraftState craft, string output, bool backload)
+        {
+            var cleansedOutput = output.Replace("[", "").Replace("]", "").Replace("\"", "").Split(", ").Select(x => int.TryParse(x, out int n) ? n : 0);
+            return new MacroSolverSettings.Macro()
+            {
+                Name = key,
+                Steps = MacroUI.ParseMacro(cleansedOutput),
+                Options = new()
+                {
+                    SkipQualityIfMet = false,
+                    // 🔴 這兩個維持 false 是刻意的,
+                    //    原因是 Raphael 的解把 CP 與耐久算得剛剛好,把某一步換成
+                    //    集中加工/集中製作會改變消耗,整份計畫的預算就崩了。
+                    //    要在好/高品質狀態撿便宜,正確做法是 OpportunisticSolver。
+                    UpgradeProgressActions = false,
+                    UpgradeQualityActions = false,
+                    MinCP = craft.StatCP,
+                    MinControl = craft.StatControl,
+                    MinCraftsmanship = craft.StatCraftsmanship,
+                    RaphaelNoBackload = !backload,
+                }
+            };
+        }
+
+        /// <summary>配 ID、寫進快取；<paramref name="replaces"/> 非 null 時連它在別的鍵下的那筆一起拿掉。只在框架執行緒呼叫。</summary>
+        private static void StoreSolution(string key, MacroSolverSettings.Macro macro, MacroSolverSettings.Macro? replaces)
+        {
+            var rng = new Random();
+            var ID = rng.Next(50001, 10000000);
+            while (P.Config.RaphaelSolverCacheV3.Any(kv => kv.Value.ID == ID))
+                ID = rng.Next(50001, 10000000);
+            macro.ID = ID;
+            P.Config.RaphaelSolverCacheV3[key] = macro;
+            if (replaces != null)
+                foreach (var old in P.Config.RaphaelSolverCacheV3)
+                    if (old.Key != key && ReferenceEquals(old.Value, replaces))
+                        P.Config.RaphaelSolverCacheV3.TryRemove(old.Key, out _);
         }
 
         /// <summary>
@@ -1017,6 +1047,7 @@ namespace Artisan.CraftingLogic.Solvers
         public bool AllowEnsureReliability = false;
         public bool AllowBackloadProgress = false;
         public bool LowQualityFreeOpener = true;
+        public bool BackgroundNoBackload = true;
         public bool ShowSpecialistSettings = false;
         public bool ExactCraftsmanship = false;
         public bool AutoGenerate = false;
@@ -1060,6 +1091,8 @@ namespace Artisan.CraftingLogic.Solvers
                 var reflect = Skills.Reflect.NameOfAction();
                 changed |= ImGui.Checkbox("Don't backload progress when one ?? fills quality; let Raphael pick the opener (usually ??)".Loc(reflect, Skills.MuscleMemory.NameOfAction()), ref LowQualityFreeOpener);
                 ImGuiComponents.HelpMarker("With backloading, every quality action comes before progress, so any craft that needs quality has to open with ??. When ?? on the first step already reaches max quality, that solve leaves backloading off and Raphael picks the opener itself. With automatic generation on, a cached solution that opens with ?? is re-solved once (the old one stays in use until the new one is ready); if Raphael still opens with ??, that solution is kept.".Loc(reflect, reflect, reflect, reflect));
+                changed |= ImGui.Checkbox("Also solve without backloading in the background; use that solution if it is faster at the same quality".Loc(), ref BackgroundNoBackload);
+                ImGuiComponents.HelpMarker("Crafting starts right away with the backloaded solution. Meanwhile Raphael solves the same recipe again without backloading in the background: one at a time, at most ?? threads, low priority, up to ?? minutes, and it steps aside (and retries later) whenever a solve you are waiting for starts. Later crafts of that recipe use the new solution if it reaches at least the same quality in fewer steps (or the same steps in less time), or higher quality without more steps or time; the craft in progress is not affected. Each solution is tried once per set of stats. Only runs with automatic generation on, and never on expert recipes.".Loc(RaphaelCache.BackgroundThreadCap, RaphaelCache.BackgroundTimeLimit.TotalMinutes));
                 ImGui.Unindent();
             }
             changed |= ImGui.Checkbox("Show specialist options when available".Loc(), ref ShowSpecialistSettings);

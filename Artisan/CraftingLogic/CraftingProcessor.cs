@@ -195,6 +195,9 @@ public static class CraftingProcessor
                 return;
             }
             ActiveSolver = new(autoSolver.Name, _activeSolver);
+            // 這場照用快取的解；後置進展下求的解在背景再求一份不後置的，比較好就下一場起換掉。
+            if (autoSolver.Def is RaphaelSolverDefintion)
+                ECommons.GenericHelpers.Safe(() => RaphaelCache.TryQueueBackgroundSolve(craft));
         }
 
         if (_activeSolver is ICraftValidator validator)

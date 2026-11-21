@@ -26,6 +26,8 @@ public class MacroSolverSettings
         public int MinCP = 0;
         /// <summary>Raphael 求這份解時沒帶 --backload-progress。舊快取沒有這欄（false）＝不知道，可能是後置進展下求的。</summary>
         public bool RaphaelNoBackload = false;
+        /// <summary>這份解已用哪個快取鍵（<c>RaphaelCache.GetKey</c>）在背景求過不後置進展的解；空＝沒有。同一個鍵只試一次。</summary>
+        public string RaphaelBackgroundTriedKey = "";
     }
 
     public class MacroStep

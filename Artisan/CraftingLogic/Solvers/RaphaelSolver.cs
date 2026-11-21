@@ -244,6 +244,9 @@ namespace Artisan.CraftingLogic.Solvers
             return Tasks.ContainsKey(key) && FreeOpenerChecked.TryGetValue(key, out var state) && state == 1;
         }
 
+        /// <summary>退路只用在宇宙探索配方：量測只做過宇宙配方；其他配方（收藏品門檻等）照用使用者要的確保可靠度。</summary>
+        internal static bool ReliabilityFallbackApplies(CraftState craft) => craft.IsCosmic;
+
         /// <summary>確保可靠度下的解（照順序、通常狀態走完）沒做到最高品質：值得再求一份不確保的解。</summary>
         internal static bool ReliabilityFallbackNeeded(PlanOutcome reliable, int cap)
             => cap > 0 && (!reliable.Done || reliable.Quality < cap);
@@ -261,6 +264,7 @@ namespace Artisan.CraftingLogic.Solvers
         /// </summary>
         internal static bool NeedsReliabilityRefresh(CraftState craft, MacroSolverSettings.Macro solution, string? key = null)
             => P.Config.RaphaelSolverConfig.ReliabilityFallback
+            && ReliabilityFallbackApplies(craft)
             && !solution.Options.RaphaelReliabilityChecked
             && (TempConfigs.TryGetValue(key ?? GetKey(craft), out var c) ? c.EnsureReliability : P.Config.RaphaelSolverConfig.AllowEnsureReliability)
             && ReliabilityFallbackNeeded(EvaluatePlan(craft, solution.Steps), Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable));
@@ -296,7 +300,7 @@ namespace Artisan.CraftingLogic.Solvers
         {
             var cap = Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable);
             var reliable = EvaluatePlan(craft, reliableMacro.Steps);
-            if (!ReliabilityFallbackNeeded(reliable, cap) || token.IsCancellationRequested)
+            if (!ReliabilityFallbackApplies(craft) || !ReliabilityFallbackNeeded(reliable, cap) || token.IsCancellationRequested)
                 return (reliableMacro, backload);
             using var process = new Process { StartInfo = CliStartInfo(fallbackArguments) };
             using (token.Register(() =>
@@ -1188,8 +1192,8 @@ namespace Artisan.CraftingLogic.Solvers
             if (AllowEnsureReliability)
             {
                 ImGui.Indent();
-                changed |= ImGui.Checkbox("When ensuring reliability can't reach max quality, use a solution without it if that gets higher quality".Loc(), ref ReliabilityFallback);
-                ImGuiComponents.HelpMarker("Ensuring reliability plans for the worst case, so on recipes where max quality is out of reach it settles for clearly lower quality (on Cosmic Exploration Hard+ final items roughly 10% lower, and every 1% there is worth 30 points). When the reliable solution doesn't reach max quality, Raphael solves again without ensuring reliability and without backloading progress, and that solution is used if it reaches higher quality. Recipes where max quality is reachable keep the reliable solution. With automatic generation on, a cached solution that hasn't been checked this way is re-solved once (the old one stays in use until the new one is ready).".Loc());
+                changed |= ImGui.Checkbox("On Cosmic Exploration recipes, when ensuring reliability can't reach max quality, use a solution without it if that gets higher quality".Loc(), ref ReliabilityFallback);
+                ImGuiComponents.HelpMarker("Ensuring reliability plans for the worst case, so on recipes where max quality is out of reach it settles for clearly lower quality (on Cosmic Exploration Hard+ final items roughly 10% lower, and every 1% there is worth 30 points). When the reliable solution doesn't reach max quality, Raphael solves again without ensuring reliability and without backloading progress, and that solution is used if it reaches higher quality. Recipes where max quality is reachable, and all recipes outside Cosmic Exploration, keep the reliable solution. With automatic generation on, a cached solution that hasn't been checked this way is re-solved once (the old one stays in use until the new one is ready).".Loc());
                 ImGui.Unindent();
             }
             changed |= ImGui.Checkbox("Allow backloading of progress in macro generation".Loc(), ref AllowBackloadProgress);

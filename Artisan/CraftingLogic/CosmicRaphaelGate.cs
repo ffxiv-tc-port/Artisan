@@ -73,8 +73,9 @@ internal static class CosmicRaphaelGate
             return true;
         if (RaphaelCache.HasSolution(craft, out var cached))
         {
-            // 舊解可能是後置進展下求的閒靜起手：等一次重求（同樣最多 WaitLimit），求不出來就用舊解開工。
-            if (RaphaelCache.FreeOpenerRefreshInProgress(craft) || RaphaelCache.TryRefreshFreeOpener(craft, cached!, null, WaitLimit))
+            // 舊解可能是後置進展下求的閒靜起手、或確保可靠度下沒做到最高品質：等一次重求（同樣最多 WaitLimit），求不出來就用舊解開工。
+            if (RaphaelCache.FreeOpenerRefreshInProgress(craft) || RaphaelCache.ReliabilityRefreshInProgress(craft)
+                || RaphaelCache.TryRefreshFreeOpener(craft, cached!, null, WaitLimit) || RaphaelCache.TryRefreshReliability(craft, cached!, null, WaitLimit))
                 return false;
             return true;
         }

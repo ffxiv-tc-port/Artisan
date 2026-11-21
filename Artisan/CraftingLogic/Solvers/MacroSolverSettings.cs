@@ -28,6 +28,8 @@ public class MacroSolverSettings
         public bool RaphaelNoBackload = false;
         /// <summary>這份解已用哪個快取鍵（<c>RaphaelCache.GetKey</c>）在背景求過不後置進展的解；空＝沒有。同一個鍵只試一次。</summary>
         public string RaphaelBackgroundTriedKey = "";
+        /// <summary>這份解求出時已套用「確保可靠度達不到最高品質就改用不確保的解」的判斷。舊快取沒有這欄（false）＝沒判過。</summary>
+        public bool RaphaelReliabilityChecked = false;
     }
 
     public class MacroStep

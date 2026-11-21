@@ -244,6 +244,95 @@ namespace Artisan.CraftingLogic.Solvers
             return Tasks.ContainsKey(key) && FreeOpenerChecked.TryGetValue(key, out var state) && state == 1;
         }
 
+        /// <summary>確保可靠度下的解（照順序、通常狀態走完）沒做到最高品質：值得再求一份不確保的解。</summary>
+        internal static bool ReliabilityFallbackNeeded(PlanOutcome reliable, int cap)
+            => cap > 0 && (!reliable.Done || reliable.Quality < cap);
+
+        /// <summary>不確保可靠度的解要做得完，而且品質（夾上限）嚴格較高才改用；確保的解做不完時只要做得完。</summary>
+        internal static bool PreferReliabilityFallback(PlanOutcome reliable, PlanOutcome fallback)
+            => fallback.Done && (!reliable.Done || fallback.Quality > reliable.Quality);
+
+        // 同 FreeOpenerChecked：每個鍵每次載入只判一次、最多重求一次（0＝判過不必、1＝送出重求）。
+        private static readonly ConcurrentDictionary<string, byte> ReliabilityChecked = new();
+
+        /// <summary>
+        /// 快取的解是舊版求的（沒判過確保可靠度的退路）、這組條件求解會確保可靠度、而且這份解沒做到最高品質 ⇒ 值得重求一次。
+        /// 重求後的解帶 <see cref="MacroSolverSettings.MacroOptions.RaphaelReliabilityChecked"/>，之後不再判舊。
+        /// </summary>
+        internal static bool NeedsReliabilityRefresh(CraftState craft, MacroSolverSettings.Macro solution, string? key = null)
+            => P.Config.RaphaelSolverConfig.ReliabilityFallback
+            && !solution.Options.RaphaelReliabilityChecked
+            && (TempConfigs.TryGetValue(key ?? GetKey(craft), out var c) ? c.EnsureReliability : P.Config.RaphaelSolverConfig.AllowEnsureReliability)
+            && ReliabilityFallbackNeeded(EvaluatePlan(craft, solution.Steps), Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable));
+
+        /// <summary>同 <see cref="TryRefreshFreeOpener"/>，判準換成 <see cref="NeedsReliabilityRefresh"/>。只在框架執行緒呼叫。</summary>
+        internal static bool TryRefreshReliability(CraftState craft, MacroSolverSettings.Macro solution, string? key = null, TimeSpan? fallbackDeadline = null)
+        {
+            if (solution.Options.RaphaelReliabilityChecked || !P.Config.RaphaelSolverConfig.ReliabilityFallback)
+                return false;
+            key ??= GetKey(craft);
+            if (Tasks.ContainsKey(key) || !ReliabilityChecked.TryAdd(key, 0) || !NeedsReliabilityRefresh(craft, solution, key))
+                return false;
+            ReliabilityChecked[key] = 1;
+            if (!TryAutoBuild(craft, fallbackDeadline, solution))
+                return false;
+            Svc.Log.Information($"Raphael:配方 {craft.RecipeId} 的快取解是確保可靠度下求的、沒做到最高品質，照新規則重求一次（舊解留著，求出來才換掉）。");
+            return true;
+        }
+
+        /// <summary>這組條件正在跑 <see cref="TryRefreshReliability"/> 送出的重求。</summary>
+        internal static bool ReliabilityRefreshInProgress(CraftState craft)
+        {
+            var key = GetKey(craft);
+            return Tasks.ContainsKey(key) && ReliabilityChecked.TryGetValue(key, out var state) && state == 1;
+        }
+
+        /// <summary>
+        /// 確保可靠度下的解沒做到最高品質時，用 <paramref name="fallbackArguments"/>（不確保、不後置進展）再求一次，
+        /// 符合 <see cref="PreferReliabilityFallback"/> 就改用。回傳要存的解與它有沒有後置進展。背景執行緒呼叫；被取消就照用確保可靠度的解。
+        /// </summary>
+        private static (MacroSolverSettings.Macro Macro, bool Backload) ApplyReliabilityFallback(string key, CraftState craft, MacroSolverSettings.Macro reliableMacro, bool backload,
+            string fallbackArguments, CancellationToken token)
+        {
+            var cap = Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable);
+            var reliable = EvaluatePlan(craft, reliableMacro.Steps);
+            if (!ReliabilityFallbackNeeded(reliable, cap) || token.IsCancellationRequested)
+                return (reliableMacro, backload);
+            using var process = new Process { StartInfo = CliStartInfo(fallbackArguments) };
+            using (token.Register(() =>
+            {
+                try
+                {
+                    process.Kill();
+                }
+                catch (Exception)
+                {
+                }
+            }))
+            {
+                process.Start();
+                var errorTask = process.StandardError.ReadToEndAsync();
+                var output = process.StandardOutput.ReadToEnd();
+                var error = errorTask.Result.Trim();
+                process.WaitForExit();
+                if (token.IsCancellationRequested)
+                {
+                    Svc.Log.Information($"Raphael:配方 {craft.RecipeId} 在確保可靠度下做不到最高品質（{Describe(reliable)}／上限 {cap}），不確保可靠度的解還沒求完就被停止，照用原本的解。");
+                    return (reliableMacro, backload);
+                }
+                var alt = process.ExitCode == 0 ? NewSolution(key, craft, output, false) : null;
+                var fallback = alt is { Steps.Count: > 0 } ? EvaluatePlan(craft, alt.Steps) : default;
+                var detail = $"品質 {Describe(reliable)}→{(alt == null ? $"求解失敗（{DescribeCliFailure(error, process.ExitCode)}）" : Describe(fallback))}（上限 {cap}）、步數 {reliable.Steps}→{fallback.Steps}";
+                if (alt != null && PreferReliabilityFallback(reliable, fallback))
+                {
+                    Svc.Log.Information($"Raphael:配方 {craft.RecipeId} 在確保可靠度下做不到最高品質，改用不確保可靠度、不後置進展的解：{detail}。");
+                    return (alt, false);
+                }
+                Svc.Log.Information($"Raphael:配方 {craft.RecipeId} 在確保可靠度下做不到最高品質，但不確保可靠度的解沒有比較好，照用原本的解：{detail}。");
+                return (reliableMacro, backload);
+            }
+        }
+
         /// <param name="fallbackDeadline">
         /// 非 null＝呼叫端在等這份解、求不出來就改用別的解算器（<see cref="CosmicRaphaelGate"/>）：逾時改用這個期限，
         /// 失敗、逾時、取消都只記進 <see cref="FailedSolves"/> 並寫 Information，不關耐力模式、不關自動產生。
@@ -282,6 +371,10 @@ namespace Artisan.CraftingLogic.Solvers
                 };
 
                 Svc.Log.Information(process.StartInfo.Arguments);
+                // 參數在框架執行緒組好（會讀設定與資料表）；用不用得到，等確保可靠度的解出來才知道。
+                var fallbackArguments = config.EnsureReliability && P.Config.RaphaelSolverConfig.ReliabilityFallback
+                    ? SolveArguments(craft, new RaphaelSolutionConfig { HeartAndSoul = config.HeartAndSoul, QuickInno = config.QuickInno }, true, P.Config.RaphaelSolverConfig.MaximumThreads, out _)
+                    : null;
 
                 var cts = new CancellationTokenSource();
                 // 🔴 取消回呼跑在 CancelAfter 的計時器執行緒(或任何呼叫 Cancel() 的執行緒)上,回呼丟出來的例外
@@ -345,6 +438,9 @@ namespace Artisan.CraftingLogic.Solvers
                             return;
                         }
                         var macro = NewSolution(key, craft, output, backload);
+                        if (fallbackArguments != null && macro.Steps.Count > 0)
+                            (macro, backload) = ApplyReliabilityFallback(key, craft, macro, backload, fallbackArguments, cts.Token);
+                        macro.Options.RaphaelReliabilityChecked = true;
 
                         var solved = macro.Steps.Count > 0;
                         // 相容配方掃描讀的是資料表，留在背景執行緒做；P.Config 的讀寫與存檔一律排回框架執行緒。
@@ -923,7 +1019,10 @@ namespace Artisan.CraftingLogic.Solvers
                     var solverIsRaph = config.SolverType == opt?.Def.GetType().FullName!;
                     // 重求成功會照自動切換改配方的解算器：指定了別的解算器的配方不碰。
                     if (liveStats && (solverIsRaph || config.CurrentSolverType.Length == 0) && !CosmicRaphaelGate.OwnsAutoBuild(config, craft))
-                        TryRefreshFreeOpener(craft, solution!, key);
+                    {
+                        if (!TryRefreshFreeOpener(craft, solution!, key))
+                            TryRefreshReliability(craft, solution!, key);
+                    }
                     var curStats = CharacterStats.GetCurrentStats();
                     //Svc.Log.Debug($"{curStats.Craftsmanship}/{craft.StatCraftsmanship} - {curStats.Control}/{craft.StatControl} - {curStats.CP}/{craft.StatCP}");
                     if (liveStats && craft.StatCraftsmanship != curStats.Craftsmanship && solverIsRaph)
@@ -1045,6 +1144,7 @@ namespace Artisan.CraftingLogic.Solvers
     public class RaphaelSolverSettings
     {
         public bool AllowEnsureReliability = false;
+        public bool ReliabilityFallback = true;
         public bool AllowBackloadProgress = false;
         public bool ProgressRescue = true;
         public bool LowQualityFreeOpener = true;
@@ -1085,6 +1185,13 @@ namespace Artisan.CraftingLogic.Solvers
             ImGui.PushTextWrapPos(0);
             ImGui.TextColored(new System.Numerics.Vector4(255, 0, 0, 1), "Ensuring reliability may not always work and is very CPU and RAM intensive, suggested RAM at least 16GB+ spare. NO SUPPORT SHALL BE GIVEN IF YOU HAVE THIS ON".Loc());
             ImGui.PopTextWrapPos();
+            if (AllowEnsureReliability)
+            {
+                ImGui.Indent();
+                changed |= ImGui.Checkbox("When ensuring reliability can't reach max quality, use a solution without it if that gets higher quality".Loc(), ref ReliabilityFallback);
+                ImGuiComponents.HelpMarker("Ensuring reliability plans for the worst case, so on recipes where max quality is out of reach it settles for clearly lower quality (on Cosmic Exploration Hard+ final items roughly 10% lower, and every 1% there is worth 30 points). When the reliable solution doesn't reach max quality, Raphael solves again without ensuring reliability and without backloading progress, and that solution is used if it reaches higher quality. Recipes where max quality is reachable keep the reliable solution. With automatic generation on, a cached solution that hasn't been checked this way is re-solved once (the old one stays in use until the new one is ready).".Loc());
+                ImGui.Unindent();
+            }
             changed |= ImGui.Checkbox("Allow backloading of progress in macro generation".Loc(), ref AllowBackloadProgress);
             if (AllowBackloadProgress)
             {

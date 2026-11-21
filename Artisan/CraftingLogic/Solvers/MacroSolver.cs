@@ -32,6 +32,12 @@ public class MacroSolver : Solver, ICraftValidator
     private Solver? _fallback;
     private int _nextStep;
 
+    /// 品質到這個值以上就跳過剩下的純品質步驟(0＝不跳)。只由程式設定、不進巨集設定檔 ⇒ 快取裡的舊解也吃得到。
+    /// 與 <see cref="MacroSolverSettings.MacroOptions.SkipQualityIfMet"/>(門檻是第三突破點)是兩回事。
+    public int SkipQualityAtOrAbove { get; init; }
+    private bool _skipUnchecked; // 驗證跳過用的分身:不再巢狀驗證
+    private const int SkipCheckStepLimit = 100;
+
     public MacroSolver(MacroSolverSettings.Macro m, CraftState craft)
     {
         _macro = m;
@@ -75,6 +81,11 @@ public class MacroSolver : Solver, ICraftValidator
             }
 
             if (_macro.Options.SkipQualityIfMet && step.Quality >= craft.CraftQualityMin3 && ActionIsQuality(action))
+            {
+                continue;
+            }
+
+            if (SkipQualityAtOrAbove > 0 && step.Quality >= SkipQualityAtOrAbove && IsSpentOnlyOnQuality(action) && (_skipUnchecked || SkipStillFinishes(craft, step)))
             {
                 continue;
             }
@@ -128,7 +139,39 @@ public class MacroSolver : Solver, ICraftValidator
     }
 
     private static bool ActionIsQuality(Skills skill) => skill is Skills.BasicTouch or Skills.StandardTouch or Skills.AdvancedTouch or Skills.HastyTouch or Skills.PreparatoryTouch
-        or Skills.PreciseTouch or Skills.PrudentTouch or Skills.TrainedFinesse or Skills.ByregotsBlessing or Skills.GreatStrides or Skills.Innovation or Skills.TouchCombo or Skills.TouchComboRefined;
+        or Skills.PreciseTouch or Skills.PrudentTouch or Skills.TrainedFinesse or Skills.ByregotsBlessing or Skills.GreatStrides or Skills.Innovation or Skills.TouchCombo or Skills.TouchComboRefined
+        or Skills.DaringTouch or Skills.RefinedTouch or Skills.QuickInnovation;
+
+    // 觀察／專心致志只在「下一步就是會被跳過的加工」時跟著跳:前者是為了上級加工,後者是為了集中加工且會白耗能工巧匠圖紙。
+    // 工匠的絕技、儉約、掌握等照留:跳過的加工不吃它們,效果留給之後的進展步驟。
+    private bool IsSpentOnlyOnQuality(Skills action) => action switch
+    {
+        Skills.Observe => NextPlannedAction() is Skills.AdvancedTouch,
+        Skills.HeartAndSoul => NextPlannedAction() is Skills.PreciseTouch,
+        _ => ActionIsQuality(action),
+    };
+
+    // 跳掉的闊步／改革等不耗耐久的步驟原本是掌握回耐久的回合,跳掉後下一個進展可能把耐久打穿。
+    // ⇒ 先用模擬器把「從這裡開始照跳」走完,做不完就照原計畫放這一步。
+    private bool SkipStillFinishes(CraftState craft, StepState step)
+    {
+        var probe = (MacroSolver)Clone();
+        probe._skipUnchecked = true;
+        var cur = step;
+        for (var guard = 0; Simulator.Status(craft, cur) == Simulator.CraftStatus.InProgress; ++guard)
+        {
+            var action = guard < SkipCheckStepLimit ? probe.Solve(craft, cur).Action : Skills.None;
+            if (action == Skills.None)
+                return false;
+            var (res, next) = Simulator.Execute(craft, cur, action, 0, 1);
+            if (res == Simulator.ExecuteResult.CantUse)
+                return false;
+            cur = next;
+        }
+        return cur.Progress >= craft.CraftProgress;
+    }
+
+    private Skills NextPlannedAction() => _nextStep < _macro.Steps.Count ? _macro.Steps[_nextStep].Action : Skills.None;
 
     private static bool ActionIsUpgradeableQuality(Skills skill) => skill is Skills.HastyTouch or Skills.PreparatoryTouch or Skills.AdvancedTouch or Skills.StandardTouch or Skills.BasicTouch;
     private static bool ActionIsUpgradeableProgress(Skills skill) => skill is Skills.Groundwork or Skills.PrudentSynthesis or Skills.CarefulSynthesis or Skills.BasicSynthesis;

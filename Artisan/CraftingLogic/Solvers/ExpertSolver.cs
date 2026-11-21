@@ -182,7 +182,7 @@ public class ExpertSolver : Solver
         }
 
         // try to finish the craft
-        return new(SolveFinishProgress(craft, step), isMid ? "finish emergency" : "finish");
+        return new(SolveFinishProgress(craft, step, step.Quality >= qualityTarget), isMid ? "finish emergency" : "finish");
     }
 
     private static Skills SolveOpenerMuMe(ExpertSolverSettings cfg, CraftState craft, StepState step)
@@ -791,8 +791,15 @@ public class ExpertSolver : Solver
         return new(Skills.None, "fq: not enough"); // byregot is not enough
     }
 
-    private static Skills SolveFinishProgress(CraftState craft, StepState step)
+    private static Skills SolveFinishProgress(CraftState craft, StepState step, bool qualityDone)
     {
+        // 品質已達標、一次作業就能完成(耐久允許)時直接收尾:這時任何條件動作(高效掌握、秘訣…)都只是多花一步。
+        // 品質未達標時不走這條:高品質的秘訣回來的 CP 可能還夠放一次比爾格。
+        if (qualityDone)
+            foreach (var finisher in FinisherSynths)
+                if (CanUseSynthForFinisher(craft, step, finisher) && step.Progress + Simulator.CalculateProgress(craft, step, finisher) >= craft.CraftProgress && CU(craft, step, finisher))
+                    return finisher;
+
         // we have some options to finish the progress:
         // - rapid spam is efficient, but can fail - we use it if we can't do a guaranteed finish
         // - prudent can be thought of converting 11cp into 5 dura, which is less efficient than baiting pliant (which is random to an extent), but more efficient than normal manip
@@ -860,6 +867,8 @@ public class ExpertSolver : Solver
         // just pray
         return Skills.RapidSynthesis;
     }
+
+    private static readonly Skills[] FinisherSynths = [Skills.CarefulSynthesis, Skills.BasicSynthesis, Skills.PrudentSynthesis];
 
     private static bool CanUseSynthForFinisher(CraftState craft, StepState step, Skills action)
         => step.RemainingCP >= Simulator.GetCPCost(step, action) && (step.Durability > Simulator.GetDurabilityCost(step, action) || step.Progress + Simulator.CalculateProgress(craft, step, action) >= craft.CraftProgress);

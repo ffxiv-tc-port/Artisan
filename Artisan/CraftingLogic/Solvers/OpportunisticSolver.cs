@@ -19,6 +19,17 @@ public class OpportunisticSolver : Solver, ICraftValidator
 
     public Solver Inner => _plan;
 
+    // 保進展的說明由呼叫端讀走再記 log：同一條鏈也在奇蹟之材閘門的試算與配方視窗的提示取樣裡跑，那些不是實機。
+    private string _rescueNote = "";
+
+    /// <summary>上次讀走之後保進展跳過了哪些步驟；沒有回空字串。讀走即清。</summary>
+    public string ConsumeRescueNote()
+    {
+        var note = _rescueNote;
+        _rescueNote = "";
+        return note;
+    }
+
     public OpportunisticSolver(Solver plan) => _plan = plan;
 
     public override Solver Clone()
@@ -32,6 +43,9 @@ public class OpportunisticSolver : Solver, ICraftValidator
 
     public override Recommendation Solve(CraftState craft, StepState step)
     {
+        if (P.Config.RaphaelSolverConfig.ProgressRescue && _plan is MacroSolver macro)
+            SkipQualityToFinish(craft, step, macro);
+
         if (!P.Config.RaphaelSolverConfig.OpportunisticDeviation || !IsInterestingCondition(step.Condition))
             return _plan.Solve(craft, step);
 
@@ -168,14 +182,41 @@ public class OpportunisticSolver : Solver, ICraftValidator
     private static bool IsUpgradeableProgress(Skills s) => s is Skills.BasicSynthesis or Skills.CarefulSynthesis
         or Skills.PrudentSynthesis or Skills.Groundwork or Skills.RapidSynthesis;
 
-    // take 'first', then let 'solver' play out whatever it has left until the craft ends
-    private static (StepState Final, int Actions)? Rollout(Solver solver, CraftState craft, StepState step, Skills first)
+    /// <summary>
+    /// 保進展：計畫下一步是純品質步驟，而剩餘計畫照通常狀態（資源最緊的情況）做不完進展、跳過剩下的純品質步驟卻做得完
+    /// ⇒ 跳過這一步（一次一步，下一步重判；做得完就照原計畫）。跳過也做不完就不動：那時放棄品質救不回來。
+    /// </summary>
+    private void SkipQualityToFinish(CraftState craft, StepState step, MacroSolver macro)
     {
-        var (res, cur) = Simulator.Execute(craft, step, first, 0, 1);
-        if (res == Simulator.ExecuteResult.CantUse)
-            return null;
+        for (var guard = 0; guard < RolloutStepLimit; ++guard)
+        {
+            var probe = (MacroSolver)macro.Clone();
+            var next = probe.Solve(craft, step).Action;
+            if (next == Skills.None || !probe.SpentOnlyOnQuality(next))
+                return;
+            if (Rollout(probe, craft, step, next) is { } run && run.Final.Progress >= craft.CraftProgress)
+                return;
+            if (Rollout(macro.CloneSkippingAllQuality(), craft, step, null) is not { } rescue || rescue.Final.Progress < craft.CraftProgress)
+                return;
+            macro.Solve(craft, step); // 跳過這一步
+            _rescueNote += $"第 {step.Index} 步：照剩下的計畫走，進展會做不完（耐久或 CP 不夠），跳過 {next} 先保住進展"
+                + $"（目前 進展 {step.Progress}/{craft.CraftProgress}、品質 {step.Quality}、耐久 {step.Durability}、CP {step.RemainingCP}）。";
+        }
+    }
 
-        var actions = 1;
+    // take 'first' (null: none), then let 'solver' play out whatever it has left until the craft ends
+    private static (StepState Final, int Actions)? Rollout(Solver solver, CraftState craft, StepState step, Skills? first)
+    {
+        var cur = step;
+        var actions = 0;
+        if (first is { } f)
+        {
+            (var res, cur) = Simulator.Execute(craft, step, f, 0, 1);
+            if (res == Simulator.ExecuteResult.CantUse)
+                return null;
+            actions = 1;
+        }
+
         for (var guard = 0; Simulator.Status(craft, cur) == Simulator.CraftStatus.InProgress; ++guard)
         {
             if (guard >= RolloutStepLimit)

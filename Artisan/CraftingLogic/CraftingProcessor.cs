@@ -244,6 +244,8 @@ public static class CraftingProcessor
             Svc.Log.Information($"[MaterialMiracle] {stdWhy}");
         if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.ConsumeGateExplanation() is { Length: > 0 } mmWhy)
             Svc.Log.Information($"[MaterialMiracle] {mmWhy}");
+        if (_activeSolver is Solvers.MaterialMiracleSolver { Inner: Solvers.OpportunisticSolver opp } && opp.ConsumeRescueNote() is { Length: > 0 } rescue)
+            Svc.Log.Information($"[Raphael 保進展] {rescue}");
         Svc.Log.Debug($"Next rec is: {_nextRec.Action}");
         if (Simulator.CannotUseAction(craft, step, _nextRec.Action, out string reason))
             DuoLog.Error($"Unable to use {_nextRec.Action.NameOfAction()}: {reason}");

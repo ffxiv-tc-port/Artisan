@@ -642,6 +642,7 @@ public static unsafe class Crafting
         ret.ExpedienceLeft = GetStatus(Buffs.Expedience) != null ? 1 : 0;
         ret.PrevActionFailed = predictedStep?.PrevActionFailed ?? false;
         ret.PrevComboAction = predictedStep?.PrevComboAction ?? Skills.None;
+        ret.AdvancedTouchComboReady = predictedStep?.AdvancedTouchComboReady ?? false;
         ret.MaterialMiracleCharges = MaterialMiracleCharges();
         // 🔑 buff 在不在,一律以遊戲的狀態列為準,時鐘只負責「還剩多少」。
         ret.MaterialMiracleActive = GetStatus(Buffs.MaterialMiracle) != null;

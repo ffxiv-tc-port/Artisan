@@ -1046,6 +1046,7 @@ namespace Artisan.CraftingLogic.Solvers
     {
         public bool AllowEnsureReliability = false;
         public bool AllowBackloadProgress = false;
+        public bool ProgressRescue = true;
         public bool LowQualityFreeOpener = true;
         public bool BackgroundNoBackload = true;
         public bool ShowSpecialistSettings = false;
@@ -1126,6 +1127,9 @@ namespace Artisan.CraftingLogic.Solvers
             changed |= ImGui.Checkbox("Reorder plan steps around ?? / ?? / ?? conditions".Loc(good, excellent, poor), ref OpportunisticReorder);
             ImGuiComponents.HelpMarker("On ?? or ??, the next planned quality action is used first and the planned buff or repair moves one step later (?? is always followed by ??). On ??, the next planned non-quality action is used first and the touch moves to the next step. Only done when simulating the rest of the plan still finishes the craft with at least the same quality; on a tie the shorter craft wins, but only if it would still finish without skipping quality actions.".Loc(good, excellent, excellent, poor, poor));
             ImGui.Unindent();
+
+            changed |= ImGui.Checkbox("If the rest of the plan can no longer finish progress, skip quality actions to finish the craft".Loc(), ref ProgressRescue);
+            ImGuiComponents.HelpMarker("Before each quality action the rest of the plan is simulated in normal conditions (the tightest case for durability and CP). If it would run out of durability or CP before progress is done, but skipping the remaining quality actions would still finish, this quality action is skipped; it is re-checked every step, so only as many are skipped as needed. Trades some quality for not failing the craft. Nothing is skipped while the plan can still finish.".Loc());
 
             changed |= ImGui.Checkbox("Skip the remaining quality actions once quality is maxed".Loc(), ref SkipQualityWhenMaxed);
             ImGuiComponents.HelpMarker("When good conditions or deviations fill quality earlier than planned, the rest of the plan's touches, ??, ??, ?? and ?? are skipped and the craft goes straight on to progress. Repairs and progress buffs are kept. Saves steps and avoids spending Delineations on ??.".Loc(Skills.ByregotsBlessing.NameOfAction(), Skills.Innovation.NameOfAction(), Skills.GreatStrides.NameOfAction(), Skills.QuickInnovation.NameOfAction(), Skills.QuickInnovation.NameOfAction()));

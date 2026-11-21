@@ -85,6 +85,8 @@ public record class StepState
     public bool TrainedPerfectionAvailable;
     public bool TrainedPerfectionActive;
     public Skills PrevComboAction;
+    // 下一個上級加工吃得到連擊減價：前一步是觀察，或是「接在加工後面」的中級加工（遊戲不認沒連上的中級加工）。
+    public bool AdvancedTouchComboReady;
     public uint MaterialMiracleCharges;
     public bool MaterialMiracleActive;
     // 奇蹟之材是**實時**(45 秒)而不是回合數的 buff。

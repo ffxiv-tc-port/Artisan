@@ -350,6 +350,7 @@ public static class Simulator
         next.QuickInnoAvailable = step.QuickInnoLeft > 0 && next.InnovationLeft == 0;
         next.PrevActionFailed = !success;
         next.PrevComboAction = action; // note: even stuff like final appraisal and h&s break combos
+        next.AdvancedTouchComboReady = action == Skills.Observe || action == Skills.StandardTouch && step.PrevComboAction == Skills.BasicTouch;
         next.TrainedPerfectionActive = action == Skills.TrainedPerfection || (step.TrainedPerfectionActive && !HasDurabilityCost(action));
         next.TrainedPerfectionAvailable = step.TrainedPerfectionAvailable && action != Skills.TrainedPerfection;
         next.MaterialMiracleCharges = action == Skills.MaterialMiracle ? step.MaterialMiracleCharges - 1 : step.MaterialMiracleCharges;
@@ -543,7 +544,7 @@ public static class Simulator
 
     public static int GetCPCost(StepState step, Skills action)
     {
-        var cost = GetBaseCPCost(action, step.PrevComboAction);
+        var cost = action == Skills.AdvancedTouch ? (step.AdvancedTouchComboReady ? 18 : 46) : GetBaseCPCost(action, step.PrevComboAction);
         if (step.Condition == Condition.Pliant)
             cost -= cost / 2; // round up
         return cost;

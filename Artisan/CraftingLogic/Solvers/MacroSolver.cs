@@ -38,6 +38,7 @@ public class MacroSolver : Solver, ICraftValidator
     public int SkipQualityAtOrAbove { get => _skipQualityAt; init => _skipQualityAt = value; }
     private int _skipQualityAt;
     private bool _skipUnchecked; // 驗證跳過用的分身:不再巢狀驗證
+    private bool _skipAllQuality; // 保進展試算用的分身:不論品質,剩下的純品質步驟一律跳過
     private HashSet<int>? _pulled; // 已被 OpportunisticSolver 提前放掉的計畫步驟,輪到時跳過
     private const int SkipCheckStepLimit = 100;
 
@@ -94,7 +95,7 @@ public class MacroSolver : Solver, ICraftValidator
                 continue;
             }
 
-            if (SkipQualityAtOrAbove > 0 && step.Quality >= SkipQualityAtOrAbove && IsSpentOnlyOnQuality(action) && (_skipUnchecked || SkipStillFinishes(craft, step)))
+            if ((_skipAllQuality || SkipQualityAtOrAbove > 0 && step.Quality >= SkipQualityAtOrAbove) && IsSpentOnlyOnQuality(action) && (_skipUnchecked || SkipStillFinishes(craft, step)))
             {
                 continue;
             }
@@ -201,6 +202,18 @@ public class MacroSolver : Solver, ICraftValidator
         return res;
     }
     internal Skills PlannedAt(int index) => _macro.Steps[index].Action;
+
+    /// 剩下的純品質步驟一律跳過的分身(OpportunisticSolver 判「放棄品質做不做得完」用)。
+    internal MacroSolver CloneSkippingAllQuality()
+    {
+        var res = (MacroSolver)Clone();
+        res._skipAllQuality = true;
+        res._skipUnchecked = true;
+        return res;
+    }
+
+    /// 這個動作只花在品質上(跳過它不影響進展);同 SkipQualityAtOrAbove 的判準。
+    internal bool SpentOnlyOnQuality(Skills action) => IsSpentOnlyOnQuality(action);
 
     /// 把第 <paramref name="index"/> 步提前到現在放;輪到它時跳過。
     internal Skills Pull(int index)

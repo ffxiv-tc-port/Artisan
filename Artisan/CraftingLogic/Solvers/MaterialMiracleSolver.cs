@@ -121,7 +121,7 @@ public class MaterialMiracleSolver : Solver, ICraftValidator
         if (next == Skills.None || !Simulator.CanUseAction(craft, step, next))
             return false;
         var (_, kept) = Simulator.Execute(craft, step, next, 0, 1);
-        var (_, broken) = Simulator.Execute(craft, step with { PrevComboAction = Skills.MaterialMiracle }, next, 0, 1);
+        var (_, broken) = Simulator.Execute(craft, step with { PrevComboAction = Skills.MaterialMiracle, AdvancedTouchComboReady = false }, next, 0, 1);
         return kept.RemainingCP != broken.RemainingCP || kept.IQStacks != broken.IQStacks || kept.Quality != broken.Quality;
     }
 

@@ -274,7 +274,10 @@ public class ExpertSolver : Solver
         var allowPrecise = cfg.MidAllowPrecise && (!allowObserveOnLowDura || step.ManipulationLeft > 0 || step.Durability > 25) /*&& !venerationActive*/;
         if (progressDeficit > 0 && SolveMidHighPriorityProgress(craft, step, allowIntensive, cfg.MidFinishProgressBeforeQuality) is var highPrioProgress && highPrioProgress != Skills.None)
             return new(SafeCraftAction(craft, step, highPrioProgress), "mid pre quality: high-prio progress");
-        if (step.IQStacks < 10 && SolveMidHighPriorityIQ(cfg, craft, step, allowPrecise) is var highPrioIQ && highPrioIQ != Skills.None)
+        // 高效狀態的半價補耐久比冒進值得;其餘(含 Primed 掌握、不急的補耐久)延後一步。
+        var allowDaring = cfg.MidDaringAfterHasty && step.ExpedienceLeft > 0
+            && !(step.Condition == Condition.Pliant && SolveMidDurabilityPreQuality(cfg, craft, step, availableCP, allowObserveOnLowDura, progressDeficit > 0) != Skills.None);
+        if (step.IQStacks < 10 && SolveMidHighPriorityIQ(cfg, craft, step, allowPrecise, allowDaring) is var highPrioIQ && highPrioIQ != Skills.None)
             return new(highPrioIQ, "mid pre quality: high-prio iq");
         if (step.Condition == Condition.Good && CU(craft, step, Skills.TricksOfTrade))
             return new(Skills.TricksOfTrade, "mid pre quality: high-prio tricks"); // progress/iq below decided not to use good, so spend it on tricks
@@ -700,7 +703,7 @@ public class ExpertSolver : Solver
         return Skills.None;
     }
 
-    private static Skills SolveMidHighPriorityIQ(ExpertSolverSettings cfg, CraftState craft, StepState step, bool allowPrecise)
+    private static Skills SolveMidHighPriorityIQ(ExpertSolverSettings cfg, CraftState craft, StepState step, bool allowPrecise, bool allowDaring)
     {
         if (step.Condition is Condition.Good or Condition.Excellent && allowPrecise && step.Durability > Simulator.GetDurabilityCost(step, Skills.PreciseTouch) && CU(craft, step, Skills.PreciseTouch))
             return Skills.PreciseTouch;
@@ -714,6 +717,8 @@ public class ExpertSolver : Solver
             return Skills.Observe; // try and bait good
         if (step.TrainedPerfectionActive && CU(craft, step, Skills.PreparatoryTouch))
             return Skills.PreparatoryTouch;
+        if (allowDaring && CanDaringKeepFinisherDura(craft, step))
+            return Skills.DaringTouch;
         if (step.Condition == Condition.Centered && cfg.MidAllowCenteredHasty && step.Durability > Simulator.GetDurabilityCost(step, Skills.DaringTouch) && CU(craft, step, Skills.DaringTouch))
             return Skills.DaringTouch;
         if (step.Condition == Condition.Centered && cfg.MidAllowCenteredHasty && step.Durability > Simulator.GetDurabilityCost(step, Skills.HastyTouch) && CU(craft, step, Skills.HastyTouch))
@@ -721,9 +726,16 @@ public class ExpertSolver : Solver
         if (step.Condition == Condition.Sturdy && cfg.MidAllowSturdyPreсise && (step.HeartAndSoulActive || step.HeartAndSoulAvailable) && step.Durability > Simulator.GetDurabilityCost(step, Skills.PreciseTouch))
             return step.HeartAndSoulActive && CU(craft, step, Skills.PreciseTouch) ? Skills.PreciseTouch : Skills.HeartAndSoul;
         if (step.Condition == Condition.Sturdy && step.Durability > Simulator.GetDurabilityCost(step, Skills.HastyTouch))
-            return cfg.MidAllowSturdyHasty ? Skills.HastyTouch : Simulator.NextTouchCombo(step, craft);
+            return !cfg.MidAllowSturdyHasty ? Simulator.NextTouchCombo(step, craft) : CU(craft, step, Skills.DaringTouch) ? Skills.DaringTouch : Skills.HastyTouch;
         return Skills.None;
     }
+
+    // 工匠的良機在身上時遊戲會把倉促換成冒進;明確回傳冒進,解算器自己的 rollout 才會照冒進模擬。
+    // 冒進之後耐久(含下一步掌握回復)仍要 >10,才保證之後還能 Byregot＋收尾。
+    private static bool CanDaringKeepFinisherDura(CraftState craft, StepState step)
+        => step.ExpedienceLeft > 0
+        && step.Durability - Simulator.GetDurabilityCost(step, Skills.DaringTouch) + (step.ManipulationLeft > 0 ? 5 : 0) > 10
+        && CU(craft, step, Skills.DaringTouch);
 
     // see if we can do gs+inno+byregot right now to get to the quality goal
     private static Recommendation SolveFinishQuality(CraftState craft, StepState step, int availableCP, int qualityTarget)

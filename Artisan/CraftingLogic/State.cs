@@ -113,6 +113,8 @@ public record class StepState
             sb.Append($", MuMe={MuscleMemoryLeft}");
         if (FinalAppraisalLeft > 0)
             sb.Append($", FA={FinalAppraisalLeft}");
+        if (ExpedienceLeft > 0)
+            sb.Append($", Expedience={ExpedienceLeft}");
         sb.Append($", CO={CarefulObservationLeft}, HS={(HeartAndSoulActive ? "active" : HeartAndSoulAvailable ? "avail" : "none")}");
         sb.Append($", QuickInno:{QuickInnoAvailable}/{QuickInnoLeft}/{InnovationLeft}");
         sb.Append($", MaterialMiracleActive:{MaterialMiracleActive}({MaterialMiracleStepsLeft}) / {MaterialMiracleCharges}");

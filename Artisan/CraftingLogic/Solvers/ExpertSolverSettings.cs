@@ -56,6 +56,11 @@ public class ExpertSolverSettings
     //    「先把進度做完再回頭衝品質」兩條路各跑幾次到底,選期望收穫比較高的那條。
     //    為什麼需要寫在 ExpertSolver.SolveAdaptive 的註解裡。
     public bool AdaptiveProgressPriority = false;
+    // 必要品質專家配方的規則（細節見 ExpertSolver.IsRequiredQualityExpert 一帶）；關掉＝回到原本的行為。
+    public bool RequiredQualityHoldTrainedPerfection = true; // keep trained perfection for prep touch under great strides + innovation at 10 iq
+    public bool RequiredQualityNoEarlyPrimedManip = true; // no full-price primed manipulation before 10 iq (recipes with 60+ durability)
+    public bool RequiredQualityProgressFirst = true; // low-progress recipes: finish progress before quality
+    public bool PliantImmaculateMend = true; // all expert recipes: the pliant repair branch that checks immaculate mend actually uses it
 
     public ExpertSolverSettings()
     {
@@ -128,6 +133,11 @@ public class ExpertSolverSettings
             changed |= ImGui.Checkbox("?? on ?? ?? if we would otherwise use ?? on ?? ??".Loc(Skills.Observe.NameOfAction(), Condition.GoodOmen.ToLocalizedString(), ConditionString, Skills.TricksOfTrade.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString), ref MidObserveGoodOmenForTricks);
         }
         ImGui.Unindent();
+        changed |= ImGui.Checkbox("Recipes with required quality: save ?? for ?? under ?? + ?? at 10 ?? stacks".Loc(Skills.TrainedPerfection.NameOfAction(), Skills.PreparatoryTouch.NameOfAction(), Buffs.GreatStrides.NameOfBuff(), Buffs.Innovation.NameOfBuff(), Buffs.InnerQuiet.NameOfBuff()), ref RequiredQualityHoldTrainedPerfection);
+        changed |= ImGui.Checkbox("Recipes with required quality: no full-price ?? on ?? before ?? has 10 stacks (60+ durability)".Loc(Skills.Manipulation.NameOfAction(), Condition.Primed.ToLocalizedString(), Buffs.InnerQuiet.NameOfBuff()), ref RequiredQualityNoEarlyPrimedManip);
+        changed |= ImGui.Checkbox("Recipes with required quality and little ??: finish ?? before starting ?? phase".Loc(ProgressString, ProgressString, QualityString), ref RequiredQualityProgressFirst);
+        ImGuiComponents.HelpMarker("Required quality means the craft fails below it, so these rules aim at the chance of reaching it rather than average quality. They only apply to expert recipes with required quality.".Loc());
+        changed |= ImGui.Checkbox("On ??, repair with ?? when its conditions are met".Loc(Condition.Pliant.ToLocalizedString(), Skills.ImmaculateMend.NameOfAction()), ref PliantImmaculateMend);
         changed |= ImGui.Checkbox("Max out Ishgard Restoration recipes instead of just hitting max breakpoint".Loc(), ref MaxIshgardRecipes);
         ImGuiComponents.HelpMarker("This will try to maximise quality to earn more Skyward points.".Loc());
         changed |= ImGui.Checkbox("Max out Cosmic Exploration recipes instead of hitting third breakpoint".Loc(), ref MaxCosmicRecipes);

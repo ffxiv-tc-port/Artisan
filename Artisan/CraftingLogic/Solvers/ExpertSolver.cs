@@ -3,6 +3,7 @@ using Artisan.RawInformation.Character;
 using ECommons.LanguageHelpers;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Artisan.CraftingLogic.Solvers;
 
@@ -68,7 +69,7 @@ public class ExpertSolver : Solver
     //    ⚠️ 要加實例欄位之前先想清楚會不會破壞這件事。
     public override Recommendation Solve(CraftState craft, StepState step)
     {
-        var cfg = P.Config.ExpertSolverConfig;
+        var cfg = EffectiveConfig(P.Config.ExpertSolverConfig, craft);
         // craft.CraftExpert 這個閘門不是裝飾:StandardSolver 每一步都會呼叫一次 ExpertSolver.Solve
         // 當作奇蹟之材的 fallback,沒有這道閘門的話所有一般製作都要付前瞻模擬的成本。
         return cfg.AdaptiveProgressPriority && craft.CraftExpert
@@ -193,6 +194,62 @@ public class ExpertSolver : Solver
     private static bool MuMeFinishesProgress(CraftState craft, StepState step)
         => Simulator.CalculateProgress(craft, step, Skills.MuscleMemory) + 2 * Simulator.CalculateProgress(craft, step, Skills.RapidSynthesis) >= craft.CraftProgress;
 
+    // 必要品質（RequiredQuality＞0）的專家配方：品質差 1 點也是製作失敗，目標是「做滿的機率」而不是平均品質。
+    // 三條必要品質規則只在這類配方生效：在其他專家配方上量過會變差或沒差。
+    public static bool IsRequiredQualityExpert(CraftState craft) => craft.CraftExpert && craft.CraftRequiredQuality > 0;
+
+    // 閒靜起手那種進展需求很低的形狀（堅信＋兩次急速製作的量就做得完）。
+    private static bool IsLowProgress(CraftState craft) => Simulator.BaseProgress(craft) * 13 >= craft.CraftProgress;
+
+    private static bool HoldTrainedPerfection(ExpertSolverSettings cfg, CraftState craft) => cfg.RequiredQualityHoldTrainedPerfection && IsRequiredQualityExpert(craft);
+
+    /// 必要品質＋低進展的配方先做完進展：只對這類配方強制打開 MidFinishProgressBeforeQuality（回傳複本，不動使用者那份）。
+    public static ExpertSolverSettings EffectiveConfig(ExpertSolverSettings cfg, CraftState craft)
+    {
+        if (!cfg.RequiredQualityProgressFirst || cfg.MidFinishProgressBeforeQuality || !IsRequiredQualityExpert(craft) || !IsLowProgress(craft))
+            return cfg;
+        var res = cfg.ShallowCopy();
+        res.MidFinishProgressBeforeQuality = true;
+        return res;
+    }
+
+    /// <summary>
+    /// 給 CraftingProcessor 記 Information（只在實機那一場呼叫；提示取樣器不走這裡，不會洗 log）：
+    /// 第一步列出這場套用的規則；之後某條規則讓這一步的建議與「只關掉那條」不同時，說明是哪條、改成什麼。
+    /// 比的是不含自適應前瞻的 SolveNextStep，僅供驗收對照。
+    /// </summary>
+    public static string ExplainRules(ExpertSolverSettings cfg, CraftState craft, StepState step)
+    {
+        if (!craft.CraftExpert)
+            return "";
+        var rules = new List<(string Name, Action<ExpertSolverSettings> TurnOff)>();
+        if (IsRequiredQualityExpert(craft))
+        {
+            if (cfg.RequiredQualityHoldTrainedPerfection)
+                rules.Add(("工匠的絕技留給闊步＋改革下的坯料加工", c => c.RequiredQualityHoldTrainedPerfection = false));
+            if (cfg.RequiredQualityNoEarlyPrimedManip && craft.CraftDurability >= NoEarlyPrimedManipMinDurability)
+                rules.Add(("內靜疊滿前不在長持續放原價掌握", c => c.RequiredQualityNoEarlyPrimedManip = false));
+            if (cfg.RequiredQualityProgressFirst && !cfg.MidFinishProgressBeforeQuality && IsLowProgress(craft))
+                rules.Add(("先做完進展", c => c.RequiredQualityProgressFirst = false));
+        }
+        if (cfg.PliantImmaculateMend)
+            rules.Add(("高效狀態補耐久用巧奪天工", c => c.PliantImmaculateMend = false));
+        if (rules.Count == 0)
+            return "";
+        if (step.Index == 1)
+            return !IsRequiredQualityExpert(craft) ? "" : $"專家配方解算器：配方 {craft.RecipeId}（必要品質 {craft.CraftRequiredQuality}）套用規則：{string.Join("、", rules.Select(r => r.Name))}";
+        var on = SolveNextStep(EffectiveConfig(cfg, craft), craft, step).Action;
+        var changed = new List<string>();
+        foreach (var (name, turnOff) in rules)
+        {
+            var offCfg = cfg.ShallowCopy();
+            turnOff(offCfg);
+            if (SolveNextStep(EffectiveConfig(offCfg, craft), craft, step).Action is var a && a != on)
+                changed.Add($"{name}（不套用會是 {a}）");
+        }
+        return changed.Count == 0 ? "" : $"專家配方解算器：配方 {craft.RecipeId} 第 {step.Index} 步（{step.Condition}）建議 {on}，因為：{string.Join("；", changed)}";
+    }
+
     private static bool IsSynth(Skills action) => action is Skills.BasicSynthesis or Skills.CarefulSynthesis or Skills.RapidSynthesis or Skills.IntensiveSynthesis
         or Skills.PrudentSynthesis or Skills.Groundwork or Skills.DelicateSynthesis or Skills.FinalAppraisal;
 
@@ -286,7 +343,7 @@ public class ExpertSolver : Solver
         // 先顧進度時，下面那條在任何狀態都回急速製作，高品質（好兆頭的下一步必定是它）原本就沒拿去疊內靜；
         // 改放必成的集中製作不會搶走 MidAllowIntensive* 想保留給內靜的高品質。
         var allowGoodIntensive = allowIntensive || cfg.MidFinishProgressBeforeQuality && cfg.GoodIntensiveWhenProgressFirst;
-        if (progressDeficit > 0 && SolveMidHighPriorityProgress(craft, step, allowGoodIntensive, cfg.MidFinishProgressBeforeQuality) is var highPrioProgress && highPrioProgress != Skills.None)
+        if (progressDeficit > 0 && SolveMidHighPriorityProgress(cfg, craft, step, allowGoodIntensive, cfg.MidFinishProgressBeforeQuality) is var highPrioProgress && highPrioProgress != Skills.None)
             return new(SafeCraftAction(craft, step, highPrioProgress), "mid pre quality: high-prio progress");
         // 高效狀態的半價補耐久比冒進值得;其餘(含 Primed 掌握、不急的補耐久)延後一步。
         var allowDaring = cfg.MidDaringAfterHasty && step.ExpedienceLeft > 0
@@ -349,7 +406,7 @@ public class ExpertSolver : Solver
     {
         // no buffs up, this is a good chance to get some dura back if needed, and then get some iq/progress/quality, maybe start dedicated progress/quality phase
         // first see whether we have some nice conditions to exploit for progress or iq
-        if (progressDeficit > 0 && SolveMidHighPriorityProgress(craft, step, true, cfg.MidFinishProgressBeforeQuality) is var highPrioProgress && highPrioProgress != Skills.None)
+        if (progressDeficit > 0 && SolveMidHighPriorityProgress(cfg, craft, step, true, cfg.MidFinishProgressBeforeQuality) is var highPrioProgress && highPrioProgress != Skills.None)
             return new(SafeCraftAction(craft, step, highPrioProgress), "mid start quality: high-prio progress");
         if (step.Condition == Condition.Good && CU(craft, step, Skills.TricksOfTrade))
             return new(Skills.TricksOfTrade, "mid start quality: high-prio tricks");
@@ -497,6 +554,15 @@ public class ExpertSolver : Solver
         // - finesse
         // - gs on pliant + some touch
         // - hasty on low cp to burn dura
+        // 工匠的絕技留到這裡：內靜 10 層、闊步＋改革都在 ⇒ 不耗耐久的坯料加工約 3500 品質，比拿去做進展值錢。
+        if (HoldTrainedPerfection(cfg, craft))
+        {
+            if (step.TrainedPerfectionActive && CU(craft, step, Skills.PreparatoryTouch))
+                return new(Skills.PreparatoryTouch, "mid quality: trained perfection prep");
+            if (step.TrainedPerfectionAvailable && step.GreatStridesLeft > 0 && step.InnovationLeft > 1 && freeCP >= Simulator.GetCPCost(step, Skills.PreparatoryTouch) && CU(craft, step, Skills.TrainedPerfection))
+                return new(Skills.TrainedPerfection, "mid quality: trained perfection");
+        }
+
         if (step.Condition == Condition.Good)
         {
             // good options are prep and precise (focused after observe is the same as precise, so don't bother)
@@ -608,7 +674,9 @@ public class ExpertSolver : Solver
         }
 
         // primed manipulation is a reasonable action too
-        if (cfg.MidPrimedManipPreQuality && step.Condition == Condition.Primed && step.ManipulationLeft == 0 && availableCP >= Simulator.GetCPCost(step, Skills.Manipulation) && CU(craft, step, Skills.Manipulation))
+        // 必要品質＋耐久夠的配方：疊內靜時 96 CP 的原價掌握放太早，CP 才是瓶頸（耐久低的配方量過反而變差）。
+        var noEarlyPrimedManip = cfg.RequiredQualityNoEarlyPrimedManip && IsRequiredQualityExpert(craft) && craft.CraftDurability >= NoEarlyPrimedManipMinDurability;
+        if (cfg.MidPrimedManipPreQuality && !noEarlyPrimedManip && step.Condition == Condition.Primed && step.ManipulationLeft == 0 && availableCP >= Simulator.GetCPCost(step, Skills.Manipulation) && CU(craft, step, Skills.Manipulation))
             return Skills.Manipulation;
 
         var criticalDurabilityThreshold = step.Condition != Condition.Sturdy ? 10 : 5;
@@ -636,6 +704,8 @@ public class ExpertSolver : Solver
         // we still have some durability left, do nothing...
         return Skills.None;
     }
+
+    private const int NoEarlyPrimedManipMinDurability = 60;
 
     private static Skills SolveMidDurabilityStartQuality(ExpertSolverSettings cfg, CraftState craft, StepState step, int availableCP)
     {
@@ -680,8 +750,9 @@ public class ExpertSolver : Solver
     private static Skills SolveMidDurabilityQualityPliant(ExpertSolverSettings cfg, CraftState craft, StepState step, int availableCP)
     {
         var effectiveDura = step.Durability + step.ManipulationLeft * 5; // since we are going to use a lot of non-dura actions (buffs/observes), this is what really matters
+        // 條件與 CP 判的都是巧奪天工；PliantImmaculateMend 關掉＝照上游原樣回精修。
         if (effectiveDura + 45 <= craft.CraftDurability && availableCP >= Simulator.GetCPCost(step, Skills.ImmaculateMend) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 3) && CU(craft, step, Skills.ImmaculateMend))
-            return Skills.MastersMend;
+            return cfg.PliantImmaculateMend ? Skills.ImmaculateMend : Skills.MastersMend;
         if (step.ManipulationLeft <= 1 && availableCP >= Simulator.GetCPCost(step, Skills.Manipulation) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 4) && CU(craft, step, Skills.Manipulation))
             return Skills.Manipulation;
         if (effectiveDura + 30 <= craft.CraftDurability && availableCP >= Simulator.GetCPCost(step, Skills.MastersMend) + EstimateCPToUtilizeDurabilityForQuality(effectiveDura, 3) && CU(craft, step, Skills.MastersMend))
@@ -697,7 +768,7 @@ public class ExpertSolver : Solver
         return effectiveDura <= 10 ? 0 : estCPNeededToUtilizeCurrentDura + extraHalfCombos * estHalfComboCost;
     }
 
-    private static Skills SolveMidHighPriorityProgress(CraftState craft, StepState step, bool allowIntensive, bool progBeforeQual)
+    private static Skills SolveMidHighPriorityProgress(ExpertSolverSettings cfg, CraftState craft, StepState step, bool allowIntensive, bool progBeforeQual)
     {
         // high-priority progress actions (exploit conditions)
         if (step.Condition == Condition.Good && allowIntensive && step.Durability > Simulator.GetDurabilityCost(step, Skills.IntensiveSynthesis) && CU(craft, step, Skills.IntensiveSynthesis))
@@ -705,7 +776,7 @@ public class ExpertSolver : Solver
 
         if (craft.ConditionFlags.HasFlag(ConditionFlags.Malleable) || step.MaterialMiracleActive)
         {
-            if (step.TrainedPerfectionAvailable && CU(craft, step, Skills.TrainedPerfection))
+            if (step.TrainedPerfectionAvailable && !HoldTrainedPerfection(cfg, craft) && CU(craft, step, Skills.TrainedPerfection))
                 return Skills.TrainedPerfection;
             if (step.TrainedPerfectionActive && step.Condition is not Condition.Malleable && step.ObserveCounter < 2 && CU(craft, step, Skills.Observe))
                 return Skills.Observe;
@@ -721,7 +792,7 @@ public class ExpertSolver : Solver
     {
         if (step.Condition is Condition.Good or Condition.Excellent && allowPrecise && step.Durability > Simulator.GetDurabilityCost(step, Skills.PreciseTouch) && CU(craft, step, Skills.PreciseTouch))
             return Skills.PreciseTouch;
-        if (step.TrainedPerfectionAvailable && CU(craft, step, Skills.TrainedPerfection))
+        if (step.TrainedPerfectionAvailable && !HoldTrainedPerfection(cfg, craft) && CU(craft, step, Skills.TrainedPerfection))
             return Skills.TrainedPerfection;
         if (step.TrainedPerfectionActive && step.InnovationLeft == 0 && CU(craft, step, Skills.Innovation))
             return Skills.Innovation;

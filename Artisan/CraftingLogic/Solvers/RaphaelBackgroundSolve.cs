@@ -323,12 +323,12 @@ namespace Artisan.CraftingLogic.Solvers
         }
 
         /// <summary>
-        /// 換解規則：新解要做得完，且（品質（夾上限）不低於舊解、步數更少或步數相同但時間更短）
-        /// 或（品質嚴格較高、步數與時間都不比舊解多）。舊解做不完就只要新解做得完。
+        /// 換解規則（品質優先）：新解要做得完，且品質（夾上限）嚴格較高，或品質相同而步數更少、或步數相同但時間更短。
+        /// 舊解做不完就只要新解做得完。宇宙高難+ 每 1% 品質都算分，多一步換更高品質值得。
         /// </summary>
         internal static bool PreferBackgroundSolution(PlanOutcome old, PlanOutcome neu)
             => neu.Done && (!old.Done
-                || neu.Quality >= old.Quality && (neu.Steps < old.Steps || neu.Steps == old.Steps && neu.Seconds < old.Seconds)
-                || neu.Quality > old.Quality && neu.Steps <= old.Steps && neu.Seconds <= old.Seconds);
+                || neu.Quality > old.Quality
+                || neu.Quality == old.Quality && (neu.Steps < old.Steps || neu.Steps == old.Steps && neu.Seconds < old.Seconds));
     }
 }

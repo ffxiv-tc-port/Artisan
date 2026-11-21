@@ -18,6 +18,7 @@ public class ExpertSolverSettings
     // 與上游同名設定一致預設 true;能力值打不滿的高難配方追滿品質反而可能掉到第三突破點以下。
     public bool MaxCosmicRecipes = true;
     public bool UseReflectOpener;
+    public bool ReflectOpenerLowProgress = true; // if true, open with reflect when mume plus one buffed rapid would already finish progress
     public bool MuMeIntensiveGood = true; // if true, we allow spending mume on intensive (400p) rather than rapid (500p) if good condition procs
     public bool MuMeIntensiveMalleable = false; // if true and we have malleable during mume, use intensive rather than hoping for rapid
     public bool MuMeIntensiveLastResort = true; // if true and we're on last step of mume, use intensive (forcing via H&S if needed) rather than hoping for rapid (unless we have centered)
@@ -82,6 +83,7 @@ public class ExpertSolverSettings
         if (ImGui.CollapsingHeader("Opener Settings".Loc() + " —— 進階微調,多數人不需要動"))
         {
             changed |= ImGui.Checkbox("Use ?? instead of ?? for the opener".Loc(Skills.Reflect.NameOfAction(), Skills.MuscleMemory.NameOfAction()), ref UseReflectOpener);
+            changed |= ImGui.Checkbox("Also use ?? when ?? plus one buffed ?? would already finish ??".Loc(Skills.Reflect.NameOfAction(), Skills.MuscleMemory.NameOfAction(), Skills.RapidSynthesis.NameOfAction(), ProgressString), ref ReflectOpenerLowProgress);
             changed |= ImGui.Checkbox("Allow spending ?? on ?? (400%) rather than ?? (500%) if ?? ??".Loc(Skills.MuscleMemory.NameOfAction(), Skills.IntensiveSynthesis.NameOfAction(), Skills.RapidSynthesis.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString), ref MuMeIntensiveGood);
             changed |= ImGui.Checkbox("If ?? ?? during ??, use ?? + ??".Loc(Condition.Malleable.ToLocalizedString(), ConditionString, Skills.MuscleMemory.NameOfAction(), Skills.HeartAndSoul.NameOfAction(), Skills.IntensiveSynthesis.NameOfAction()), ref MuMeIntensiveMalleable);
             changed |= ImGui.Checkbox("If at last step of ?? and not ?? ??, use ?? (forcing via ?? if necessary)".Loc(Skills.MuscleMemory.NameOfAction(), Condition.Centered.ToLocalizedString(), ConditionString, Skills.IntensiveSynthesis.NameOfAction(), Skills.HeartAndSoul.NameOfAction()), ref MuMeIntensiveLastResort);

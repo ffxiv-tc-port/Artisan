@@ -153,7 +153,8 @@ public class ExpertSolver : Solver
             // - mume is worth ~800p of progress (assuming we spend the buff on rapid), which is approximately equal to 3.2 rapids, which is 32 dura or ~76.8cp
             // - reflect is worth ~2 prudents of iq stacks minus 100p of quality, which is approximately equal to 50cp + 10 dura or ~74cp minus value of quality
             // so on paper mume seems to be better
-            return new(cfg.UseReflectOpener || Simulator.CalculateProgress(craft, step, Skills.MuscleMemory) >= craft.CraftProgress || craft.CraftDurability <= 20 ? Skills.Reflect : Skills.MuscleMemory, "opener");
+            return new(cfg.UseReflectOpener || Simulator.CalculateProgress(craft, step, Skills.MuscleMemory) >= craft.CraftProgress || craft.CraftDurability <= 20
+                || cfg.ReflectOpenerLowProgress && MuMeFinishesProgress(craft, step) ? Skills.Reflect : Skills.MuscleMemory, "opener");
         }
 
         if (step.MuscleMemoryLeft > 0) // mume still active - means we have very little progress and want more progress asap
@@ -172,7 +173,10 @@ public class ExpertSolver : Solver
         {
             // we still need quality and have cp available - we're mid craft
             var midAction = SolveMid(cfg, craft, step, progressDeficit, cpAvailableForQuality);
-            if (step.RemainingCP >= Simulator.GetCPCost(step, midAction.Action))
+            // 剩下的進展一次模範製作就做完時，非製作動作不准吃掉留給它的 CP；
+            // 否則觀察會把那 7 CP 耗光，最後只能賭急速製作（閒靜起手的失敗局全是這樣）。
+            var midBudget = progressDeficit <= 0 && !IsSynth(midAction.Action) ? cpAvailableForQuality : step.RemainingCP;
+            if (midBudget >= Simulator.GetCPCost(step, midAction.Action))
                 return midAction;
             // try restoring some cp...
             var emergencyAction = EmergencyRestoreCP(cfg, craft, step);
@@ -184,6 +188,13 @@ public class ExpertSolver : Solver
         // try to finish the craft
         return new(SolveFinishProgress(craft, step, step.Quality >= qualityTarget), isMid ? "finish emergency" : "finish");
     }
+
+    // 堅信＋一次加成後的急速製作就做完進展 ⇒ 堅信的加成大半用不到，閒靜的內靜層數更值錢。
+    private static bool MuMeFinishesProgress(CraftState craft, StepState step)
+        => Simulator.CalculateProgress(craft, step, Skills.MuscleMemory) + 2 * Simulator.CalculateProgress(craft, step, Skills.RapidSynthesis) >= craft.CraftProgress;
+
+    private static bool IsSynth(Skills action) => action is Skills.BasicSynthesis or Skills.CarefulSynthesis or Skills.RapidSynthesis or Skills.IntensiveSynthesis
+        or Skills.PrudentSynthesis or Skills.Groundwork or Skills.DelicateSynthesis or Skills.FinalAppraisal;
 
     private static Skills SolveOpenerMuMe(ExpertSolverSettings cfg, CraftState craft, StepState step)
     {

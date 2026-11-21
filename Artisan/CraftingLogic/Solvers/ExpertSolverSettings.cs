@@ -122,7 +122,7 @@ public class ExpertSolverSettings
         changed |= ImGui.Checkbox("Max out Ishgard Restoration recipes instead of just hitting max breakpoint".Loc(), ref MaxIshgardRecipes);
         ImGuiComponents.HelpMarker("This will try to maximise quality to earn more Skyward points.".Loc());
         changed |= ImGui.Checkbox("Max out Cosmic Exploration recipes instead of hitting third breakpoint".Loc(), ref MaxCosmicRecipes);
-        ImGuiComponents.HelpMarker("Cosmic Exploration mission scores keep rising with quality past the third breakpoint; gold often needs full quality.".Loc());
+        ImGuiComponents.HelpMarker("Cosmic Exploration mission scores keep rising with quality past the third breakpoint; gold often needs full quality. The Standard Recipe Solver follows this setting on Cosmic Exploration collectables too.".Loc());
         changed |= ImGui.Checkbox("Finisher: use ?? to try baiting ?? ?? for ??".Loc(Skills.CarefulObservation.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString, Skills.ByregotsBlessing.NameOfAction()), ref FinisherBaitGoodByregot);
         changed |= ImGui.Checkbox("Emergency: use ?? to try baiting ?? ?? for ?? if really low on CP".Loc(Skills.CarefulObservation.NameOfAction(), Condition.Good.ToLocalizedString(), ConditionString, Skills.TricksOfTrade.NameOfAction()), ref EmergencyCPBaitGood);
         changed |= ImGui.Checkbox("Use Material Miracle in Cosmic Exploration".Loc(), ref UseMaterialMiracle);

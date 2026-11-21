@@ -99,9 +99,22 @@ namespace Artisan.CraftingLogic.Solvers
                 rec.Action = Skills.TrainedPerfection;
 
             if (WillActFail(craft, step, rec.Action))
-                rec.Action = Skills.BasicSynthesis;
+                rec.Action = LastChanceSynthesis(craft, step);
 
             return rec;
+        }
+
+        private static readonly Skills[] LastChanceOrder = [Skills.CarefulSynthesis, Skills.PrudentSynthesis, Skills.Groundwork, Skills.IntensiveSynthesis];
+
+        // 原本一律退回基本製作；基本製作收不了尾、別的進展技這一步就收得了時改用它（做得完優先於多一點品質）。
+        private static Skills LastChanceSynthesis(CraftState craft, StepState step)
+        {
+            if (CanFinishCraft(craft, step, Skills.BasicSynthesis))
+                return Skills.BasicSynthesis;
+            foreach (var s in LastChanceOrder)
+                if (Simulator.CanUseAction(craft, step, s) && CanFinishCraft(craft, step, s))
+                    return s;
+            return Skills.BasicSynthesis;
         }
 
         private bool DelegateNow(CraftState craft, StepState step)
@@ -247,7 +260,7 @@ namespace Artisan.CraftingLogic.Solvers
 
             bool inCombo = (step.PrevComboAction == Skills.BasicTouch && Simulator.CanUseAction(craft, step, Skills.StandardTouch)) || (step.PrevComboAction == Skills.StandardTouch && Simulator.CanUseAction(craft, step, Skills.AdvancedTouch));
             var act = BestSynthesis(craft, step);
-            var goingForQuality = GoingForQuality(craft, step, out var maxQuality);
+            var goingForQuality = GoingForQuality(craft, step, act, out var maxQuality);
 
             if (step.Index == 1 && CanFinishCraft(craft, step, Skills.DelicateSynthesis) && CalculateNewQuality(craft, step, Skills.DelicateSynthesis) >= maxQuality && Simulator.CanUseAction(craft, step, Skills.DelicateSynthesis)) return new(Skills.DelicateSynthesis);
             if (!goingForQuality && CanFinishCraft(craft, step, act)) return new(act);
@@ -386,7 +399,7 @@ namespace Artisan.CraftingLogic.Solvers
             return result;
         }
 
-        private static bool GoingForQuality(CraftState craft, StepState step, out int maxQuality)
+        private static bool GoingForQuality(CraftState craft, StepState step, Skills act, out int maxQuality)
         {
             bool wantMoreQuality;
             if (craft.CraftQualityMin1 == 0)
@@ -404,6 +417,11 @@ namespace Artisan.CraftingLogic.Solvers
                     2 => craft.CraftQualityMin2,
                     _ => craft.CraftQualityMin3,
                 };
+                // 宇宙收藏品與 ExpertSolver 同一個開關：評價過了門檻仍隨品質上升。過了門檻之後的加分不冒做不完的險：
+                // 這一步的進展技收得了尾、基本製作卻收不了（靠狀態或耐久才夠），就照門檻收尾，不再拿這一步去加工。
+                if (craft.IsCosmic && craft.CraftCollectible && P.Config.ExpertSolverConfig.MaxCosmicRecipes
+                    && (step.Quality < maxQuality || step.Progress + Simulator.CalculateProgress(craft, step, Skills.BasicSynthesis) >= craft.CraftProgress || !CanFinishCraft(craft, step, act)))
+                    maxQuality = craft.CraftQualityMax;
                 wantMoreQuality = step.Quality < maxQuality;
             }
 

@@ -279,9 +279,7 @@ internal sealed class TimedGatherConfirm
         var minute   = " " + "minutes".Loc();
         var duration = TimedGatherConfirmRules.FormatDuration(e.Seconds, hour, minute);
         row.TimeKnown = true;
-        row.TimeText = TimedGatherConfirmRules.IsRough(e.Status)
-            ? "About ?? rounds / ?? (rough)".Loc(e.Rounds, duration)
-            : "About ?? rounds / ??".Loc(e.Rounds, duration);
+        row.TimeText  = EstimateText(e)!;
 
         var source = e.Status switch
         {
@@ -307,42 +305,53 @@ internal sealed class TimedGatherConfirm
         if (row.PriceDone && ReferenceEquals(row.PriceFrom, data) && row.PriceFailed == failed)
             return;
 
-        row.PriceDone    = true;
-        row.PriceFrom    = data;
-        row.PriceFailed  = failed;
-        row.PriceKnown   = false;
-        row.PriceText    = "?";
+        row.PriceDone   = true;
+        row.PriceFrom   = data;
+        row.PriceFailed = failed;
+        var view = DescribePrice(row.Item, row.Remaining);
+        row.PriceKnown   = view.Known;
+        row.PriceText    = view.Text;
+        row.PriceTooltip = view.Tooltip;
+    }
 
+    internal readonly record struct PriceView(string Text, bool Known, string Tooltip);
+
+    /// <summary>買 <paramref name="quantity"/> 個的市價文字；只讀已經查到的資料，不發查詢。不知道時 Text 是「?」。</summary>
+    internal static PriceView DescribePrice(Ingredient item, int quantity)
+    {
+        var data = item.MarketboardData;
         if (data == null)
         {
-            row.PriceTooltip = failed
+            return new PriceView("?", false, item.MarketboardFetchFailed
                 ? "Could not fetch the price from Universalis.".Loc()
                 : P.Config.UseUniversalis
                     ? "No price fetched yet. Use Fetch Prices in the ingredient table.".Loc()
-                    : "Universalis prices are turned off in Artisan's settings.".Loc();
-            return;
+                    : "Universalis prices are turned off in Artisan's settings.".Loc());
         }
 
         if (data.AllListings.Count == 0)
-        {
-            row.PriceTooltip = "Universalis has no listings for this item.".Loc();
-            return;
-        }
+            return new PriceView("?", false, "Universalis has no listings for this item.".Loc());
 
-        var cheapest = MarketboardPricing.GetCheapestWorldCost(data, row.Remaining);
-        row.PriceKnown = true;
+        var cheapest = MarketboardPricing.GetCheapestWorldCost(data, quantity);
         if (data.Source == MarketboardSource.Aggregated)
         {
-            row.PriceText    = "about ?? gil each".Loc(cheapest.Cost.ToString("N0", CultureInfo.CurrentCulture));
-            row.PriceTooltip = "Universalis timed out on the full listings, so this is the lowest unit price from its summary endpoint (??).".Loc(cheapest.World)
-              + "\n" + "Display only - nothing is bought.".Loc();
-            return;
+            return new PriceView("about ?? gil each".Loc(cheapest.Cost.ToString("N0", CultureInfo.CurrentCulture)), true,
+                "Universalis timed out on the full listings, so this is the lowest unit price from its summary endpoint (??).".Loc(cheapest.World)
+              + "\n" + "Display only - nothing is bought.".Loc());
         }
 
-        row.PriceText = cheapest.Qty < row.Remaining
+        var text = cheapest.Qty < quantity
             ? "?? gil (only ?? listed)".Loc(cheapest.Cost.ToString("N0", CultureInfo.CurrentCulture), cheapest.Qty)
             : "?? gil".Loc(cheapest.Cost.ToString("N0", CultureInfo.CurrentCulture));
-        row.PriceTooltip = "Cheapest single world: ??, ?? gil for ?? unit(s).".Loc(cheapest.World, cheapest.Cost.ToString("N0", CultureInfo.CurrentCulture), cheapest.Qty)
-          + "\n" + "Display only - nothing is bought.".Loc();
+        return new PriceView(text, true,
+            "Cheapest single world: ??, ?? gil for ?? unit(s).".Loc(cheapest.World, cheapest.Cost.ToString("N0", CultureInfo.CurrentCulture), cheapest.Qty)
+          + "\n" + "Display only - nothing is bought.".Loc());
     }
+
+    /// <summary>預估時間那段文字（確認面板與素材表右鍵提示共用）；<see langword="null"/>＝沒有估計。</summary>
+    internal static string? EstimateText(GatherBuddyIPC.TimedEstimate? estimate)
+        => estimate is { } e
+            ? TimedGatherConfirmRules.EstimateText(e.Status, e.Rounds, e.Seconds, "About ?? rounds / ??".Loc(),
+                "About ?? rounds / ?? (rough)".Loc(), " " + "hours".Loc(), " " + "minutes".Loc())
+            : null;
 }

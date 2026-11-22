@@ -1201,7 +1201,8 @@ namespace Artisan.UI.Tables
                 var help = "GatherBuddy counts what you already have and keeps gathering until you have this many, so Artisan gives it the Required amount rather than only what is missing (??).".Loc(missing);
                 if (target > 0)
                     help += "\n" + "Its current target is ??x.".Loc(target);
-                ImGuiEx.SetTooltip(help + "\n" + "With GatherBuddy's 'Check Retainer Inventories' off, it only counts your own inventory.".Loc());
+                ImGuiEx.SetTooltip(help + "\n" + "With GatherBuddy's 'Check Retainer Inventories' off, it only counts your own inventory.".Loc()
+                                   + TimedGatherHint(item, missing));
             }
 
             if (!clicked)
@@ -1227,6 +1228,34 @@ namespace Artisan.UI.Tables
             }
         }
 
+        private static readonly TimedHintCache<GatherBuddyIPC.TimedEstimate?> TimedHintEstimates = new();
+
+        /// <summary>
+        /// 限時採集點素材的右鍵提示多一行預估採集時間與市價（寫法同送出前的確認面板）；其他素材回空字串、提示不變。
+        /// 只在 hover 時呼叫；對方的估計依 (道具, 數量) 快取幾秒，不是每幀跨插件呼叫。只顯示，不影響按下後的動作。
+        /// </summary>
+        private static string TimedGatherHint(Ingredient item, int missing)
+        {
+            // 同確認面板：GatherBuddy 不估魚。
+            if (!item.Sources.Contains(2))
+                return string.Empty;
+
+            var itemId = item.Data.RowId;
+            var now    = Environment.TickCount64;
+            if (!TimedHintEstimates.TryGet(itemId, missing, now, out var estimate))
+            {
+                estimate = GatherBuddyIPC.GetTimedGatherEstimate(itemId, missing);
+                TimedHintEstimates.Put(itemId, missing, now, estimate);
+            }
+
+            if (!TimedGatherConfirmRules.IsTimedCandidate(estimate?.Status, item.TimedNode))
+                return string.Empty;
+
+            var price = TimedGatherConfirm.DescribePrice(item, missing);
+            return "\n" + TimedGatherConfirmRules.HintLine("Timed node: ??, market price ??".Loc(),
+                TimedGatherConfirm.EstimateText(estimate), price.Known ? price.Text : null);
+        }
+
         // 舊版對方（沒有設定端點）的累加路徑。對方是累加數量：這份清單本次送過的就不再自動送，
         // 要再送只能走明寫「再加入一次」的那一項（例如使用者已經從對方清單拿掉了）。
         private static void DrawAddRequiredToAutoGather(Ingredient item, int missing)
@@ -1249,7 +1278,8 @@ namespace Artisan.UI.Tables
                     : "GatherBuddy counts what you already have and keeps gathering until you have this many, so Artisan gives it the Required amount rather than only what is missing (??).".Loc(missing);
                 if (!again && sent > 0)
                     help += "\n" + "This list already sent ??x since Artisan was loaded, so only the other ??x is added.".Loc(sent, required - sent);
-                ImGuiEx.SetTooltip(help + "\n" + "With GatherBuddy's 'Check Retainer Inventories' off, it only counts your own inventory.".Loc());
+                ImGuiEx.SetTooltip(help + "\n" + "With GatherBuddy's 'Check Retainer Inventories' off, it only counts your own inventory.".Loc()
+                                   + TimedGatherHint(item, missing));
             }
 
             if (!clicked)

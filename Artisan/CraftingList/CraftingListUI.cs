@@ -188,6 +188,7 @@ namespace Artisan.CraftingLists
 
             ListInventorySlots.ResetReserveNotice();
             ListInventorySlots.LogAtStart(selectedList);
+            DismountBeforeCraft.Reset();
 
             CraftingListFunctions.ListEndTime = GetListTimer(selectedList);
             Crafting.CraftFinished += UpdateListTimer;

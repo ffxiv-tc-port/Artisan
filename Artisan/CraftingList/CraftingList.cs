@@ -439,6 +439,10 @@ namespace Artisan.CraftingLists
             if (ListInventorySlots.PauseIfReserveReached(selectedList, recipe, type == PreCrafting.CraftType.Quick))
                 return;
 
+            // 修理、精製、食物藥水、開工在坐騎上都會被遊戲拒絕 ⇒ 排在它們全部之前。
+            if (DismountBeforeCraft.Hold("製作清單"))
+                return;
+
             if (Svc.Objects.LocalPlayer.ClassJob.RowId != recipe.CraftType.Value.RowId + 8)
             {
                 PreCrafting.equipGearsetLoops = 0;

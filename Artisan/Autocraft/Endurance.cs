@@ -94,6 +94,7 @@ namespace Artisan.Autocraft
                 Enable = enable;
                 // 新的一輪：缺消耗品的提示重新開始算，不然使用者補了貨再開還是看不到下一次提示。
                 PreCrafting.ResetMissingConsumablesNotice();
+                DismountBeforeCraft.Reset();
             }
             else if (Enable)
             {
@@ -410,6 +411,10 @@ namespace Artisan.Autocraft
                     return;
                 }
 
+                // 修理、精製、食物藥水、開工在坐騎上都會被遊戲拒絕 ⇒ 排在它們全部之前。
+                if (DismountBeforeCraft.Hold("耐久模式"))
+                    return;
+
                 if ((Job)LuminaSheets.RecipeSheet[RecipeID].CraftType.RowId + 8 != CharacterInfo.JobID)
                 {
                     PreCrafting.equipGearsetLoops = 0;
@@ -556,6 +561,12 @@ namespace Artisan.Autocraft
                 if (DutyPause.PopPending)
                 {
                     Svc.Log.Information($"[DutyPause] 任務確認中遊戲拒絕了操作（{message}），不計入「十秒內連續五次錯誤」");
+                    return;
+                }
+
+                if (DismountBeforeCraft.StillTrying)
+                {
+                    Svc.Log.Information($"[Artisan] 騎乘中遊戲拒絕了操作（{message}），接下來會先下坐騎；不計入「十秒內連續五次錯誤」。");
                     return;
                 }
 

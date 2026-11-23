@@ -939,16 +939,10 @@ namespace Artisan.Universalis
         public bool FetchFailed;
     }
 
-    public readonly record struct CheapestWorldCost(string World, double Qty, double Cost);
-
-    internal readonly record struct CheapestMemo(List<Listing> Listings, int Count, double Quantity, CheapestWorldCost Result);
-
     public static class MarketboardPricing
     {
-        // Finds the single world where buying `quantity` units is cheapest, summing listings
-        // cheapest-first until the quantity is covered. Shared by the ingredient table's own
-        // price column and the finished-product stock tab so both price the same way.
-        // 成品庫存頁與材料表每幀每列都問同一份資料、同一個數量 ⇒ 記住最近 4 組結果（下面那段 LINQ 每次約數百 B）。
+        // 單一世界裡最便宜的買法（演算法與上界在 CheapestWorldSolver）。材料表、成品庫存頁、購物清單 IPC 共用，價格算法一致。
+        // 成品庫存頁與材料表每幀每列都問同一份資料、同一個數量 ⇒ 記住最近 4 組結果；沒命中時多半只查表（data.CheapestTable）。
         public static CheapestWorldCost GetCheapestWorldCost(MarketboardData data, double quantity)
         {
             var listings = data.AllListings;
@@ -962,42 +956,15 @@ namespace Artisan.Universalis
                 }
             }
 
-            var result = ComputeCheapestWorldCost(data, quantity);
+            var table = Volatile.Read(ref data.CheapestTable);
+            var result = CheapestWorldSolver.Solve(listings, quantity, ref table, out _);
+            Volatile.Write(ref data.CheapestTable, table);
             var next = new CheapestMemo[Math.Min((memos?.Length ?? 0) + 1, 4)];
             next[0] = new CheapestMemo(listings, listings.Count, quantity, result);
             if (memos != null)
                 Array.Copy(memos, 0, next, 1, next.Length - 1);
             Volatile.Write(ref data.CheapestMemos, next);
             return result;
-        }
-
-        private static CheapestWorldCost ComputeCheapestWorldCost(MarketboardData data, double quantity)
-        {
-            double currentWorldCost = 0;
-            string currentWorld = "";
-            double currentWorldQty = 0;
-
-            foreach (var world in data.AllListings.Select(x => x.World).Distinct())
-            {
-                double totalCost = 0;
-                double qty = 0;
-
-                foreach (var listing in data.AllListings.Where(x => x.World == world).OrderBy(x => x.TotalPrice))
-                {
-                    if (qty >= quantity) break;
-                    qty += listing.Quantity;
-                    totalCost += listing.TotalPrice;
-                }
-
-                if ((totalCost < currentWorldCost && qty >= quantity) || currentWorldCost == 0 || (qty > currentWorldQty && qty < quantity))
-                {
-                    currentWorldCost = totalCost;
-                    currentWorld = world;
-                    currentWorldQty = qty;
-                }
-            }
-
-            return new(currentWorld, currentWorldQty, currentWorldCost);
         }
 
         // NPC shop price is only meaningful for items an NPC actually sells for gil - PriceMid

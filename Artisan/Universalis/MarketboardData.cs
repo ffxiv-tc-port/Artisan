@@ -64,6 +64,9 @@ namespace Artisan.Universalis
         /// </summary>
         internal CheapestMemo[]? CheapestMemos;
 
+        /// <summary>同上，各世界的 DP 表（<see cref="CheapestWorldSolver"/>）；同一契約、同樣整份替換。</summary>
+        internal CheapestTable? CheapestTable;
+
         /// <summary>這份資料是完整查詢還是降級查詢來的。</summary>
         public MarketboardSource Source { get; set; } = MarketboardSource.Unknown;
 
@@ -116,6 +119,8 @@ namespace Artisan.Universalis
                 .ToList(),
         };
     }
+
+    internal readonly record struct CheapestMemo(List<Listing> Listings, int Count, double Quantity, CheapestWorldCost Result);
 
     public class Listing
     {

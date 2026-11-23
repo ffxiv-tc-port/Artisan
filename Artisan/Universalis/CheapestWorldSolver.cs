@@ -81,15 +81,9 @@ namespace Artisan.Universalis
         public static CheapestWorldCost Solve(IReadOnlyList<Listing> listings, double quantity, ref CheapestTable? table, out int approximatedWorlds)
         {
             approximatedWorlds = 0;
-            if (table == null || !ReferenceEquals(table.Source, listings) || table.SourceCount != listings.Count)
-                table = Group(listings);
+            table = Prepare(listings, quantity, table, out var need);
             if (table.Worlds.Length == 0)
                 return new(string.Empty, 0, 0);
-
-            var need = quantity > 0 ? Math.Ceiling(quantity) : 0;
-            var capMax = (int)Math.Min(MaxDpUnits, CellBudget / Math.Max(1, table.ValidCount) - 1);
-            if (need > table.Cap && need <= capMax && NeedsTable(table, quantity, need))
-                table = WithCap(table, (int)Math.Min(capMax, Math.Max(need, Math.Max(2L * table.Cap, 64))));
 
             var budget = CellBudget;
             var found = false;
@@ -112,6 +106,38 @@ namespace Artisan.Universalis
                 }
             }
             return best;
+        }
+
+        /// <summary>
+        /// 每個世界各自買 <paramref name="quantity"/> 件的結果（與 <see cref="Solve"/> 同一套單一世界算法），依世界名序數排序。
+        /// <see cref="Solve"/> 的答案就是從這一列裡照它的規則挑出來的那一個。
+        /// </summary>
+        public static CheapestWorldCost[] SolveEachWorld(IReadOnlyList<Listing> listings, double quantity, ref CheapestTable? table)
+        {
+            table = Prepare(listings, quantity, table, out var need);
+            var budget = CellBudget;
+            var approximated = 0;
+            var result = new CheapestWorldCost[table.Worlds.Length];
+            for (var i = 0; i < result.Length; i++)
+            {
+                var w = table.Worlds[i];
+                var (qty, cost) = BestInWorld(w, quantity, need, ref budget, ref approximated);
+                result[i] = new(w.Name, qty, cost);
+            }
+            return result;
+        }
+
+        private static CheapestTable Prepare(IReadOnlyList<Listing> listings, double quantity, CheapestTable? table, out double need)
+        {
+            if (table == null || !ReferenceEquals(table.Source, listings) || table.SourceCount != listings.Count)
+                table = Group(listings);
+            need = quantity > 0 ? Math.Ceiling(quantity) : 0;
+            if (table.Worlds.Length == 0)
+                return table;
+            var capMax = (int)Math.Min(MaxDpUnits, CellBudget / Math.Max(1, table.ValidCount) - 1);
+            if (need > table.Cap && need <= capMax && NeedsTable(table, quantity, need))
+                table = WithCap(table, (int)Math.Min(capMax, Math.Max(need, Math.Max(2L * table.Cap, 64))));
+            return table;
         }
 
         // 每個世界都已能直接回答（買不齊或已有表）就不擴表：需求超過各世界總件數時建表是白做。

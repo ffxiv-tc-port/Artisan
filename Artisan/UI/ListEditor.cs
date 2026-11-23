@@ -107,6 +107,8 @@ internal class ListEditor : Window, IDisposable
 
     private readonly ListPrepCard prepCard;
 
+    private readonly WorldShoppingView worldShopping = new();
+
     public ListEditor(int listId)
         : base($"List Editor###{listId}")
     {
@@ -555,6 +557,13 @@ internal class ListEditor : Window, IDisposable
                 }
 
                 DrawIngredients();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Shopping by World".Loc()))
+            {
+                EnsureTable(force: false);
+                worldShopping.Draw(Table, RegenerateTask?.IsCompleted == false);
                 ImGui.EndTabItem();
             }
 

@@ -9,6 +9,7 @@ using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.Gui.Toast;
 using Dalamud.Interface;
 using Dalamud.Interface.Colors;
+using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using ECommons.DalamudServices;
@@ -35,11 +36,6 @@ namespace Artisan.UI
             IsOpen = true;
             ShowCloseButton = false;
             RespectCloseHotkey = false;
-            this.SizeConstraints = new()
-            {
-                MinimumSize = new System.Numerics.Vector2(150f, 0f),
-                MaximumSize = new System.Numerics.Vector2(310f, 500f)
-            };
 
             CraftingProcessor.SolverStarted += OnSolverStarted;
             CraftingProcessor.SolverFailed += OnSolverFailed;
@@ -62,6 +58,13 @@ namespace Artisan.UI
 
         public override void PreDraw()
         {
+            // Window 套用約束時只再乘 GlobalScale；先除掉它，寬度才會跟著字級走。
+            var gs = ImGuiHelpers.GlobalScale;
+            SizeConstraints = new()
+            {
+                MinimumSize = new System.Numerics.Vector2(150f.Scale() / gs, 0f),
+                MaximumSize = new System.Numerics.Vector2(310f.Scale() / gs, 500f.Scale() / gs)
+            };
             if (!P.Config.DisableTheme)
             {
                 P.Style.Push();
@@ -127,8 +130,10 @@ namespace Artisan.UI
                 }
 
                 var delay = P.Config.AutoDelay;
-                ImGui.PushItemWidth(200);
-                if (ImGui.SliderInt("Set delay (ms)".Loc(), ref delay, 0, 1000))
+                // 標籤放上一行：中文標籤接在滑桿右邊會超過視窗最大寬度而被截。
+                ImGui.TextUnformatted("Set delay (ms)".Loc());
+                ImGui.SetNextItemWidth(200f.Scale());
+                if (ImGui.SliderInt("##AutoDelay", ref delay, 0, 1000))
                 {
                     if (delay < 0) delay = 0;
                     if (delay > 1000) delay = 1000;

@@ -94,16 +94,43 @@ public class OpportunisticSolver : Solver, ICraftValidator
             bestPull = pull;
         }
 
+        var bestDrop = -1;
+        if (P.Config.RaphaelSolverConfig.OpportunisticTradeTouch && step.Condition is Condition.Good or Condition.Excellent && _plan is MacroSolver plan
+            && bestQuality < craft.CraftQualityMax)
+        {
+            foreach (var (candidate, pull, drop) in TradeCandidates(craft, step, planned.Action, plan, planClone as MacroSolver))
+            {
+                var solver = (MacroSolver)plan.Clone();
+                if (pull >= 0)
+                    solver.Pull(pull);
+                solver.Pull(drop);
+                if (Rollout(solver, craft, step, candidate) is not { } run || run.Final.Progress < craft.CraftProgress)
+                    continue;
+                var outcomeQuality = EffectiveQuality(craft, run.Final);
+                if (outcomeQuality <= bestQuality)
+                    continue;
+                bestQuality = outcomeQuality;
+                bestActions = run.Actions;
+                bestAction = candidate;
+                bestConsumesPlanStep = false;
+                bestPull = pull;
+                bestDrop = drop;
+            }
+        }
+
+        var droppedAction = bestDrop >= 0 ? ((MacroSolver)_plan).Pull(bestDrop) : Skills.None;
         if (bestPull >= 0)
             ((MacroSolver)_plan).Pull(bestPull);
         else if (bestConsumesPlanStep)
             _plan.Solve(craft, step); // commit: the plan step was used (either as-is or substituted)
 
-        if (bestAction == planned.Action && bestPull < 0)
+        if (bestAction == planned.Action && bestPull < 0 && bestDrop < 0)
             return planned;
 
         var baseQuality = EffectiveQuality(craft, baseRun.Final);
         var how = bestPull >= 0 ? $"提前計畫第 {bestPull + 1} 步、{planned.Action} 順延" : bestConsumesPlanStep ? "取代該步" : "額外插入一步";
+        if (bestDrop >= 0)
+            how += $"，拿掉計畫第 {bestDrop + 1} 步的 {droppedAction} 換出 CP／耐久";
         Svc.Log.Information($"[Opportunistic] {step.Condition} 狀態偏離原計畫：{planned.Action} -> {bestAction} " +
             $"({how})，模擬最終品質 {baseQuality} -> {bestQuality}、剩餘步數 {baseRun.Actions} -> {bestActions}");
         return new(bestAction, $"{planned.Comment} (偏離：{step.Condition} 預估品質 +{bestQuality - baseQuality})");
@@ -154,6 +181,29 @@ public class OpportunisticSolver : Solver, ICraftValidator
                 yield return (Skills.Observe, false, -1);
         }
     }
+
+    /// <summary>
+    /// 高品質／最高品質想放加工但計畫的 CP、耐久剛好用完（照放就收不了尾）時：放這一下，同時拿掉之後一個純品質步驟。
+    /// (動作, 提前的計畫索引或 -1, 拿掉的計畫索引)。只在最終品質嚴格較高時採用，可不可行交給 rollout。
+    /// </summary>
+    private static IEnumerable<(Skills, int, int)> TradeCandidates(CraftState craft, StepState step, Skills planned, MacroSolver plan, MacroSolver? afterThisStep)
+    {
+        var from = afterThisStep?.NextIndex ?? plan.NextIndex;
+        var touch = !GainsQuality(craft, step, planned) ? plan.FindPlanned(from, a => GainsQuality(craft, step, a)) : -1;
+        var drops = 0;
+        for (var j = plan.FindPlanned(from, plan.SpentOnlyOnQuality); j >= 0 && drops < MaxTradeDrops; j = plan.FindPlanned(j + 1, plan.SpentOnlyOnQuality))
+        {
+            if (j == touch)
+                continue;
+            ++drops;
+            yield return (Skills.PreciseTouch, -1, j);
+            if (touch >= 0 && !(IsRepair(planned) && step.Durability <= Simulator.GetDurabilityCost(step, plan.PlannedAt(touch))))
+                yield return (plan.PlannedAt(touch), touch, j);
+        }
+    }
+
+    // 每個高品質／最高品質最多 2×12 次 rollout（實機每場只有幾次這種狀態；配方視窗的提示取樣也走這裡）。
+    private const int MaxTradeDrops = 12;
 
     // 平手時步數少常常是靠「品質提前滿、之後的品質步驟被跳過」省下的 CP;實機狀態不如預期、品質沒提前滿時
     // 那些步驟照放,CP 就不夠收尾。⇒ 平手勝出前,先確認不跳過品質步驟也做得完。

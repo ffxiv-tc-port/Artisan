@@ -1191,6 +1191,7 @@ namespace Artisan.CraftingLogic.Solvers
         public bool SkipQualityWhenMaxed = true;
         public bool OpportunisticReorder = true;
         public bool FullQualityGamble = true;
+        public bool OpportunisticTradeTouch = true;
 
         public bool Draw()
         {
@@ -1258,6 +1259,8 @@ namespace Artisan.CraftingLogic.Solvers
             var poor = CraftData.Condition.Poor.ToLocalizedString();
             changed |= ImGui.Checkbox("Reorder plan steps around ?? / ?? / ?? conditions".Loc(good, excellent, poor), ref OpportunisticReorder);
             ImGuiComponents.HelpMarker("On ?? or ??, the next planned quality action is used first and the planned buff or repair moves one step later (?? is always followed by ??). On ??, the next planned non-quality action is used first and the touch moves to the next step. Only done when simulating the rest of the plan still finishes the craft with at least the same quality; on a tie the shorter craft wins, but only if it would still finish without skipping quality actions.".Loc(good, excellent, excellent, poor, poor));
+            changed |= ImGui.Checkbox("On ?? / ??, trade a later quality action for a touch now when the plan has no CP or durability to spare".Loc(good, excellent), ref OpportunisticTradeTouch);
+            ImGuiComponents.HelpMarker("Raphael plans usually end with no CP or durability left, so an extra touch on ?? or ?? can't be fitted in and the planned synthesis is used instead. With this on, a touch now (?? or the next planned touch) is tried together with dropping one later quality action from the plan, and it is used only when simulating the rest of the plan in normal conditions still finishes the craft with strictly higher quality.".Loc(good, excellent, Skills.PreciseTouch.NameOfAction()));
             ImGui.Unindent();
 
             changed |= ImGui.Checkbox("If the rest of the plan can no longer finish progress, skip quality actions to finish the craft".Loc(), ref ProgressRescue);

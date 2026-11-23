@@ -216,18 +216,30 @@ public static class CraftingProcessor
         SolverStarted?.Invoke(recipe, ActiveSolver, craft, initialStep);
 
         _nextRec = _activeSolver.Solve(craft, initialStep);
+        LogGambleNote();
+        var shown = Shown(_activeSolver);
         // 奇蹟之材的閘門判定在上面那一行就跑完了。**在這裡**記 log 而不是在解算器內部,是因為
         // 同一個解算器也被配方視窗的提示取樣器拿去跑上百次模擬(見 SolverHintSampler),
         // 在裡面記會把 log 洗掉;而這裡保證是實機的那一場製作。
         // Information 級:要使用者回報的診斷。
-        if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.ConsumeGateExplanation() is { Length: > 0 } mmWhy)
+        if (shown is Solvers.MaterialMiracleSolver mmSolver && mmSolver.ConsumeGateExplanation() is { Length: > 0 } mmWhy)
             Svc.Log.Information($"[MaterialMiracle] {mmWhy}");
-        if (_activeSolver is Solvers.ExpertSolver && Solvers.ExpertSolver.ExplainRules(P.Config.ExpertSolverConfig, craft, initialStep) is { Length: > 0 } expertWhy)
+        if (shown is Solvers.ExpertSolver && Solvers.ExpertSolver.ExplainRules(P.Config.ExpertSolverConfig, craft, initialStep) is { Length: > 0 } expertWhy)
             Svc.Log.Information($"[ExpertSolver] {expertWhy}");
         if (Simulator.CannotUseAction(craft, initialStep, _nextRec.Action, out string reason))
             DuoLog.Error($"Unable to use {_nextRec.Action.NameOfAction()}: {reason}");
         if (_nextRec.Action != Skills.None)
             RecommendationReady?.Invoke(recipe, ActiveSolver, craft, initialStep, _nextRec);
+    }
+
+    // 衝滿品質那層照 Raphael 走時，底下那條鏈的說明照舊記；換成專家解算器後由它自己的說明交代。
+    private static Solver? Shown(Solver? s) => s is Solvers.FullQualityGambleSolver g ? g.Chain : s;
+
+    // Information 級：要使用者回報的診斷（換不換、為什麼），一場一行。
+    private static void LogGambleNote()
+    {
+        if (_activeSolver is Solvers.FullQualityGambleSolver g && g.ConsumeNote() is { Length: > 0 } why)
+            Svc.Log.Information($"[Raphael 衝滿品質] {why}");
     }
 
     private static void OnCraftAdvanced(Lumina.Excel.Sheets.Recipe recipe, CraftState craft, StepState step)
@@ -239,16 +251,18 @@ public static class CraftingProcessor
             Svc.Log.Warning($"Previous action was different from recommendation: recommended {_nextRec.Action}, used {step.PrevComboAction}");
 
         _nextRec = _activeSolver.Solve(craft, step);
+        LogGambleNote();
+        var shown = Shown(_activeSolver);
         // 標準解算器的「奇蹟之材期間要不要交給專家解算器代打」閘門是在製作**中途**(buff 生效那一步)
         // 才跑的,所以不能像 MaterialMiracleSolver 那樣只在 OnCraftStarted 讀一次。
         // 讀走即清 ⇒ 一場製作只會印一行。Information 級:要使用者回報的診斷。
         if (_activeSolver is Solvers.StandardSolver stdSolver && stdSolver.ConsumeGateExplanation() is { Length: > 0 } stdWhy)
             Svc.Log.Information($"[MaterialMiracle] {stdWhy}");
-        if (_activeSolver is Solvers.MaterialMiracleSolver mmSolver && mmSolver.ConsumeGateExplanation() is { Length: > 0 } mmWhy)
+        if (shown is Solvers.MaterialMiracleSolver mmSolver && mmSolver.ConsumeGateExplanation() is { Length: > 0 } mmWhy)
             Svc.Log.Information($"[MaterialMiracle] {mmWhy}");
-        if (_activeSolver is Solvers.MaterialMiracleSolver { Inner: Solvers.OpportunisticSolver opp } && opp.ConsumeRescueNote() is { Length: > 0 } rescue)
+        if (shown is Solvers.MaterialMiracleSolver { Inner: Solvers.OpportunisticSolver opp } && opp.ConsumeRescueNote() is { Length: > 0 } rescue)
             Svc.Log.Information($"[Raphael 保進展] {rescue}");
-        if (_activeSolver is Solvers.ExpertSolver && Solvers.ExpertSolver.ExplainRules(P.Config.ExpertSolverConfig, craft, step) is { Length: > 0 } expertWhy)
+        if (shown is Solvers.ExpertSolver && Solvers.ExpertSolver.ExplainRules(P.Config.ExpertSolverConfig, craft, step) is { Length: > 0 } expertWhy)
             Svc.Log.Information($"[ExpertSolver] {expertWhy}");
         Svc.Log.Debug($"Next rec is: {_nextRec.Action}");
         if (Simulator.CannotUseAction(craft, step, _nextRec.Action, out string reason))

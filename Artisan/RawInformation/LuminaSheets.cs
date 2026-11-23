@@ -305,6 +305,34 @@ namespace Artisan.RawInformation
 
         public static bool MissionHasMaterialMiracle(this Recipe recipe) => recipe.MissionMaterialMiracle().Has;
 
+        private static readonly ConcurrentDictionary<uint, int> hardPlusItemsByRecipe = new();
+
+        /// <summary>
+        /// 高難+ 任務（<c>WKSMissionUnit.LevelGroup</c> 6）裡按品質百分比計分的收藏品成品要交幾件（金星門檻 ÷ 每件上限 1000）；
+        /// 不是這種配方回 0。這種成品每件滿品質才拿得到 1000，金星要每件都滿。查不到資料回 0（＝不當成高難+）。
+        /// </summary>
+        public static int HardPlusScoredItems(this Recipe recipe)
+        {
+            if (hardPlusItemsByRecipe.TryGetValue(recipe.RowId, out var known))
+                return known;
+            try
+            {
+                if (recipe.IsExpert || !recipe.ItemResult.Value.AlwaysCollectable || recipe.CollectableMetadataKey != 7)
+                    return hardPlusItemsByRecipe[recipe.RowId] = 0;
+                var id = recipe.RowId;
+                var missionRec = Svc.Data.GetExcelSheet<WKSMissionRecipe>().FirstOrDefault(r => r.Recipe.Any(x => x.RowId == id));
+                if (missionRec.RowId == 0)
+                    return hardPlusItemsByRecipe[id] = 0;
+                var unit = Svc.Data.GetExcelSheet<WKSMissionUnit>().FirstOrDefault(u => u.WKSMissionRecipe.RowId == missionRec.RowId);
+                return hardPlusItemsByRecipe[id] = unit.RowId != 0 && unit.LevelGroup == 6 ? Math.Max(1, unit.GoldStarRequirement / 1000) : 0;
+            }
+            catch (Exception e)
+            {
+                Svc.Log.Error($"Error in HardPlusScoredItems: {e}");
+                return 0;
+            }
+        }
+
         // 配方設定每幀都會問；答案只取決於配方 id 與遊戲資料表（行程內不變），所以依配方 id 記住、不必作廢。
         // 查表擲例外的那一次不記，下次照舊重查並記錯誤。繪製執行緒與背景執行緒都會呼叫。
         private static readonly ConcurrentDictionary<uint, (bool Has, uint Charges)> materialMiracleByRecipe = new();

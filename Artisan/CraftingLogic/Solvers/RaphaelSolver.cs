@@ -39,7 +39,8 @@ namespace Artisan.CraftingLogic.Solvers
                 //    這樣閘門的 rollout 驅動的是「真正會執行的那份計畫」。
                 // 品質門檻與 RecipeArgs 送給 raphael-cli 的上限是同一個值;讀不到配方表(0)就不跳。
                 var skipAt = P.Config.RaphaelSolverConfig.SkipQualityWhenMaxed ? Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable) : 0;
-                return new MaterialMiracleSolver(new OpportunisticSolver(new MacroSolver(output!, craft) { SkipQualityAtOrAbove = skipAt }));
+                Solver chain = new MaterialMiracleSolver(new OpportunisticSolver(new MacroSolver(output!, craft) { SkipQualityAtOrAbove = skipAt }));
+                return RaphaelCache.FullQualityGamble(craft, output!) is { } g ? new FullQualityGambleSolver(chain, g.PlanQuality, g.Cap, g.Items) : chain;
             }
             return craft.CraftExpert ? new ExpertSolver() : new StandardSolver(false);
         }
@@ -242,6 +243,25 @@ namespace Artisan.CraftingLogic.Solvers
         {
             var key = GetKey(craft);
             return Tasks.ContainsKey(key) && FreeOpenerChecked.TryGetValue(key, out var state) && state == 1;
+        }
+
+        // 計畫的通常狀態品質每份解只算一次：配方視窗的提示每幀都會建解算器。
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<MacroSolverSettings.Macro, System.Runtime.CompilerServices.StrongBox<PlanOutcome>> PlanOutcomes = new();
+
+        /// <summary>
+        /// 這份解要不要包 <see cref="FullQualityGambleSolver"/>：高難+ 按品質計分的成品、任務有奇蹟之材且有開、
+        /// 解照順序在通常狀態做不到上限（或做不完）。不符合回 null（照 Raphael 全鏈）。開工時實際有沒有次數由該解算器第一步判。
+        /// </summary>
+        internal static (int PlanQuality, int Cap, int Items)? FullQualityGamble(CraftState craft, MacroSolverSettings.Macro solution)
+        {
+            if (!P.Config.RaphaelSolverConfig.FullQualityGamble || !P.Config.UseMaterialMiracle || !craft.IsCosmic || craft.CraftExpert || !craft.MissionHasMaterialMiracle)
+                return null;
+            var items = craft.Recipe.HardPlusScoredItems();
+            var cap = Calculations.RecipeMaxQuality(craft.Recipe, craft.LevelTable);
+            if (items <= 0 || cap <= 0)
+                return null;
+            var plan = PlanOutcomes.GetValue(solution, m => new(EvaluatePlan(craft, m.Steps))).Value;
+            return plan.Done && plan.Quality >= cap ? null : (plan.Done ? plan.Quality : 0, cap, items);
         }
 
         /// <summary>退路只用在宇宙探索配方：量測只做過宇宙配方；其他配方（收藏品門檻等）照用使用者要的確保可靠度。</summary>
@@ -1170,6 +1190,7 @@ namespace Artisan.CraftingLogic.Solvers
         public bool CosmicUnassignedRaphael = true;
         public bool SkipQualityWhenMaxed = true;
         public bool OpportunisticReorder = true;
+        public bool FullQualityGamble = true;
 
         public bool Draw()
         {
@@ -1241,6 +1262,9 @@ namespace Artisan.CraftingLogic.Solvers
 
             changed |= ImGui.Checkbox("If the rest of the plan can no longer finish progress, skip quality actions to finish the craft".Loc(), ref ProgressRescue);
             ImGuiComponents.HelpMarker("Before each quality action the rest of the plan is simulated in normal conditions (the tightest case for durability and CP). If it would run out of durability or CP before progress is done, but skipping the remaining quality actions would still finish, this quality action is skipped; it is re-checked every step, so only as many are skipped as needed. Trades some quality for not failing the craft. Nothing is skipped while the plan can still finish.".Loc());
+
+            changed |= ImGui.Checkbox("Cosmic Exploration Hard+: when the solution can't reach max quality, go for max quality with Material Miracle and chance-based actions".Loc(), ref FullQualityGamble);
+            ImGuiComponents.HelpMarker("Hard+ final items are scored by quality percentage, and the gold star needs every item at max quality. When the Raphael solution doesn't reach max quality even in normal conditions, the craft is handed to the expert solver instead, which uses Material Miracle and actions that can fail (??, ??, ??) to push for max quality. Only when the mission has Material Miracle, it is enabled, and a charge is left when the craft starts; on two-item missions each item uses at most half of the charges. Otherwise the Raphael solution is used as before. The log says which one was used and why.".Loc(Skills.HastyTouch.NameOfAction(), Skills.DaringTouch.NameOfAction(), Skills.RapidSynthesis.NameOfAction()));
 
             changed |= ImGui.Checkbox("Skip the remaining quality actions once quality is maxed".Loc(), ref SkipQualityWhenMaxed);
             ImGuiComponents.HelpMarker("When good conditions or deviations fill quality earlier than planned, the rest of the plan's touches, ??, ??, ?? and ?? are skipped and the craft goes straight on to progress. Repairs and progress buffs are kept. Saves steps and avoids spending Delineations on ??.".Loc(Skills.ByregotsBlessing.NameOfAction(), Skills.Innovation.NameOfAction(), Skills.GreatStrides.NameOfAction(), Skills.QuickInnovation.NameOfAction(), Skills.QuickInnovation.NameOfAction()));

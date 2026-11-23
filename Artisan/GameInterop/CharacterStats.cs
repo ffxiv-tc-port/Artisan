@@ -261,11 +261,23 @@ public unsafe struct CharacterStats
     }
 
     // base stats (i.e. without consumables) with rear for specified class (either currently equipped or first found matching gearset)
-    public static CharacterStats GetBaseStatsForClassHeuristic(Job job)
+    public static CharacterStats GetBaseStatsForClassHeuristic(Job job) => GetBaseStatsForClass(job, out _);
+
+    /// <param name="known">
+    /// true＝數值確實是這個職業的：目前就是這個職業且讀得到身上裝備，或找到這個職業的套裝。
+    /// false＝退回「身上其他職業的裝備」或裸裝，數值不能拿來判斷這個職業夠不夠。
+    /// </param>
+    public static CharacterStats GetBaseStatsForClass(Job job, out bool known)
     {
         if (CharacterInfo.JobID == job)
+        {
+            var im = InventoryManager.Instance();
+            var equipped = im == null ? null : im->GetInventoryContainer(InventoryType.EquippedItems);
+            known = equipped != null && equipped->Items != null;
             return GetBaseStatsEquipped();
+        }
 
+        known = false;
         // Instance() 沒登入時合法回 null(它是 UIModule 的轉手,FFXIVClientStructs 裡就寫成
         // 「uiModule == null ? null : ...」)。直接 ->Entries 是解參考 null =
         // AccessViolationException,而它是 corrupted-state exception:下面那個 try/catch
@@ -279,9 +291,12 @@ public unsafe struct CharacterStats
             try
             {
                 if ((Job)gs.ClassJob == job)
+                {
+                    known = gs.Flags.HasFlag(RaptureGearsetModule.GearsetFlag.Exists);
                     return GetBaseStatsGearset(ref gs);
+                }
             }
-            catch (Exception ex) 
+            catch (Exception ex)
             {
                 ex.Log();
             }
@@ -327,13 +342,15 @@ public sealed class CrafterStatsSnapshot
     private const long CacheMs = 500;
 
     private readonly CharacterStats[] statsByCraftType;
+    private readonly bool[] knownByCraftType;
 
     /// <summary>部隊「工匠精神」(狀態 356)的 <c>Param</c>;沒有這個加成時為 0。</summary>
     public int FcCraftsmanshipParam { get; }
 
-    private CrafterStatsSnapshot(CharacterStats[] stats, int fcParam)
+    private CrafterStatsSnapshot(CharacterStats[] stats, bool[] known, int fcParam)
     {
         statsByCraftType = stats;
+        knownByCraftType = known;
         FcCraftsmanshipParam = fcParam;
     }
 
@@ -344,10 +361,11 @@ public sealed class CrafterStatsSnapshot
     public static CrafterStatsSnapshot Read()
     {
         var stats = new CharacterStats[CraftTypeCount];
+        var known = new bool[CraftTypeCount];
         for (var craftType = 0u; craftType < CraftTypeCount; ++craftType)
         {
             var job = (Job)((uint)Job.CRP + craftType);
-            var s = CharacterStats.GetBaseStatsForClassHeuristic(job);
+            var s = CharacterStats.GetBaseStatsForClass(job, out known[craftType]);
             // GetBaseStats* 從來不填 Level(GetBaseStatsNaked 只設 CP=180),而
             // Crafting.BuildCraftStateForRecipe 只在 Level 是 default 時才去讀
             // PlayerState.Instance()->ClassJobLevels。在這裡就把它填好,背景那側
@@ -356,7 +374,7 @@ public sealed class CrafterStatsSnapshot
                 s.Level = CharacterInfo.JobLevel(job);
             stats[craftType] = s;
         }
-        return new CrafterStatsSnapshot(stats, CharacterInfo.FCCraftsmanshipParam);
+        return new CrafterStatsSnapshot(stats, known, CharacterInfo.FCCraftsmanshipParam);
     }
 
     private static CrafterStatsSnapshot? current;
@@ -395,4 +413,7 @@ public sealed class CrafterStatsSnapshot
     /// </summary>
     public CharacterStats StatsForCraftType(uint craftType)
         => craftType < statsByCraftType.Length ? statsByCraftType[craftType] : default;
+
+    /// <summary><see cref="StatsForCraftType"/> 的數值確實是這個職業的（見 <see cref="CharacterStats.GetBaseStatsForClass"/>）。</summary>
+    public bool IsKnown(uint craftType) => craftType < knownByCraftType.Length && knownByCraftType[craftType];
 }

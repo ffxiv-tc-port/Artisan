@@ -105,11 +105,14 @@ internal class ListEditor : Window, IDisposable
 
     private readonly ListInventorySlots.Line slotLine;
 
+    private readonly ListPrepCard prepCard;
+
     public ListEditor(int listId)
         : base($"List Editor###{listId}")
     {
         SelectedList = P.Config.NewCraftingLists.First(x => x.ID == listId);
         slotLine = new(() => ListInventorySlots.EditorCrafts(SelectedList));
+        prepCard = new(SelectedList, slotLine);
         RecipeSelector = new RecipeSelector(SelectedList.ID);
         RecipeSelector.ItemAdded += RefreshTable;
         RecipeSelector.ItemDeleted += RefreshTable;
@@ -524,7 +527,10 @@ internal class ListEditor : Window, IDisposable
                 ImGuiEx.Text(ImGuiColors.DalamudYellow, "You have turned off Allagan Tools integration.".Loc());
         }
 
-        slotLine.Draw(sameLine: true);
+        // 背包格位預估併進「開工前」卡片（卡片上背包夠也看得到），所以按鈕列不再單獨畫它。
+        // 清單改過、材料表還沒重建時是舊的數字 ⇒ 當成還沒建（卡片顯示「?」）。
+        if (prepCard.Draw(NeedsToRefreshTable ? null : Table, Table == null && RegenerateTask?.IsCompleted == false))
+            EnsureTable(force: true);
 
         if (ImGui.BeginTabBar("CraftingListEditor", ImGuiTabBarFlags.None))
         {
@@ -568,6 +574,15 @@ internal class ListEditor : Window, IDisposable
         }
     }
 
+
+    /// <summary>與打開「素材表」頁相同：清單改過、還沒重建時建一次；<paramref name="force"/> 是使用者按了「計算素材」。</summary>
+    private void EnsureTable(bool force)
+    {
+        if (!force && !NeedsToRefreshTable)
+            return;
+        RefreshTable(null, true);
+        NeedsToRefreshTable = false;
+    }
 
     private bool _sortFinishedProductsByPrice = false;
     private List<ListItem>? finishedStockRows;

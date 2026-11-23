@@ -216,6 +216,7 @@ internal static class ListInventorySlots
         private bool known;
         private string text = string.Empty;
         private string tooltip = string.Empty;
+        private string okText = string.Empty;
 
         /// <param name="sameLine">接在同一列前一個元件後面；這一幀沒有東西要畫時不會留下懸空的 SameLine。</param>
         internal void Draw(bool sameLine)
@@ -223,13 +224,7 @@ internal static class ListInventorySlots
             if (!P.Config.ShowListInventoryEstimate)
                 return;
 
-            var now = Environment.TickCount64;
-            if (now >= nextRefreshAt)
-            {
-                nextRefreshAt = now + 1000;
-                Refresh();
-            }
-
+            RefreshIfDue();
             if (!show)
                 return;
             if (sameLine)
@@ -240,6 +235,35 @@ internal static class ListInventorySlots
                 ImGui.TextDisabled(text);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip(tooltip);
+        }
+
+        /// <summary>「開工前」卡片上的一段：背包夠也畫（綠字），所以這一段在卡片上永遠看得到結果或「?」。</summary>
+        internal void DrawCardSegment(bool sameLine)
+        {
+            if (!P.Config.ShowListInventoryEstimate)
+                return;
+
+            RefreshIfDue();
+            if (sameLine)
+                ImGui.SameLine();
+            if (!known)
+                ImGui.TextDisabled(text);
+            else if (show)
+                ImGui.TextColored(ImGuiColors.DalamudOrange, text);
+            else
+                ImGui.TextColored(ImGuiColors.HealerGreen, okText);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(tooltip);
+        }
+
+        private void RefreshIfDue()
+        {
+            var now = Environment.TickCount64;
+            if (now >= nextRefreshAt)
+            {
+                nextRefreshAt = now + 1000;
+                Refresh();
+            }
         }
 
         private void Refresh()
@@ -266,7 +290,11 @@ internal static class ListInventorySlots
 
             show = e.Short > 0;
             if (!show)
+            {
+                okText = "Bag: enough".Loc();
+                tooltip = "Estimated ?? slot(s) needed, ?? free now. This is an upper bound: slots freed as intermediate materials get used up are not subtracted.".Loc(e.Needed, e.Free);
                 return;
+            }
             text = "Bag about ?? slot(s) short".Loc(e.Short);
             var sb = new StringBuilder();
             sb.Append("Estimated ?? slot(s) needed, ?? free now. This is an upper bound: slots freed as intermediate materials get used up are not subtracted.".Loc(e.Needed, e.Free));

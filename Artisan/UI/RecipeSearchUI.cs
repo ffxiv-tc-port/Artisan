@@ -34,6 +34,8 @@ internal static class RecipeSearchUI
         string[] JobName);
 
     private const int TypingDelayMs = 500;
+    private const int TextMaxBytes = 100;
+    private const string NewListPopup = "##RecipeSearchNewList";
 
     private static volatile Index? index;
     private static Task? indexTask;
@@ -46,6 +48,8 @@ internal static class RecipeSearchUI
     private static bool settingsDirty;
     private static int unknownCrafted;
     private static string lastAddedText = string.Empty;
+    private static string newListName = string.Empty;
+    private static bool openNewListPopup;
 
     private static readonly HashSet<uint> selected = new();
     private static readonly Dictionary<uint, int> wantedItems = new();
@@ -66,6 +70,23 @@ internal static class RecipeSearchUI
         S.TargetListId = list.ID;
         settingsDirty = true;
         MarkDirty();
+        P.PluginUi.OpenWindow = OpenWindow.RecipeSearch;
+        P.PluginUi.IsOpen = true;
+        P.PluginUi.BringToFront();
+    }
+
+    /// <summary>`/artisan search [文字]`：主視窗切到本分頁；有文字就填進名稱欄（其餘篩選不動）。</summary>
+    internal static void OpenFromCommand(string text)
+    {
+        text = text.Trim();
+        if (text.Length > 0)
+        {
+            // 名稱欄的緩衝區以 UTF-8 位元組計；超過會被 ImGui 截斷，這裡先截在同一個上限內。
+            while (System.Text.Encoding.UTF8.GetByteCount(text) > TextMaxBytes - 1)
+                text = text[..^1];
+            S.Text = text;
+            SettingChanged();
+        }
         P.PluginUi.OpenWindow = OpenWindow.RecipeSearch;
         P.PluginUi.IsOpen = true;
         P.PluginUi.BringToFront();
@@ -264,6 +285,17 @@ internal static class RecipeSearchUI
         return null;
     }
 
+    /// <summary>與清單面板［＋］(ListFolders.OnAdd) 同一套建法；建好即設成加入目標。</summary>
+    private static void CreateList(string name)
+    {
+        var list = new NewCraftingList { Name = name };
+        list.SetID();
+        // 先設目標再 Save(true)：它最後存一次設定，目標一併寫進去。
+        S.TargetListId = list.ID;
+        list.Save(true);
+        Svc.Log.Information($"[Artisan][搜尋配方] 建立新清單 ID {list.ID}，設為加入目標。");
+    }
+
     /// <summary>不能加入的原因；null＝可以加入。</summary>
     private static string? AddBlockReason(NewCraftingList? target)
     {
@@ -285,7 +317,7 @@ internal static class RecipeSearchUI
         var s = S;
 
         ImGui.SetNextItemWidth(Px(220));
-        if (ImGui.InputTextWithHint("##RecipeSearchText", "Name or ID".Loc(), ref s.Text, 100))
+        if (ImGui.InputTextWithHint("##RecipeSearchText", "Name or ID".Loc(), ref s.Text, TextMaxBytes))
             SettingChanged(TypingDelayMs);
         Tip("Matches item names as plain text (not case-sensitive). A number also matches the recipe ID or the item ID.".Loc());
         ImGui.SameLine();
@@ -313,7 +345,22 @@ internal static class RecipeSearchUI
                         P.Config.Save();
                     }
                 }
+                ImGui.Separator();
+                if (ImGui.Selectable("Create new list...".Loc()))
+                    openNewListPopup = true;
+                Tip("Type a name and press Enter; the new list becomes the add target.".Loc());
             }
+        }
+        // 彈窗要在下拉之外開，ID 堆疊才和 BeginPopup 那側一致。
+        if (openNewListPopup)
+        {
+            openNewListPopup = false;
+            ImGui.OpenPopup(NewListPopup);
+        }
+        if (ImGuiUtil.OpenNameField(NewListPopup, ref newListName))
+        {
+            CreateList(newListName);
+            newListName = string.Empty;
         }
 
         ImGui.TextUnformatted("Job".Loc());
@@ -677,7 +724,19 @@ internal static class RecipeSearchUI
         ImGui.SetNextItemWidth(-1);
         if (ImGui.InputInt("##want", ref want, 0, 0))
             wantedItems[row.RecipeId] = Math.Max(1, want);
-        Tip("How many of this item you want. The list stores crafts: amount / yield, rounded up.".Loc());
+        // 滾輪與說明分開判斷：不帶 AllowWhenDisabled ＝停用中不吃滾輪；編輯中不改（輸入框會蓋回自己的緩衝）。
+        if (ImGui.IsItemHovered() && !ImGui.IsItemActive())
+        {
+            ImGuiP.SetItemUsingMouseWheel();
+            var wheel = ImGui.GetIO().MouseWheel;
+            if (wheel != 0)
+            {
+                want = Math.Max(1, want + Math.Sign(wheel) * (ImGui.GetIO().KeyShift ? 10 : 1));
+                wantedItems[row.RecipeId] = want;
+            }
+        }
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip($"{"How many of this item you want. The list stores crafts: amount / yield, rounded up.".Loc()}\n{"Mouse wheel over this box: +/-1 (hold Shift: +/-10).".Loc()}");
 
         ImGui.TableNextColumn();
         ImGui.TextUnformatted("= ?? crafts".Loc(RecipeSearchFilter.CraftsFor(want < 1 ? 1 : want, row.AmountResult)));

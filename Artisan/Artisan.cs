@@ -80,6 +80,8 @@ public unsafe class Artisan : IDalamudPlugin
             "/artisan settings → Open Settings.".Loc() + "\n" +
             "/artisan workshop → Open FC Workshops.".Loc() + "\n" +
             "/artisan builder → Open List Builder.".Loc() + "\n" +
+            "/artisan search → Open Recipe Search.".Loc() + "\n" +
+            "/artisan search <text> → Opens Recipe Search with <text> in the name box.".Loc() + "\n" +
             "/artisan sim → Open Simulator.".Loc() + "\n" +
             "/artisan automode → Toggles Automatic Action Execution Mode on/off.".Loc(),
             ShowInHelp = true,
@@ -393,6 +395,13 @@ public unsafe class Artisan : IDalamudPlugin
             P.Config.Save();
             return;
         }
+        if (firstArg.ToLower() == "search")
+        {
+            // 文字可能含空白：取 "search" 之後整段，不用切開的 subcommands。
+            RecipeSearchUI.OpenFromCommand(args[firstArg.Length..]);
+            return;
+        }
+
         if (subcommands.Length >= 2)
         {
             if (firstArg.ToLower() == "lists")

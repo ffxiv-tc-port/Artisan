@@ -45,6 +45,9 @@ namespace Artisan.Universalis
 
         private static readonly TimeSpan MaxServerRetryAfter = TimeSpan.FromSeconds(60);
 
+        // 20 件區域範圍的回應正常遠小於 1 MB；接近這個大小就不是價格資料。上限算解壓後大小。
+        private const long MaxResponseBytes = 8 * 1024 * 1024;
+
         private readonly HttpClient httpClient;
         public uint? PlayerWorld;
 
@@ -90,6 +93,8 @@ namespace Artisan.Universalis
                 // A request carries up to MaxItemsPerRequest items, so it is larger and slower than a
                 // single-item request; the timeout is sized for that.
                 Timeout = TimeSpan.FromSeconds(30),
+                // 必須在第一次請求前設定（送過請求後再設會擲 InvalidOperationException）。
+                MaxResponseContentBufferSize = MaxResponseBytes,
             };
             this.httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
                 $"Artisan/{Assembly.GetExecutingAssembly().GetName().Version}");
@@ -118,6 +123,11 @@ namespace Artisan.Universalis
                         ((IEnumerable<dynamic>)d.worlds).Select(w => (uint)w).ToArray()
                     )).ToList();
                     dataCentersCacheExpiry = DateTime.Now.AddHours(12);
+                }
+                catch (HttpRequestException ex) when (IsResponseTooLarge(ex))
+                {
+                    LogResponseTooLarge("data-centers", 0, "-");
+                    cachedDataCenters ??= new();
                 }
                 catch (Exception ex)
                 {
@@ -163,6 +173,11 @@ namespace Artisan.Universalis
 
                     cachedWorldNames = map;
                     worldNamesCacheExpiry = DateTime.Now.AddHours(12);
+                }
+                catch (HttpRequestException ex) when (IsResponseTooLarge(ex))
+                {
+                    LogResponseTooLarge("worlds", 0, "-");
+                    cachedWorldNames ??= new();
                 }
                 catch (Exception ex)
                 {
@@ -554,6 +569,14 @@ namespace Artisan.Universalis
                     response?.Dispose();
                     return (null, BatchOutcome.Other, "cancelled");
                 }
+                catch (HttpRequestException ex) when (IsResponseTooLarge(ex))
+                {
+                    // StatusCode 是 null：不攔會落進下面的一般失敗（記 Error）；切批或重送都不會讓回應變正常。
+                    response?.Dispose();
+                    nextRequestAllowed = DateTime.UtcNow + MinRequestInterval;
+                    LogResponseTooLarge(url, itemCount, scope);
+                    return (null, BatchOutcome.Other, "response too large");
+                }
                 catch (Exception ex)
                 {
                     response?.Dispose();
@@ -605,6 +628,16 @@ namespace Artisan.Universalis
                     failure, itemCount, scope, delay.TotalSeconds);
                 await Task.Delay(delay, cts.Token).ConfigureAwait(false);
             }
+        }
+
+        private static bool IsResponseTooLarge(HttpRequestException ex)
+            => ex.HttpRequestError == HttpRequestError.ConfigurationLimitExceeded;
+
+        private static void LogResponseTooLarge(string what, int itemCount, string scope)
+        {
+            Svc.Log.Warning(
+                "[Universalis] response for {0} ({1} item(s), scope {2}) exceeded {3} MB; discarded this response, no retry.",
+                what, itemCount, scope, MaxResponseBytes / (1024 * 1024));
         }
 
         /// <summary>

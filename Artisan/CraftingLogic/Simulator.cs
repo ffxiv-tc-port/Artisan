@@ -319,7 +319,10 @@ public static class Simulator
         {
             if (next.Quality != step.Quality)
                 ++next.IQStacks;
-            if (action is Skills.PreciseTouch or Skills.PreparatoryTouch or Skills.Reflect or Skills.RefinedTouch)
+            if (action is Skills.PreciseTouch or Skills.PreparatoryTouch or Skills.Reflect)
+                ++next.IQStacks;
+            // 精煉加工的額外一層是連擊效果：只有接在加工後面才給。
+            if (action == Skills.RefinedTouch && step.PrevComboAction == Skills.BasicTouch)
                 ++next.IQStacks;
             if (next.IQStacks > 10)
                 next.IQStacks = 10;

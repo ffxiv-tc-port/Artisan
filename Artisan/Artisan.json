@@ -1,8 +1,8 @@
 {
   "Author": "Taurenkey (Puni.sh)",
   "Name": "Artisan",
-  "Punchline": "一款「簡單」的製作插件。",
-  "Description": "整合各種功能的全能製作插件。",
+  "Punchline": "自動執行製作技能，支援製作清單與耐力模式。",
+  "Description": "製作輔助插件：依巨集或內建解算器自動按製作技能，並能成批製作。輸入 /artisan 開啟。\n\n- 自動製作：標準與專家配方解算器、Raphael 最佳解、自訂巨集，附模擬器可先試算\n- 製作清單：依序製作多項配方，可從僱員補貨、自動修理、精製魔晶石，也能從 Teamcraft 匯入\n- 耐力模式：重複製作同一配方，製作之間自動補食物與藥品\n- 清單「開工前」檢查：作業精度、加工精度、素材與背包格位夠不夠\n- 缺的素材可一鍵交給 GatherBuddy Reborn 採集，或依世界列出採購清單（只顯示、不代買）\n- 公會工坊的專案可轉成製作清單",
   "InternalName": "Artisan",
   "ApplicableVersion": "any",
   "IconUrl": "https://raw.githubusercontent.com/ffxiv-tc-port/DalamudPluginsTC/main/icons/Artisan.png",

@@ -17,6 +17,7 @@ using System.Net.Http;
 using System.Numerics;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Artisan.CraftingLists
@@ -32,6 +33,17 @@ namespace Artisan.CraftingLists
         private static bool finalitemQS = false;
         private static readonly HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(20) };
         private static bool fetchingList = false;
+        private static readonly CancellationTokenSource Shutdown = new();
+
+        /// <summary>卸載時呼叫：取消進行中的抓取，之後回來的結果一律丟棄（延遲工作不隨插件卸載取消，所以自己判）。</summary>
+        internal static void Dispose() => Shutdown.Cancel();
+
+        private static bool DropIfUnloading(string what)
+        {
+            if (!Shutdown.IsCancellationRequested && !Svc.Framework.IsFrameworkUnloading) return false;
+            Svc.Log.Information($"[Artisan] 插件卸載或遊戲關閉中，丟棄 Teamcraft 清單抓取的{what}。");
+            return true;
+        }
 
         internal static void DrawTeamCraftListButtons()
         {
@@ -353,23 +365,39 @@ namespace Artisan.CraftingLists
             }
             fetchingList = true;
             Notify.Info("Fetching list from Teamcraft...".Loc());
+            var token = Shutdown.Token;
             Task.Run(async () =>
             {
                 try
                 {
-                    var json = await httpClient.GetStringAsync($"https://firestore.googleapis.com/v1/projects/ffxivteamcraft/databases/(default)/documents/lists/{uid}");
+                    var json = await httpClient.GetStringAsync($"https://firestore.googleapis.com/v1/projects/ffxivteamcraft/databases/(default)/documents/lists/{uid}", token);
                     var fields = JObject.Parse(json)["fields"];
                     var entries = new List<(uint ItemId, int Amount, bool Precraft)>();
                     AddShareArrayEntries(fields?["items"], true, entries);
                     AddShareArrayEntries(fields?["finalItems"], false, entries);
+                    if (DropIfUnloading("結果")) return;
                     // 每筆都要掃整張配方表，幾十筆就是幾十毫秒：在這裡查完，框架執行緒只剩併進清單與存檔。
                     var resolved = ResolveShareEntries(entries, GenericHelpers.GetSheet<Recipe>());
-                    await Svc.Framework.RunOnFrameworkThread(() => onSuccess(resolved));
+                    // 卸載期 RunOnFrameworkThread 會就地在這條背景執行緒跑 ⇒ 進去後再判一次，卸載中不動設定。
+                    await Svc.Framework.RunOnFrameworkThread(() =>
+                    {
+                        if (DropIfUnloading("結果")) return;
+                        onSuccess(resolved);
+                    });
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    DropIfUnloading("請求");
                 }
                 catch (Exception ex)
                 {
                     ex.Log();
-                    await Svc.Framework.RunOnFrameworkThread(() => Notify.Error("Failed to fetch the list from Teamcraft. Check the link is correct and the list is public.".Loc()));
+                    if (DropIfUnloading("失敗通知")) return;
+                    await Svc.Framework.RunOnFrameworkThread(() =>
+                    {
+                        if (DropIfUnloading("失敗通知")) return;
+                        Notify.Error("Failed to fetch the list from Teamcraft. Check the link is correct and the list is public.".Loc());
+                    });
                 }
                 finally
                 {

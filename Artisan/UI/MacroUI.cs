@@ -130,6 +130,7 @@ namespace Artisan.UI
         public static int GetCPCost(MacroSolverSettings.Macro m)
         {
             Skills previousAction = Skills.None;
+            bool advancedComboReady = false;
             int output = 0;
             int tcr = 0;
             foreach (var step in m.Steps)
@@ -148,7 +149,8 @@ namespace Artisan.UI
                     tcr++;
 
                 }
-                output += Simulator.GetBaseCPCost(step.Action, previousAction);
+                output += step.Action == Skills.AdvancedTouch ? (advancedComboReady ? 18 : 46) : Simulator.GetBaseCPCost(step.Action, previousAction);
+                advancedComboReady = Simulator.AdvancedTouchComboReadyAfter(step.Action, previousAction);
                 previousAction = step.Action;
             }
             return output;

@@ -181,7 +181,7 @@ namespace Artisan.CraftingLogic.Solvers
         }
 
         private static bool InTouchRotation(CraftState craft, StepState step)
-            => step.PrevComboAction == Skills.BasicTouch && craft.StatLevel >= Simulator.MinLevel(Skills.StandardTouch) || step.PrevComboAction == Skills.StandardTouch && craft.StatLevel >= Simulator.MinLevel(Skills.AdvancedTouch);
+            => step.PrevComboAction == Skills.BasicTouch && craft.StatLevel >= Simulator.MinLevel(Skills.StandardTouch) || Simulator.InStandardToAdvancedCombo(step) && craft.StatLevel >= Simulator.MinLevel(Skills.AdvancedTouch);
 
         public Skills BestSynthesis(CraftState craft, StepState step, bool progOnly = false)
         {
@@ -258,7 +258,7 @@ namespace Artisan.CraftingLogic.Solvers
             if (P.Config.UseMaterialMiracle && !_materialMiracleUsed && Simulator.CanUseAction(craft, step, Skills.MaterialMiracle))
                 return new(Skills.MaterialMiracle);
 
-            bool inCombo = (step.PrevComboAction == Skills.BasicTouch && Simulator.CanUseAction(craft, step, Skills.StandardTouch)) || (step.PrevComboAction == Skills.StandardTouch && Simulator.CanUseAction(craft, step, Skills.AdvancedTouch));
+            bool inCombo = (step.PrevComboAction == Skills.BasicTouch && Simulator.CanUseAction(craft, step, Skills.StandardTouch)) || (Simulator.InStandardToAdvancedCombo(step) && Simulator.CanUseAction(craft, step, Skills.AdvancedTouch));
             var act = BestSynthesis(craft, step);
             var goingForQuality = GoingForQuality(craft, step, act, out var maxQuality);
 
@@ -484,7 +484,7 @@ namespace Artisan.CraftingLogic.Solvers
             }
             else
             {
-                if (step.PrevComboAction is Skills.BasicTouch or Skills.StandardTouch) return true; //Assume started
+                if (step.PrevComboAction == Skills.BasicTouch || Simulator.InStandardToAdvancedCombo(step)) return true; //Assume started
                 if (step.RemainingCP < 54 || innoStacks < 3) return false;
 
                 var copyofDura = step.Durability;
@@ -520,7 +520,7 @@ namespace Artisan.CraftingLogic.Solvers
             if (Simulator.CanUseAction(craft, step, Skills.AdvancedTouch) && step.PrevComboAction == Skills.Observe) return Skills.AdvancedTouch;
             if (Simulator.CanUseAction(craft, step, Skills.PreciseTouch) && Simulator.CanUseAction(craft, step, Skills.PreciseTouch)) return Skills.PreciseTouch;
             if (Simulator.CanUseAction(craft, step, Skills.PreparatoryTouch) && step.IQStacks < P.Config.MaxIQPrepTouch && step.InnovationLeft > 0) return Skills.PreparatoryTouch;
-            if (Simulator.CanUseAction(craft, step, Skills.AdvancedTouch) && step.PrevComboAction == Skills.StandardTouch) return Skills.AdvancedTouch;
+            if (Simulator.CanUseAction(craft, step, Skills.AdvancedTouch) && Simulator.InStandardToAdvancedCombo(step)) return Skills.AdvancedTouch;
             if (Simulator.CanUseAction(craft, step, Skills.StandardTouch) && step.PrevComboAction == Skills.BasicTouch) return Skills.StandardTouch;
             if (Simulator.CanUseAction(craft, step, Skills.PrudentTouch) && GetComboDurability(craft, step, Skills.BasicTouch, Skills.StandardTouch, Skills.AdvancedTouch) <= 0) return Skills.PrudentTouch;
             if (Simulator.CanUseAction(craft, step, Skills.TrainedFinesse) && step.Durability <= 10) return Skills.TrainedFinesse;

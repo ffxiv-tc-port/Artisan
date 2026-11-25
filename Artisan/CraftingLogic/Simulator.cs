@@ -350,7 +350,7 @@ public static class Simulator
         next.QuickInnoAvailable = step.QuickInnoLeft > 0 && next.InnovationLeft == 0;
         next.PrevActionFailed = !success;
         next.PrevComboAction = action; // note: even stuff like final appraisal and h&s break combos
-        next.AdvancedTouchComboReady = action == Skills.Observe || action == Skills.StandardTouch && step.PrevComboAction == Skills.BasicTouch;
+        next.AdvancedTouchComboReady = AdvancedTouchComboReadyAfter(action, step.PrevComboAction);
         next.TrainedPerfectionActive = action == Skills.TrainedPerfection || (step.TrainedPerfectionActive && !HasDurabilityCost(action));
         next.TrainedPerfectionAvailable = step.TrainedPerfectionAvailable && action != Skills.TrainedPerfection;
         next.MaterialMiracleCharges = action == Skills.MaterialMiracle ? step.MaterialMiracleCharges - 1 : step.MaterialMiracleCharges;
@@ -643,9 +643,17 @@ public static class Simulator
     public static Skills NextTouchCombo(StepState step, CraftState craft)
     {
         if (step.PrevComboAction == Skills.BasicTouch && craft.StatLevel >= MinLevel(Skills.StandardTouch)) return Skills.StandardTouch;
-        if (step.PrevComboAction == Skills.StandardTouch && craft.StatLevel >= MinLevel(Skills.AdvancedTouch)) return Skills.AdvancedTouch;
+        if (InStandardToAdvancedCombo(step) && craft.StatLevel >= MinLevel(Skills.AdvancedTouch)) return Skills.AdvancedTouch;
         return Skills.BasicTouch;
     }
+
+    /// 遊戲只認「接在加工後面」的中級加工或觀察:沒連上的中級加工之後,上級加工收 46 CP。
+    public static bool AdvancedTouchComboReadyAfter(Skills action, Skills prevAction)
+        => action == Skills.Observe || action == Skills.StandardTouch && prevAction == Skills.BasicTouch;
+
+    /// 前一步是「連上了的」中級加工(觀察之後的上級加工連擊不算在這裡)。
+    public static bool InStandardToAdvancedCombo(StepState step)
+        => step.PrevComboAction == Skills.StandardTouch && step.AdvancedTouchComboReady;
 
     internal static Skills NextTouchComboRefined(StepState step, CraftState craft)
     {

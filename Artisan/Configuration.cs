@@ -74,6 +74,8 @@ namespace Artisan
         public bool DisableToasts = false;
         public bool ShowOnlyCraftable = false;
         public bool ShowOnlyCraftableRetainers = false;
+        /// <summary>主視窗「搜尋配方」分頁的篩選條件與加入目標。</summary>
+        public RecipeSearchSettings RecipeSearch = new();
         public bool Materia = false;
         public bool LockMiniMenuR = true;
 

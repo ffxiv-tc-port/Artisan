@@ -338,29 +338,9 @@ internal static class CraftingListContextMenu
             recipe = LuminaSheets.RecipeSheet.Values.First(x => x.ItemResult.RowId == ItemId);
         }
         if (recipe.Number == 0) return;
-        if (withPrecraft)
-            CraftingListUI.AddAllSubcrafts(recipe, CraftingListUI.selectedList, 1, P.Config.ContextMenuLoops);
-
-
-        if (CraftingListUI.selectedList.Recipes.Any(x => x.ID == recipe.RowId))
-        {
-            CraftingListUI.selectedList.Recipes.First(x => x.ID == recipe.RowId).Quantity += P.Config.ContextMenuLoops;
-        }
-        else
-        {
-            CraftingListUI.selectedList.Recipes.Add(new ListItem() { ID = recipe.RowId, Quantity = P.Config.ContextMenuLoops, ListItemOptions = new ListItemOptions() { NQOnly = CraftingListUI.selectedList.AddAsQuickSynth } });   
-        }
-
-        CraftingListHelpers.TidyUpList(CraftingListUI.selectedList);
-        // Select the editor by type and id, not by the window title "List Editor###<id>": the caption is
-        // localised, and casting every window with `as` would NRE on a non-ListEditor match.
-        foreach (var editor in P.ws.Windows
-                     .OfType<ListEditor>()
-                     .Where(x => x.SelectedList.ID == CraftingListUI.selectedList.ID))
-        {
-            editor.RecipeSelector.ReplaceItems(CraftingListUI.selectedList.Recipes);
-            editor.RefreshTable(null, true);
-        }
+        CraftingListHelpers.AddRecipesToList(CraftingListUI.selectedList, [(recipe, P.Config.ContextMenuLoops)],
+            withSubcrafts: withPrecraft, nqOnExisting: false, tidy: true, source: "右鍵選單");
+        ListEditor.RefreshOpenEditors(CraftingListUI.selectedList);
 
         P.Config.Save();
     }

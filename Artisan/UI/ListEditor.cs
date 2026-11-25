@@ -164,6 +164,20 @@ internal class ListEditor : Window, IDisposable
         Table = table;
     }
 
+    /// <summary>清單內容被別處改過（右鍵選單、搜尋配方分頁）後，刷新正在編輯這份清單的清單編輯器。只在框架執行緒呼叫。</summary>
+    internal static void RefreshOpenEditors(NewCraftingList list)
+    {
+        // Select the editor by type and id, not by the window title "List Editor###<id>": the caption is
+        // localised, and casting every window with `as` would NRE on a non-ListEditor match.
+        foreach (var editor in P.ws.Windows
+                     .OfType<ListEditor>()
+                     .Where(x => x.SelectedList.ID == list.ID))
+        {
+            editor.RecipeSelector.ReplaceItems(list.Recipes);
+            editor.RefreshTable(null, true);
+        }
+    }
+
     public void RefreshTable(object? sender, bool e)
     {
         // The list editor can trigger a new regeneration (add/remove/skip a recipe) while a
@@ -1124,6 +1138,11 @@ internal class ListEditor : Window, IDisposable
             ImGui.EndCombo();
         }
 
+        if (ImGui.Button("Add via search...".Loc()))
+            RecipeSearchUI.OpenFor(SelectedList);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Opens the Recipe Search tab in the main window, adding to this list.".Loc());
+
         if (SelectedRecipe != null)
         {
             if (ImGui.CollapsingHeader("Recipe Information".Loc())) DrawRecipeOptions();
@@ -1151,26 +1170,8 @@ internal class ListEditor : Window, IDisposable
                 SelectedListMateralsNew.Clear();
                 listMaterialsNew.Clear();
 
-                if (SelectedList.Recipes.Any(x => x.ID == SelectedRecipe.Value.RowId))
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).Quantity += checked(timesToAdd);
-                }
-                else
-                {
-                    SelectedList.Recipes.Add(new ListItem() { ID = SelectedRecipe.Value.RowId, Quantity = checked(timesToAdd) });
-                }
-
-                if (TidyAfter)
-                    CraftingListHelpers.TidyUpList(SelectedList);
-
-                if (SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions is null)
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions = new ListItemOptions { NQOnly = SelectedList.AddAsQuickSynth };
-                }
-                else
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions.NQOnly = SelectedList.AddAsQuickSynth;
-                }
+                CraftingListHelpers.AddRecipesToList(SelectedList, [(SelectedRecipe.Value, timesToAdd)],
+                    withSubcrafts: false, nqOnExisting: true, tidy: TidyAfter, source: "清單編輯器");
 
                 RecipeSelector.ReplaceItems(SelectedList.Recipes.Distinct());
 
@@ -1187,29 +1188,9 @@ internal class ListEditor : Window, IDisposable
                 SelectedListMateralsNew.Clear();
                 listMaterialsNew.Clear();
 
-                CraftingListUI.AddAllSubcrafts(SelectedRecipe.Value, SelectedList, 1, timesToAdd);
-
                 Svc.Log.Debug($"Adding: {SelectedRecipe.Value.ItemResult.Value.Name.ToDalamudString().ToString()} {timesToAdd} times");
-                if (SelectedList.Recipes.Any(x => x.ID == SelectedRecipe.Value.RowId))
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).Quantity += timesToAdd;
-                }
-                else
-                {
-                    SelectedList.Recipes.Add(new ListItem() { ID = SelectedRecipe.Value.RowId, Quantity = timesToAdd });
-                }
-
-                if (TidyAfter)
-                    CraftingListHelpers.TidyUpList(SelectedList);
-
-                if (SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions is null)
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions = new ListItemOptions { NQOnly = SelectedList.AddAsQuickSynth };
-                }
-                else
-                {
-                    SelectedList.Recipes.First(x => x.ID == SelectedRecipe.Value.RowId).ListItemOptions.NQOnly = SelectedList.AddAsQuickSynth;
-                }
+                CraftingListHelpers.AddRecipesToList(SelectedList, [(SelectedRecipe.Value, timesToAdd)],
+                    withSubcrafts: true, nqOnExisting: true, tidy: TidyAfter, source: "清單編輯器");
 
                 RecipeSelector.ReplaceItems(SelectedList.Recipes.Distinct());
                 RefreshTable(null, true);

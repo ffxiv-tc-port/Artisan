@@ -190,6 +190,11 @@ namespace Artisan.UI
                             OpenWindow = OpenWindow.Lists;
                         }
                         ImGui.Spacing();
+                        if (ImGui.Selectable("Recipe Search".Loc(), OpenWindow == OpenWindow.RecipeSearch))
+                        {
+                            OpenWindow = OpenWindow.RecipeSearch;
+                        }
+                        ImGui.Spacing();
                         if (ImGui.Selectable("List Builder".Loc(), OpenWindow == OpenWindow.SpecialList))
                         {
                             OpenWindow = OpenWindow.SpecialList;
@@ -236,6 +241,9 @@ namespace Artisan.UI
                                 break;
                             case OpenWindow.Lists:
                                 CraftingListUI.Draw();
+                                break;
+                            case OpenWindow.RecipeSearch:
+                                RecipeSearchUI.Draw();
                                 break;
                             case OpenWindow.About:
                                 AboutTab.Draw("Artisan");
@@ -1145,5 +1153,6 @@ namespace Artisan.UI
         Simulator = 10,
         RaphaelCache = 11,
         Assigner = 12,
+        RecipeSearch = 13,
     }
 }

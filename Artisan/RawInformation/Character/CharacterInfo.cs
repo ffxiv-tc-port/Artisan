@@ -224,6 +224,18 @@ namespace Artisan.RawInformation.Character
             return GetIsGatheringItemGathered is { } isCrafted && isCrafted(recipe) != 0;
         }
 
+        /// <summary>
+        /// 給「做過沒」欄位看的三態：null＝不知道（特徵碼沒對上、秘傳書、<see cref="Uncompletables"/>、不在配方表）。
+        /// <see cref="HasRecipeCrafted"/> 對後兩種回 true（它的語意是「能不能簡易製作」），不能拿來顯示。只在框架執行緒呼叫。
+        /// </summary>
+        public bool? CraftedState(uint recipe)
+        {
+            if (GetIsGatheringItemGathered is not { } isCrafted) return null;
+            if (Uncompletables.Contains(recipe)) return null;
+            if (LuminaSheets.RecipeSheet?.TryGetValue(recipe, out var r) != true || r.SecretRecipeBook.RowId > 0) return null;
+            return isCrafted(recipe) != 0;
+        }
+
         public void Dispose()
         {
             

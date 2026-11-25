@@ -132,29 +132,24 @@ namespace Artisan.UI
             Skills previousAction = Skills.None;
             bool advancedComboReady = false;
             int output = 0;
-            int tcr = 0;
             foreach (var step in m.Steps)
             {
-                if (step.Action == Skills.TouchCombo)
+                // 連擊佔位步驟照巨集解算器的規則換成實際技能，後面的步驟才看得到真正的前一招。
+                var action = step.Action switch
                 {
-                    output += 18;
-                }
-                if (step.Action == Skills.TouchComboRefined)
-                {
-                    if (tcr % 2 == 1)
-                        output += 18;
-                    else
-                        output += 24;
-
-                    tcr++;
-
-                }
-                output += step.Action == Skills.AdvancedTouch ? (advancedComboReady ? 18 : 46) : Simulator.GetBaseCPCost(step.Action, previousAction);
-                advancedComboReady = Simulator.AdvancedTouchComboReadyAfter(step.Action, previousAction);
-                previousAction = step.Action;
+                    Skills.TouchCombo => Simulator.NextTouchCombo(new StepState { PrevComboAction = previousAction, AdvancedTouchComboReady = advancedComboReady }, AllSkillsUnlocked),
+                    Skills.TouchComboRefined => Simulator.NextTouchComboRefined(new StepState { PrevComboAction = previousAction }, AllSkillsUnlocked),
+                    _ => step.Action,
+                };
+                output +=action == Skills.AdvancedTouch ? (advancedComboReady ? 18 : 46) : Simulator.GetBaseCPCost(action, previousAction);
+                advancedComboReady = Simulator.AdvancedTouchComboReadyAfter(action, previousAction);
+                previousAction = action;
             }
             return output;
         }
+
+        // 巨集頁不知道會由哪個等級的角色來做，照全部技能都學會算。
+        private static readonly CraftState AllSkillsUnlocked = new() { StatLevel = int.MaxValue };
 
         public static double GetMacroLength(MacroSolverSettings.Macro m)
         {

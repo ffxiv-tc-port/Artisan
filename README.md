@@ -30,7 +30,8 @@
 
 - `/artisan`：開啟主選單；已開啟時則關閉。
 - `/artisan lists`：開啟製作清單；`/artisan lists <ID>` 開啟指定清單，
-  `/artisan lists <ID> start` 直接開始該清單。
+  `/artisan lists <ID> start` 直接開始該清單，`/artisan lists stop` 取消執行中的清單
+  （正在做的那一件會先做完）。
 - `/artisan macros`：開啟巨集列表；`/artisan macros <ID>` 開啟指定巨集。
 - `/artisan endurance`：開啟耐力模式；`/artisan endurance start|stop` 開始或停止。
 - `/artisan settings`：開啟設定視窗。
@@ -44,11 +45,25 @@
 - 介面繁體中文化（依台服官方譯名）。
 - Teamcraft 匯入可直接貼清單網址線上抓取，品名支援英文、簡體中文或遊戲用戶端語言。
 - 素材表的缺料可一鍵交給 GatherBuddy Reborn 的自動採集清單（設為所需數量、重按不會疊加），
-  之後可直接按「開始自動採集」。
+  之後可直接按「開始自動採集」。送出前會先列出來自限時採集點的素材，附市價與預估採集時間，
+  可以取消勾選想改用購買的再送出（可在設定關閉這個確認）。
 - 從僱員補貨：可改走 AutoRetainer 的快速取物；清單開了自動修理時一併補足黑暗物質；
   補貨途中傳送、換區或視窗被關掉會立刻中止並說明原因。
 - 每份製作清單可指定這份清單專用的消耗品；設定的食物或藥品不在背包時提醒一次，
   開「強制使用消耗品」時則暫停清單。
+- 製作清單編輯器頂端新增「開工前」檢查：哪些配方在目前裝備下作業精度／加工精度不足、
+  哪些要靠食物或藥品才夠、還缺幾種素材、背包格位夠不夠；讀不到的數值顯示「?」。
+- 製作清單編輯器新增「依世界採購」頁：把還缺的素材依世界分組，列出在各世界要買幾件與小計，
+  可選「越少世界越好」或「每項各自最便宜」。這一頁只顯示、不會代買，需開啟 Universalis 查價；
+  裝了 Lifestream 時可按鈕前往該世界的市場佈告板。
+- 製作清單會預估需要幾格背包，放不下時提示大約還差幾格；新增設定「背包剩幾格就暫停清單」
+  （預設 0＝不啟用）。
+- 宇宙探索的製作：沒有指定解算器的配方也會改用 Raphael 的解；專家與標準配方解算器
+  對宇宙探索配方追求滿品質，不停在第三個門檻（都可在設定關閉，預設開）。
+- 專家配方解算器與 Raphael 解算器多項調整：依製作狀態（高品質／最高品質／低品質）調整步驟順序、
+  品質滿了就跳過剩下的品質技能、剩下的步驟做不完進展時先把製作做完等，各有設定可以關閉。
+- 耐力模式、製作清單與其他插件要求的製作，開工前會先自動下坐騎。
+- 新增設定「手動按『製作』鈕時由 Artisan 接手」（預設開；關掉後手動按「製作」照遊戲原本的行為）。
 - 搭配 TataruPraise：清單完成、耐力模式跑完時請塔塔露誇獎，製作被迫停下時請她喊人。
 - 新增設定「製作因錯誤停下時播放提示音」與「附近有其他玩家時模擬遊戲巨集延遲」（都預設關）。
 - 背包滿、換不了套裝、一直選不到配方等情況會停下並在聊天視窗說明一次，不再無限重試。
@@ -56,7 +71,21 @@
 - Universalis 查價改為分批、失敗重試並快取十分鐘，減少逾時。
 - 多處降低記憶體用量。
 
+## 安裝
+
+1. 在遊戲內輸入 `/xlsettings` 開啟「Dalamud 設定」，到「試驗性功能」分頁的「第三方插件倉庫」加入
+   `https://raw.githubusercontent.com/ffxiv-tc-port/DalamudPluginsTC/main/repo.json`
+   勾選啟用後儲存。
+2. 輸入 `/xlplugins` 開啟「插件管理員」，搜尋「Artisan」安裝。
+
+同一個插件只裝這裡的版本，不要同時安裝上游（國際服）版本。
+
 ## 需要搭配的插件
 
-- 選用：AutoRetainer、Allagan Tools（僱員相關功能）、GatherBuddy Reborn（採集缺料）、
-  TataruPraise（語音提醒）。
+- 選用：[AutoRetainer](https://github.com/ffxiv-tc-port/AutoRetainer)、
+  [Allagan Tools](https://github.com/ffxiv-tc-port/InventoryTools)（僱員相關功能）、
+  [GatherBuddy Reborn](https://github.com/ffxiv-tc-port/GatherBuddyReborn)（採集缺料）、
+  [Lifestream](https://github.com/ffxiv-tc-port/Lifestream)（前往其他世界的市場佈告板）、
+  [TataruPraise](https://github.com/ffxiv-tc-port/TataruPraise)（語音提醒）。
+
+授權：BSD-3-Clause（見 LICENCE.md）
